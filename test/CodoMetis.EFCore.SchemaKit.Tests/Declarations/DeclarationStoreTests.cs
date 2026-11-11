@@ -77,6 +77,25 @@ public sealed class DeclarationStoreTests
         StringAssert.Contains((string)annotation.Value!, "\"concurrently\":true", "An operational option is stored; it is only left out of the key.");
     }
 
+    /// <summary>
+    /// The key of a declaration whose text has a character .NET 9 escaped and .NET 10 does not
+    /// (U+A7DB), one no runtime knows yet (U+0378) and one outside the BMP. Each is hashed as
+    /// itself, so the key is the one below on every runtime.
+    /// </summary>
+    [TestMethod]
+    public void A_key_does_not_depend_on_what_the_runtime_knows_of_a_character()
+    {
+        var entity = Entity();
+
+        entity.Declare([new TestGuard.Unique([new GuardKey("Name")]) { Where = new GuardFilter("{Name} <> '\uA7DB\u0378\U0001F600'") }]);
+
+        var identity = "{\"keys\":[{\"column\":\"Name\",\"descending\":false}],\"nullsDistinct\":true,\"include\":[],\"where\":{\"template\":\"{Name} <> '\uA7DB\u0378\U0001F600'\"}}";
+        var annotation = Stored(entity).Single();
+        Assert.AreEqual($"CodoMetis:Test.Guard:{Hash("content\nunique\n" + identity)}", annotation.Name);
+        Assert.AreEqual("CodoMetis:Test.Guard:b2d819d709fd6d1d", annotation.Name);
+        StringAssert.Contains((string)annotation.Value!, "'\uA7DB\u0378\U0001F600'");
+    }
+
     // ---- the rule: no declaration replaces another ---------------------------------------------------
 
     /// <summary>

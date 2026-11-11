@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using CodoMetis.EFCore.SchemaKit.Declarations.Internal;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit;
@@ -16,8 +17,14 @@ namespace CodoMetis.EFCore.SchemaKit;
 /// <see cref="SchemaJsonReader" /> reads an absent property as null and as nothing else.
 /// </para>
 /// <para>
-/// A property name is written once per object. <c>$kind</c>, <c>v</c>, <c>r</c> and <c>name</c> are
-/// the kernel's.
+/// A property name is written once per object, and is made of ASCII letters, digits and <c>_</c>.
+/// <c>$kind</c>, <c>v</c>, <c>r</c> and <c>name</c> are the kernel's.
+/// </para>
+/// <para>
+/// <b>A string is written by one fixed rule,</b> the same on every runtime: <c>"</c>, <c>\</c> and
+/// the characters below U+0020 are escaped, with C#'s three other line terminators, and everything
+/// else is written as itself. A declaration's key is a hash over this text. A string that is not
+/// well-formed UTF-16 is refused.
 /// </para>
 /// </remarks>
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
@@ -54,13 +61,13 @@ public sealed class SchemaJsonWriter
     public void String(string name, string value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (Claim(name)) _json.WriteString(name, value);
+        if (Claim(name)) _json.WriteCanonicalString(name, value);
     }
 
     /// <summary>A string, or nothing when it is null.</summary>
     public void OptionalString(string name, string? value)
     {
-        if (Claim(name) && value is not null) _json.WriteString(name, value);
+        if (Claim(name) && value is not null) _json.WriteCanonicalString(name, value);
     }
 
     /// <summary>A boolean. Written whether it is true or false.</summary>
@@ -97,7 +104,7 @@ public sealed class SchemaJsonWriter
         foreach (var value in values)
         {
             ArgumentNullException.ThrowIfNull(value, nameof(values));
-            _json.WriteStringValue(value);
+            _json.WriteCanonicalStringValue(name, value);
         }
         _json.WriteEndArray();
     }
@@ -148,6 +155,8 @@ public sealed class SchemaJsonWriter
     private bool Claim(string name)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
+        if (!CanonicalJson.IsPropertyName(name))
+            throw new InvalidOperationException(SchemaKitStrings.InvalidPropertyName(name));
         if (_root && DeclarationCodecNames.IsReserved(name))
             throw new InvalidOperationException(SchemaKitStrings.ReservedPropertyName(name));
         if (!_names.Add(name))

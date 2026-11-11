@@ -92,6 +92,14 @@ internal static class SchemaKitStrings
     public static string ReservedPropertyName(string name)
         => $"A declaration wrote a property named '{name}'. '$kind', 'v', 'r' and 'name' are written by SchemaKit.";
 
+    public static string InvalidPropertyName(string name)
+        => $"A declaration wrote a property named '{name}'. A property name is made of ASCII letters, digits and '_': " +
+           "those are written the same by every runtime, and the declaration's key is a hash over what is written.";
+
+    public static string TextIsNotUnicode(string property, int index)
+        => $"The text written for the property '{property}' is not well-formed UTF-16: the character at index {index} is half of a " +
+           "surrogate pair. It cannot be stored as it is, and replacing it would store another declaration.";
+
     public static string PropertyWrittenTwice(string name)
         => $"A declaration wrote the property '{name}' twice in one object. A reader would see one of the two values.";
 
