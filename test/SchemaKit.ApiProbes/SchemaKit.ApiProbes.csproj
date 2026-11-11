@@ -28,7 +28,7 @@
         <!-- The compiler the probes drive in-process: the one the rc.2 SDK ships, from the
              dotnet-tools feed (see nuget.config for why not nuget.org's 5.9.0). -->
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0-1.26504.105" />
-        <PackageReference Include="MSTest" Version="4.3.3" />
+        <PackageReference Include="MSTest" Version="4.5.2" />
     </ItemGroup>
 
     <ItemGroup>
