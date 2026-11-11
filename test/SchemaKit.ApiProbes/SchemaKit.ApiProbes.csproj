@@ -32,6 +32,16 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!--
+            The kernel, for the probes that hold "does not compile" against the shipping types
+            (Probes/KernelProbeTests.cs). Behind an alias: the prototype declares types of the same
+            names in the same namespace, and without the alias this project's own compile would see
+            both. The probes compile their snippets against the kernel's assembly alone.
+        -->
+        <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" Aliases="kernel" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     </ItemGroup>
 

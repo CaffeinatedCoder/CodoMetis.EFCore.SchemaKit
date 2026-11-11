@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 
@@ -33,9 +34,11 @@ internal interface IMigrationOperationRewriter
 internal sealed class SchemaKitSqlGenerator(
     IServiceProvider services,
     IDbContextOptions options,
-    InnerServices inner,
-    IEnumerable<IMigrationOperationRewriter> rewriters) : IMigrationsSqlGenerator
+    InnerServices inner) : IMigrationsSqlGenerator
 {
+    // Resolved on first use, for the reason SchemaKitModelDiffer gives for its planner.
+    private IEnumerable<IMigrationOperationRewriter> Rewriters => field ??= services.GetServices<IMigrationOperationRewriter>();
+
     /// <summary>The generator this one wraps.</summary>
     public IMigrationsSqlGenerator Inner { get; } =
         inner.Create<IMigrationsSqlGenerator>(services, options, options.FindExtension<SchemaKitOptionsExtension>()?.InnerGenerator);
@@ -45,7 +48,7 @@ internal sealed class SchemaKitSqlGenerator(
         IModel? model = null,
         MigrationsSqlGenerationOptions options = MigrationsSqlGenerationOptions.Default)
     {
-        foreach (var rewriter in rewriters)
+        foreach (var rewriter in Rewriters)
             operations = rewriter.Rewrite(operations, model);
 
         return Inner.Generate(operations, model, options);

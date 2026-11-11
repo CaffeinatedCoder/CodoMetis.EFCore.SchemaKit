@@ -6,8 +6,9 @@
         <IsPackable>false</IsPackable>
         <RootNamespace>CodoMetis.EFCore.SchemaKit.Tests</RootNamespace>
         <!-- Tests play a stranger's package and drive EF's design-time services, both EF-internal.
-             The shipping project never disables this; InternalApiConventionTests holds it to that. -->
-        <NoWarn>$(NoWarn);EF1001;1591</NoWarn>
+             The shipping project never disables this; InternalApiConventionTests holds it to that.
+             SK9001 is SchemaKit's own experimental contract, which these tests are about. -->
+        <NoWarn>$(NoWarn);EF1001;SK9001;1591</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>

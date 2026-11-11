@@ -12,7 +12,7 @@ stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch
 
 | Path | What |
 |---|---|
-| `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host: `UseSchemaKit()`, the differ and generator decorators, the wiring guards. Its public surface is three methods; everything else is internal until the contributor contract freezes at rc.1 |
+| `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards) and the SQL vocabulary statements are built from. Public are the three registration methods and the vocabulary, which is marked experimental (`SK9001`) until the contributor contract freezes at rc.1; the rest is internal |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` stands in for the planning layer that does not exist yet |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer). B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
@@ -31,6 +31,10 @@ dotnet build CodoMetis.EFCore.SchemaKit.slnx
 
 # The kernel's tests
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
+
+# Without the tests that need a server, and those alone (SCHEMAKIT_TEST_PG is an Npgsql connection string)
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "TestCategory!=Integration"
+SCHEMAKIT_TEST_PG="Host=localhost;Username=postgres;Password=…;Database=postgres" dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "TestCategory=Integration"
 
 # One class, one method
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "ClassName~WiringConditionTests"
@@ -94,6 +98,37 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
 
 A test suite that varies the wiring creates many internal service providers; EF Core raises the
 twenty-first as an error, which `Harness/Setup.cs` switches off.
+
+**Nothing the differ or the generator is built from may need the model.** The ownership check
+resolves both while a model is being built. That is why the planner and the rewriters are resolved
+on first use and not injected, and why `ISchemaDialect`, which reads the design-time model's
+identifier limit, must never be a constructor parameter of either decorator.
+
+## The SQL vocabulary
+
+`src/CodoMetis.EFCore.SchemaKit/Sql`. A statement is `sql.Statement($"…")`: the literal parts are the
+contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedName`, `SqlName`,
+`SqlOperator`, `SqlFragment`, `int` or `long`.
+
+- **There is no hole for a string, an object or a format, and none may be added.** That absence is
+  what makes "nothing reaches the DDL unquoted" a property of the types. `KernelProbeTests` compiles
+  each forbidden form against the shipping assembly; `PublicSurfaceTests` holds the handler's
+  overloads to the list.
+- **Values come from the dialect:** `ISchemaDialect.Identifier` checks the length, `Operator` the
+  operator grammar. None of the value types has a public constructor taking text.
+- **`SchemaSql` appends the provider's statement terminator** and refuses a statement that brings
+  one, an empty one, and a `DROP … IF EXISTS`.
+- **A schema-scoped object is dropped by `table.Qualify(name)`.** Whether a kind takes a qualified
+  name is the database's rule (a PostgreSQL index does; a constraint and a trigger are named within
+  their table), so the contributor calls it. `PostgresStatementTests` holds the reason as a fact
+  about the server: the unqualified form removes another schema's index.
+- **`SchemaDialect`** is the dialect of a provider without a SchemaKit package and the base of the
+  others. It delimits and terminates through the provider's `ISqlGenerationHelper` and writes
+  literals through its type mapping. It counts characters; PostgreSQL counts bytes, so its package
+  overrides `Measure`.
+
+Locally the integration tests go inconclusive without `SCHEMAKIT_TEST_PG`. When `CI` is set they
+fail instead: an unreachable server must not retire them while the build reports green.
 
 ## What counts as correct
 
