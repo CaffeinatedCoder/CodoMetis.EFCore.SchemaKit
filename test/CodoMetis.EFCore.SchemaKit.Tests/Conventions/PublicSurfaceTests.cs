@@ -19,11 +19,52 @@ public sealed class PublicSurfaceTests
 
     private static readonly string[] ContributorContract =
     [
+        "CodoMetis.EFCore.SchemaKit.BaseChange",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+ColumnAltered",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+ColumnDropped",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+ColumnRenamed",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+TableDropped",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+TableMoved",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+TableRebuilt",
+        "CodoMetis.EFCore.SchemaKit.BaseChange+TableRenamed",
+        "CodoMetis.EFCore.SchemaKit.Dependency",
+        "CodoMetis.EFCore.SchemaKit.Dependency+Column",
+        "CodoMetis.EFCore.SchemaKit.Dependency+Extension",
+        "CodoMetis.EFCore.SchemaKit.Dependency+SchemaObject",
+        "CodoMetis.EFCore.SchemaKit.Dependency+WholeTable",
+        "CodoMetis.EFCore.SchemaKit.ISchemaContributor",
+        "CodoMetis.EFCore.SchemaKit.ISchemaDeclaration`1",
+        "CodoMetis.EFCore.SchemaKit.ISchemaDescriptor",
         "CodoMetis.EFCore.SchemaKit.ISchemaDialect",
+        "CodoMetis.EFCore.SchemaKit.ISchemaObject",
         "CodoMetis.EFCore.SchemaKit.Identifier",
+        "CodoMetis.EFCore.SchemaKit.Impact",
+        "CodoMetis.EFCore.SchemaKit.Impact+Blocks",
+        "CodoMetis.EFCore.SchemaKit.Impact+Follows",
+        "CodoMetis.EFCore.SchemaKit.Impact+Lost",
+        "CodoMetis.EFCore.SchemaKit.Impact+Unaffected",
+        "CodoMetis.EFCore.SchemaKit.NameClaim",
+        "CodoMetis.EFCore.SchemaKit.NameClaim+Constraint",
+        "CodoMetis.EFCore.SchemaKit.NameClaim+Relation",
+        "CodoMetis.EFCore.SchemaKit.NameClaim+TableIndex",
+        "CodoMetis.EFCore.SchemaKit.NameClaim+Trigger",
+        "CodoMetis.EFCore.SchemaKit.Operational`1",
         "CodoMetis.EFCore.SchemaKit.QualifiedName",
+        "CodoMetis.EFCore.SchemaKit.SchemaChange",
+        "CodoMetis.EFCore.SchemaKit.SchemaChange+InPlace",
+        "CodoMetis.EFCore.SchemaKit.SchemaChange+None",
+        "CodoMetis.EFCore.SchemaKit.SchemaChange+Rebuild",
+        "CodoMetis.EFCore.SchemaKit.SchemaContributor`2",
+        "CodoMetis.EFCore.SchemaKit.SchemaContributorDependencies",
+        "CodoMetis.EFCore.SchemaKit.SchemaDeclarationExtensions",
+        "CodoMetis.EFCore.SchemaKit.SchemaDeclarationHeader",
         "CodoMetis.EFCore.SchemaKit.SchemaDialect",
         "CodoMetis.EFCore.SchemaKit.SchemaDialectDependencies",
+        "CodoMetis.EFCore.SchemaKit.SchemaJsonReader",
+        "CodoMetis.EFCore.SchemaKit.SchemaJsonWriter",
+        "CodoMetis.EFCore.SchemaKit.SchemaNameComparison",
+        "CodoMetis.EFCore.SchemaKit.SchemaPlacement",
+        "CodoMetis.EFCore.SchemaKit.SchemaResolver",
         "CodoMetis.EFCore.SchemaKit.SchemaScope",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Database",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Schema",
@@ -34,6 +75,8 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SqlName",
         "CodoMetis.EFCore.SchemaKit.SqlOperator",
         "CodoMetis.EFCore.SchemaKit.TableRef",
+        "CodoMetis.EFCore.SchemaKit.ValueList",
+        "CodoMetis.EFCore.SchemaKit.ValueList`1",
     ];
 
     private static Type[] Exported => typeof(SchemaKitDbContextOptionsBuilderExtensions).Assembly.GetExportedTypes();
@@ -70,7 +113,30 @@ public sealed class PublicSurfaceTests
             .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
             .Select(m => m.Name).Order().ToList();
 
-        CollectionAssert.AreEqual(new[] { "AddEntityFrameworkSchemaKit", "UseSchemaKit", "UseSchemaKit" }, methods);
+        CollectionAssert.AreEqual(new[] { "AddEntityFrameworkSchemaKit", "AddSchemaContributor", "UseSchemaKit", "UseSchemaKit" }, methods);
+    }
+
+    /// <summary>The one registration method that belongs to the contract carries its mark, on a type that does not.</summary>
+    [TestMethod]
+    public void The_contributor_registration_is_marked_experimental()
+        => Assert.AreEqual(
+            "SK9001",
+            typeof(SchemaKitServiceCollectionExtensions).GetMethod(nameof(SchemaKitServiceCollectionExtensions.AddSchemaContributor))!
+                .GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId);
+
+    /// <summary>
+    /// The only resolver is the kernel's: one of someone else's could answer the two sides of a diff
+    /// differently. And a statement builder, a writer or a reader is handed out, never made.
+    /// </summary>
+    [TestMethod]
+    public void What_the_kernel_hands_out_cannot_be_made_outside_it()
+    {
+        var offenders = new[] { typeof(SchemaResolver), typeof(SchemaSql), typeof(SchemaJsonWriter), typeof(SchemaJsonReader) }
+            .Where(t => t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).Any(c => c.IsPublic || c.IsFamily || c.IsFamilyOrAssembly))
+            .Select(t => t.Name)
+            .ToList();
+
+        Assert.AreEqual(0, offenders.Count, "Constructible outside the kernel: " + string.Join(", ", offenders));
     }
 
     /// <summary>No value a statement is built from can be made from text by a caller.</summary>

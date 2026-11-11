@@ -35,7 +35,7 @@ error, and a filter is a lambda over the entity you are configuring.
 |---|---|
 | Design of the API | [design/schemakit-api.md](design/schemakit-api.md) |
 | Plan for the core, with the decisions taken | [design/schemakit-core-plan.md](design/schemakit-core-plan.md) |
-| The kernel, so far the host | [src/CodoMetis.EFCore.SchemaKit](src/CodoMetis.EFCore.SchemaKit) |
+| The kernel, so far the host, the SQL vocabulary, the contributor contract and the declaration store | [src/CodoMetis.EFCore.SchemaKit](src/CodoMetis.EFCore.SchemaKit) |
 | Prototype and compile probes | [test/SchemaKit.ApiProbes](test/SchemaKit.ApiProbes): 30 forbidden declarations, each with an allowed twin |
 | Work | The [issues](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues), under the `11.0.0` milestone |
 

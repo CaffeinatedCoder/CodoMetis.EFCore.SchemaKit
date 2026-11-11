@@ -208,6 +208,28 @@ index made sense. A list of values has no such reading.
   name, which the name-claim check reports at diff.
 - Names compare by the provider's rule (ordinal on PostgreSQL, case-insensitive on SQL Server).
 
+**Built in #7 and #9,** in the kernel, public and experimental (`SK9001`):
+
+- **The kind in the key is the case of the union** (`$kind`), not the owner, which the key carries
+  already. So an index and a trigger of one name under one owner are two declarations. Whether the
+  name is taken twice depends on the namespaces of the two kinds, which is the database's rule and
+  the name claims' to answer, not the store's.
+- **The kernel computes the key, not the contributor.** A declaration writes its properties through
+  `SchemaJsonWriter`, and what does not change the object through `writer.Operational`. The value is
+  everything written; the identity of an unnamed declaration is the same call with the operational
+  part left out. A contributor cannot hash one thing and store another.
+- **The value** is one JSON object in a fixed order: `$kind`, `v`, `r`, `name` when there is one,
+  then the declaration's properties as it writes them. `v` is the format version and is 2; a reader
+  that meets another refuses it. The wiring stamp `CodoMetis:SchemaKit` = `1` stays a mark of
+  presence and is not the format version: a per-declaration `v` lets one snapshot hold declarations
+  of two formats while it is being rewritten, and a model-wide number could not.
+- **Nothing is omitted but a null, and the reader has no default.** The writer has no way to leave
+  out a `false`, a zero or an empty list; the reader's methods either require the property or
+  return null. A property a declaration does not read is refused, since it is an option a newer
+  version wrote and this one would drop.
+- **`Declare` is all or nothing,** and so is `Redeclare`, which compares results only: two names
+  can be swapped in one call.
+
 ### 3.5 Resolution and renderer epochs
 
 - **Templates at declaration, not a tree at diff.** A lambda is translated where it is written into
@@ -242,6 +264,11 @@ public closed record SchemaChange
 }
 ```
 
+**As built (#7):** `InPlace` carries no statements. `Plan` is handed the `SchemaSql` the statements
+are written into, so the answer is `None`, `InPlace` or `Rebuild` alone, and the base class refuses
+an answer that disagrees with what was written: an `InPlace` with no statement, or statements beside
+a `None` or a `Rebuild`.
+
 A rename is one `InPlace`. So are `ALTER INDEX … SET (fillfactor = …)`, `ALTER POLICY` and, where
 PostgreSQL allows it for the constraint kind, a deferrability change. A statement carries its
 transaction requirement. Matching: exact descriptor equality first; the rest are paired on
@@ -263,8 +290,9 @@ column (CaffeinatedCoder/EFCore.ComplexIndexes#182), `ALTER COLUMN` on SQL Serve
 silence (CaffeinatedCoder/EFCore.ComplexIndexes#142), a schema move (CaffeinatedCoder/EFCore.ComplexIndexes#185), a generated column (CaffeinatedCoder/EFCore.ComplexIndexes#184), SQLite's table rebuild (CaffeinatedCoder/EFCore.ComplexIndexes#95). The
 new core has one mechanism.
 
-- **Every descriptor lists what it depends on**, as a closed union: `Column(table, name)`, `Table`,
-  `Object(ref)`, `Extension(name)`. Placeholders give the columns of an expression exactly.
+- **Every descriptor lists what it depends on**, as a closed union: `Column(table, name)`,
+  `WholeTable(table)`, `SchemaObject(owner, name)`, `Extension(name)`. Placeholders give the columns
+  of an expression exactly.
 - **The kernel normalises EF's operations into a closed `BaseChange`:** `ColumnRenamed`,
   `ColumnAltered`, `ColumnDropped`, `TableRenamed`, `TableMoved`, `TableDropped`, `TableRebuilt`.
 - **Every contributor answers `ImpactOf(descriptor, change)`**, a mandatory member:
@@ -358,6 +386,14 @@ public interface ISchemaDescriptor
 
 - The typed base class `SchemaContributor<TDeclaration, TDescriptor>` and its dependencies record
   stay as drafted. An optional `ICatalogProbe` serves the verifier.
+- **Built in #7:** the interface, the base class, `ISchemaDescriptor`, the closed unions
+  (`SchemaChange`, `Impact`, `BaseChange`, `Dependency`, `NameClaim`, `SchemaPlacement`),
+  `ValueList<T>`, `Operational<T>`, and `AddSchemaContributor<T>()`, which adds a contributor to a
+  context's services without touching the two EF services. Two contributors for one owner are
+  refused. A descriptor type that is not a record is refused when its contributor is built.
+  `SchemaResolver` exists as what `Resolve` is handed (the table, the dialect, a fragment builder)
+  and cannot be derived outside the kernel; turning paths into SQL is #43. Nothing calls a
+  contributor yet: that is the planner (#24).
 - **The contract freezes only after a contributor outside the repository compiles against it.**
   ValueRanges' vocabulary and the ltree contributor are the candidates. Until then it is marked
   experimental with a diagnostic id, so previews can change it.
