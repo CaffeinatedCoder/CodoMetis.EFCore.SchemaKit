@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        Spike A (#16): can SchemaKit decorate IMigrationsModelDiffer and IMigrationsSqlGenerator
+        instead of deriving from EF's classes, and can a model-initialized convention check, while
+        the model is being built, that the outermost instance of both is SchemaKit's?
+
+        Throwaway code. SpikeKit/ is what the kernel host would do, in miniature; OtherPackage/ plays
+        a stranger that replaces the same services; Conditions/ is one test per condition of the
+        issue. No database is contacted: models are built and scripts generated offline.
+
+        EF1001 (use of EF-internal API) stays an error, so SpikeKit/ shows the host needs none.
+        OtherPackage/ derives from EF's differ on purpose and disables it there.
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>SchemaKit.Spikes.A</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Npgsql EF rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; the other providers follow it. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="MSTest" Version="4.3.3" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    </ItemGroup>
+
+</Project>

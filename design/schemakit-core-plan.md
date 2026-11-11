@@ -98,23 +98,53 @@ options.UseSqlite(cs).UseSchemaKit(k => k.IgnoreDeclarationsOf(SchemaProvider.Po
 | Guard | Catches | How |
 |---|---|---|
 | **Stamp** | `UseSchemaKit()` forgotten, at run time or in an `IDesignTimeDbContextFactory` | The options extension adds an `IConventionSetPlugin` whose `IModelInitializedConvention` stamps the model. `DeclarePostgres` and `DeclareSqlServer` throw without the stamp, naming the call to add |
-| **Resolve-time ownership** | A later `ReplaceService`, or a later extension that registers a differ or generator directly | When the model is built, the plugin resolves the context's `IMigrationsModelDiffer` and `IMigrationsSqlGenerator` and throws unless the outermost instance is SchemaKit's. `Validate` cannot do this: it runs before `ApplyServices` |
+| **Ownership** | Another package in front of SchemaKit's differ or generator | Two checks. `Validate`, when the context is constructed, refuses a service-only `ReplaceService` made after `UseSchemaKit()`. When the model is built, the plugin resolves both services and throws unless the outermost instance is SchemaKit's: that one catches what the options do not show, a registration added to a caller-owned provider after SchemaKit's, and a replacement keyed on SchemaKit's own type |
 | **5.x still referenced** | The old packages left in the project, whose `.targets` would put the 5.x differ in front at design time | An assembly whose name starts with `EFCore.ComplexIndexes` is loaded: throw, naming the packages to remove |
 
-The decorator's registration, in `UseSchemaKit()`: read the current `ReplacedServices` entry for the
-service, keep its type as the inner, and take the entry over. A differ another package registered
-earlier becomes SchemaKit's inner instead of being discarded. One registered later trips the second
-guard.
+**The decorator's registration,** as spike A measured it on Npgsql, SQL Server and SQLite
+(`spikes/A.DecoratorOwnership`, 69 conditions, each mechanism shown to fail its conditions when
+removed). It takes three parts, and none is redundant:
+
+- `UseSchemaKit()` reads the `ReplacedServices` entry of the service, keeps its type as the inner, and
+  takes the entry over. EF applies that entry after every extension's `ApplyServices`, so it also
+  beats a differ another extension registers directly, in either order.
+- `ApplyServices` adds SchemaKit's own registration as well. Without it, a replacement keyed on EF's
+  type (`ReplaceService<IMigrationsModelDiffer, MigrationsModelDiffer, X>()`) rewrites the provider's
+  only registration and SchemaKit is gone.
+- The inner service is found by replaying every other extension's `ApplyServices` into a scratch
+  collection and taking the last registration, then applying the replacements EF would. No
+  EF-internal type is named: the spike compiles with `EF1001` as an error.
+
+What another package's registration becomes:
+
+| The other package | Before `UseSchemaKit()` | After it |
+|---|---|---|
+| `ReplaceService<TService, X>()` | SchemaKit's inner | Refused when the context is constructed: EF keeps one entry per service, so the two cannot both hold it |
+| `ReplaceService<TService, TCurrent, X>()` keyed on EF's type | Inner | Inner |
+| A registration in its extension's `ApplyServices`, by type or factory | Inner | Inner |
+| A registration added to a caller-owned provider (`UseInternalServiceProvider`) | Inner | Refused when the model is built |
+
+With `UseInternalServiceProvider`, the caller adds `AddEntityFrameworkSchemaKit()` to the collection
+after the provider's `AddEntityFramework…()`, and calls `UseSchemaKit()` after
+`UseInternalServiceProvider()`. The other order records `ReplaceService` entries EF then refuses, with
+its own message.
+
+Resolving both services while the model is being built does not cycle on any of the three providers.
+The check runs once per model build; a model-cache hit skips it, and the decorators are still there,
+since they are resolved per context.
 
 **What no plugin can guard**, stated in the docs instead of promised away:
 
 - a compiled or prebuilt model used without `UseSchemaKit()`: no SchemaKit code runs;
+- a model cache shared through `UseMemoryCache` between options with and without `UseSchemaKit()`: the
+  context without it gets the stamped model from the cache, so nothing throws, and its create script
+  lacks every declaration (measured in spike A, condition C18);
 - a user's own `IDesignTimeServices` that registers a differ: EF adds it last, and a simulation of
   EF's design-time composition cannot prove what the real collection holds;
 - a host with no SchemaKit at all applying 5.x migrations with pre-5.0.2 temporal operations, which
   carry no failure marker.
 
-The catalog verifier ([3.11](#311-the-catalog-verifier)) is the answer to all three, since it reads
+The catalog verifier ([3.11](#311-the-catalog-verifier)) is the answer to all four, since it reads
 the database and not the pipeline.
 
 ### 3.3 The seam
@@ -393,7 +423,7 @@ first. No public API is written before they pass.
 
 | | Spike | It fails when | Then |
 |---|---|---|---|
-| **A** | Decorator plus resolve-time ownership check on Npgsql, SQL Server and SQLite; pooled contexts, `AddDbContextFactory`, `UseInternalServiceProvider`, a model-cache hit | Resolving the differ during model building cycles or the check is skipped on a cache hit | The check moves to first use of the differ and to `Validate`; the stamp still stands |
+| **A** | Decorator plus resolve-time ownership check on Npgsql, SQL Server and SQLite; pooled contexts, `AddDbContextFactory`, `UseInternalServiceProvider`, a model-cache hit | Resolving the differ during model building cycles or the check is skipped on a cache hit | **Passed 2026-11-11** (#16): no cycle, and the outcome is in [3.2](#32-wiring-one-registration-three-guards). Runtime paths only; design time is spike B |
 | **B** | No `.targets`: a packed consumer outside the repository runs every path of the wiring-removal row | Any design-time path does not get the context's differ | A `ForProvider` attribute installs the same decorator, and the smoke test keeps its old job |
 | **C** | A real 5.x snapshot with exclusion constraints, and one temporal constraint moved to `WithoutOverlaps()`, diff to zero operations | The handover needs facts the snapshot does not hold | The guide documents one migration for that case (#10 allows exactly that) |
 | **D** | `CREATE INDEX CONCURRENTLY` and a trigger as `SqlOperation`s in an idempotent script, applied twice, and in a bundle, on PostgreSQL and SQL Server | The provider cannot wrap the statement | That combination is refused with the declaration named |
@@ -454,8 +484,8 @@ yes), Q10 and Q11 (TypeKit on .NET 11), Q13 (operator classes typed by CLR type)
 
 ## 8. What stays uncertain
 
-- Spikes A and B are not run. The no-`.targets` decision rests on reading EF's source, not on a
-  packed consumer.
+- Spike B is not run. The no-`.targets` decision rests on reading EF's source, not on a packed
+  consumer. Spike A passed, for the runtime paths.
 - Nothing here was compiled against the GA SDK.
 - Npgsql's rc.3 facts come from its source and tests, not from a run on this machine.
 - The impact table is a hypothesis until spike E measures it.
