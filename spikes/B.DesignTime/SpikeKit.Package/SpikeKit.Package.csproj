@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        Spike B (#17): spike A's kit, packed. What matters is what the package does NOT contain: no
+        build/ or buildTransitive/ folder, no .targets, no DesignTimeServicesReferenceAttribute. The
+        consumer gets the kit's services through UseSpikeKit() on its options and nothing else.
+
+        Two levels below spikes/, so the Spikes lane's `spikes/*/*.csproj` does not take it for a
+        test project; run.sh packs it.
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <RootNamespace>SchemaKit.Spikes.A.SpikeKit</RootNamespace>
+        <AssemblyName>SchemaKit.Spike</AssemblyName>
+        <PackageId>SchemaKit.Spike</PackageId>
+        <Version>0.0.1-spike</Version>
+        <IsPackable>true</IsPackable>
+        <NoWarn>$(NoWarn);1591</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="../../A.DecoratorOwnership/SpikeKit/*.cs" LinkBase="SpikeKit" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="11.0.0-rc.3.26522.148" />
+    </ItemGroup>
+
+</Project>
