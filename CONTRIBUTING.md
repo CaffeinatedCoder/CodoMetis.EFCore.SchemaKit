@@ -1,7 +1,7 @@
 # Contributing
 
-SchemaKit is in its design phase: the repository holds the design, a prototype and its compile
-probes. Until `11.0.0-preview.1` the most useful contribution is a review of
+SchemaKit is at its beginning: the repository holds the design, a prototype with its compile probes,
+and the kernel's host. Until `11.0.0-preview.1` the most useful contribution is a review of
 [design/schemakit-api.md](design/schemakit-api.md) and
 [design/schemakit-core-plan.md](design/schemakit-core-plan.md), as an issue.
 
@@ -10,8 +10,12 @@ probes. Until `11.0.0-preview.1` the most useful contribution is a review of
 You need the .NET SDK 11.0.100 or a later patch; `global.json` pins the feature band.
 
 ```bash
+dotnet build CodoMetis.EFCore.SchemaKit.slnx
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 ```
+
+The tests contact no database but SQLite.
 
 ## Issues
 
@@ -61,5 +65,6 @@ line.
 ## What is not here yet
 
 The convention tests that enforce most of the above in `EFCore.ComplexIndexes` (changelog form,
-packaging, documentation links, workflow gate, release wiring) arrive with the first `src/`
-project. Until then the rules on this page are held by review.
+packaging, documentation links, workflow gate, release wiring) are not ported yet. Two conventions
+are held by tests already: no EF-internal API in a shipping project, and the kernel's public
+surface. The rest of this page is held by review until the port.

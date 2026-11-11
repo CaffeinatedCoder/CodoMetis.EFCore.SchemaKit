@@ -100,7 +100,7 @@ options.UseSqlite(cs).UseSchemaKit(k => k.IgnoreDeclarationsOf(SchemaProvider.Po
 |---|---|---|
 | **Stamp** | `UseSchemaKit()` forgotten, at run time or in an `IDesignTimeDbContextFactory` | The options extension adds an `IConventionSetPlugin` whose `IModelInitializedConvention` stamps the model. `DeclarePostgres` and `DeclareSqlServer` throw without the stamp, naming the call to add |
 | **Ownership** | Another package in front of SchemaKit's differ or generator | Two checks. `Validate`, when the context is constructed, refuses a service-only `ReplaceService` made after `UseSchemaKit()`. When the model is built, the plugin resolves both services and throws unless the outermost instance is SchemaKit's: that one catches what the options do not show, a registration added to a caller-owned provider after SchemaKit's, and a replacement keyed on SchemaKit's own type |
-| **5.x still referenced** | The old packages left in the project, whose `.targets` would put the 5.x differ in front at design time | An assembly whose name starts with `EFCore.ComplexIndexes` is loaded: throw, naming the packages to remove |
+| **5.x still referenced** | The old packages left in the project, whose `.targets` would put the 5.x differ in front at design time | The context's assembly or the entry assembly carries a `DesignTimeServicesReferenceAttribute` into an `EFCore.ComplexIndexes` assembly: throw, naming the packages to remove. The attribute is what does the damage, so it is what the guard looks for; a loaded assembly would be a guess |
 
 **The decorator's registration,** as spike A measured it on Npgsql, SQL Server and SQLite
 (`spikes/A.DecoratorOwnership`, 69 conditions, each mechanism shown to fail its conditions when
@@ -171,6 +171,10 @@ the database and not the pipeline.
   `has-pending-model-changes` and `migrations remove` see SchemaKit's changes without the 5.x
   override. What 5.x took from protected members (renamed tables, renamed columns) is read from the
   inner differ's output operations.
+- **The host knows nothing of declarations.** It asks an internal `ISchemaOperationPlanner` for the
+  operations before and after the inner differ's, and an `IMigrationOperationRewriter` list for the
+  generator. Declarations, descriptors and contributors arrive behind the planner, so the host could
+  be built and tested first (#21).
 - **Only `SqlOperation`, rendered at design time**, for every new object, indexes included. Unchanged
   from the draft, and both designs chose it.
 - **`SchemaKitSqlGenerator : IMigrationsSqlGenerator`**, a decorator with one job: rewrite operations

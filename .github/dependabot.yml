@@ -15,6 +15,28 @@ updates:
         update-types: [ "version-update:semver-major" ]
 
   - package-ecosystem: nuget
+    directory: /test/CodoMetis.EFCore.SchemaKit.Tests
+    schedule:
+      interval: monthly
+    groups:
+      test-dependencies:
+        patterns: [ "*" ]
+    ignore:
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+      - dependency-name: "Npgsql.EntityFrameworkCore.PostgreSQL*"
+
+  # src/ has no version updates: its EF Core floor is a release decision. The entry exists so that
+  # security updates there honour the same ignores.
+  - package-ecosystem: nuget
+    directories:
+      - /src/*
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+
+  - package-ecosystem: nuget
     directory: /test/SchemaKit.ApiProbes
     schedule:
       interval: monthly

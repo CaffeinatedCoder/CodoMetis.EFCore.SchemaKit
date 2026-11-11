@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj" />
+  </Folder>
+</Solution>

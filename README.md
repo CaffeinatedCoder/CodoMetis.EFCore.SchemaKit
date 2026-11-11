@@ -4,8 +4,9 @@ Schema objects EF Core 11 has no API for, declared in your model and carried by 
 expression and JSON-member indexes, typed index filters, PostgreSQL exclusion constraints, and a
 contract other packages use to add their own (row guards, policies, ltree paths).
 
-> **Nothing is released yet.** This repository holds the design and a compiling prototype of the
-> API. The first package will be `11.0.0-preview.1`.
+> **Nothing is released yet.** This repository holds the design, a compiling prototype of the API,
+> and the beginning of the kernel: the host that puts SchemaKit into every migration path. Nothing
+> can be declared with it yet. The first package will be `11.0.0-preview.1`.
 
 ```csharp
 public sealed class RoleGrantConfiguration : IEntityTypeConfiguration<RoleGrant>
@@ -34,6 +35,7 @@ error, and a filter is a lambda over the entity you are configuring.
 |---|---|
 | Design of the API | [design/schemakit-api.md](design/schemakit-api.md) |
 | Plan for the core, with the decisions taken | [design/schemakit-core-plan.md](design/schemakit-core-plan.md) |
+| The kernel, so far the host | [src/CodoMetis.EFCore.SchemaKit](src/CodoMetis.EFCore.SchemaKit) |
 | Prototype and compile probes | [test/SchemaKit.ApiProbes](test/SchemaKit.ApiProbes): 30 forbidden declarations, each with an allowed twin |
 | Work | The [issues](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues), under the `11.0.0` milestone |
 
@@ -56,6 +58,7 @@ members, and `WITHOUT OVERLAPS` keys. SchemaKit leaves those to them.
 You need the .NET SDK 11.0.100 or a later patch (`global.json`).
 
 ```bash
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 ```
 
