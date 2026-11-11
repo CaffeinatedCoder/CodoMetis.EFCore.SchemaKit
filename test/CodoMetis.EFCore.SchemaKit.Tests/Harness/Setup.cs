@@ -33,7 +33,7 @@ public sealed class Ctx<TTest>(DbContextOptions<Ctx<TTest>> options) : DbContext
 /// <summary>What a context actually uses, read after its model is built.</summary>
 public sealed record Observed(string OuterDiffer, string InnerDiffer, string OuterGenerator, string InnerGenerator, string Script)
 {
-    public bool HasTestObject => Script.Contains("test:thing_name");
+    public bool HasTestObject => Script.Contains("test_thing_name");
     public bool HasOtherPackage => Script.Contains("other-package");
 }
 

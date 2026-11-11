@@ -8,6 +8,9 @@
         <Description>Schema objects EF Core 11 has no API for, declared in the model and carried by migrations. The kernel: the host that puts them into every migration path, and the contract other packages contribute through.</Description>
         <!-- CS1591 polices the public surface: the .xml in the package is what a consumer sees. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <!-- SK9001 marks SchemaKit's contributor contract as experimental for everyone else. The kernel
+             is that contract's owner and first user, so it does not ask itself for the opt-in. -->
+        <NoWarn>$(NoWarn);SK9001</NoWarn>
     </PropertyGroup>
 
     <!--

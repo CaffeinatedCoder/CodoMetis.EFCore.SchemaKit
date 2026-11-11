@@ -291,7 +291,15 @@ contributor compiled against an older contract miss a rebuild without anyone not
 
 - **`QualifiedName`** joins `Identifier`. The prototype drops an index as `DROP INDEX IF EXISTS "ix"`
   while creating it on a schema-qualified table: with `tenant.ix` and `public.ix`, the drop resolves
-  through `search_path` and can remove the wrong one (`PgContributors.cs:99`).
+  through `search_path` and can remove the wrong one (`PgContributors.cs:99`). Held on a live server
+  since #23: the unqualified form removes the public schema's index and leaves the one meant. The
+  types cannot enforce it for every kind, because a constraint and a trigger are legitimately named
+  within their table; a contributor writes `table.Qualify(name)`, and its own live test holds it.
+- **Built in #23,** as the first part of the contributor contract, public and marked experimental
+  (`SK9001`): `Identifier`, `TableRef`, `QualifiedName`, `SqlName`, `SqlOperator`, `SqlFragment`,
+  `SchemaScope`, `SchemaSql` with its handler, `ISchemaDialect` and `SchemaDialect`. The handler has
+  no `bool` hole, unlike the prototype's: how a boolean is spelled is the dialect's (`true`, `ON`,
+  `1`), so a contributor composes it. The builder itself refuses a `DROP … IF EXISTS`.
 - **`ISchemaDescriptor.Scope`** is a closed `Table | Schema | Database`, replacing the mandatory
   `TableRef`. Domains and extensions are not table objects, and the contract is permanent.
 - **Every statement ends with the provider's terminator** (`ISqlGenerationHelper.StatementTerminator`).

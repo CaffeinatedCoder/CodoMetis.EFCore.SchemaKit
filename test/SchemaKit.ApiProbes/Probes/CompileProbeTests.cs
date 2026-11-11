@@ -100,6 +100,9 @@ public sealed class CompileProbeTests
         var local = Directory.EnumerateFiles(AppContext.BaseDirectory, "*.dll");
         return [.. platform.Concat(local)
             .Where(path => !Path.GetFileName(path).StartsWith("Microsoft.CodeAnalysis", StringComparison.Ordinal))
+            // The kernel's assembly sits beside the prototype since KernelProbeTests needs it, and
+            // declares types of the same names. These probes are about the prototype.
+            .Where(path => Path.GetFileName(path) != "CodoMetis.EFCore.SchemaKit.dll")
             .GroupBy(Path.GetFileName)
             .Select(group => MetadataReference.CreateFromFile(group.First()))];
     }

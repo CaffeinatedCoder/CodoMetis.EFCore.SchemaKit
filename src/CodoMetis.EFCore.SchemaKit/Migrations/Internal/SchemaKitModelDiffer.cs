@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 
@@ -18,9 +19,13 @@ namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 internal sealed class SchemaKitModelDiffer(
     IServiceProvider services,
     IDbContextOptions options,
-    InnerServices inner,
-    ISchemaOperationPlanner planner) : IMigrationsModelDiffer
+    InnerServices inner) : IMigrationsModelDiffer
 {
+    // Resolved on first use, not injected. The ownership check resolves this differ while the model
+    // is being built, and a planner needs what only exists afterwards: the dialect reads the
+    // design-time model. Injected, the planner would make that check cycle.
+    private ISchemaOperationPlanner Planner => field ??= services.GetRequiredService<ISchemaOperationPlanner>();
+
     /// <summary>The differ this one wraps.</summary>
     public IMigrationsModelDiffer Inner { get; } =
         inner.Create<IMigrationsModelDiffer>(services, options, options.FindExtension<SchemaKitOptionsExtension>()?.InnerDiffer);
@@ -37,7 +42,7 @@ internal sealed class SchemaKitModelDiffer(
     public IReadOnlyList<MigrationOperation> GetDifferences(IRelationalModel? source, IRelationalModel? target)
     {
         var operations = Inner.GetDifferences(source, target);
-        var plan       = planner.Plan(source, target, operations);
+        var plan       = Planner.Plan(source, target, operations);
 
         return plan.IsEmpty ? operations : [.. plan.Before, .. operations, .. plan.After];
     }

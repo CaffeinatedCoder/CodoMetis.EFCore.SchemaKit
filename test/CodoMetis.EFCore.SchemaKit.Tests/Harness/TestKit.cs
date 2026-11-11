@@ -62,32 +62,43 @@ public static class TestKit
     }
 }
 
-/// <summary>Drops before, creates after: the order the real planner will produce.</summary>
-internal sealed class TestPlanner(ISqlGenerationHelper sql, IDatabaseProvider provider) : ISchemaOperationPlanner
+/// <summary>
+/// Drops before, creates after: the order the real planner will produce, written through the real
+/// statement builder.
+/// </summary>
+/// <remarks>
+/// It takes the dialect in its constructor on purpose. The dialect reads the design-time model, so
+/// a host that built its planner while the model was being built would cycle; that it does not is
+/// what every test that uses this planner shows.
+/// </remarks>
+internal sealed class TestPlanner(ISchemaDialect dialect, IDatabaseProvider provider) : ISchemaOperationPlanner
 {
     public SchemaOperationPlan Plan(IRelationalModel? source, IRelationalModel? target, IReadOnlyList<MigrationOperation> inner)
     {
         var before = Declarations(source);
         var after  = Declarations(target);
-        var end    = sql.StatementTerminator;
+        var drops  = new SchemaSql(dialect);
+        var creates = new SchemaSql(dialect);
 
-        List<MigrationOperation> drops = [], creates = [];
-        foreach (var (name, d) in before.Where(d => !after.ContainsKey(d.Key)))
-            drops.Add(new SqlOperation
-            {
-                Sql = provider.Name.Contains("SqlServer")
-                    ? $"DROP INDEX {d.Index} ON {d.Table} /* test:{name} */{end}"
-                    : $"DROP INDEX {d.Index} /* test:{name} */{end}",
-            });
-        foreach (var (name, d) in after.Where(d => !before.ContainsKey(d.Key)))
-            creates.Add(new SqlOperation { Sql = $"CREATE INDEX {d.Index} ON {d.Table} ({d.Column}) /* test:{name} */{end}" });
+        foreach (var (_, d) in before.Where(d => !after.ContainsKey(d.Key)))
+        {
+            // The database's rule, not a preference: SQL Server names an index within its table,
+            // PostgreSQL and SQLite within a schema.
+            if (provider.Name.Contains("SqlServer"))
+                drops.Statement($"DROP INDEX {d.Index} ON {d.Table}");
+            else
+                drops.Statement($"DROP INDEX {d.Table.Qualify(d.Index)}");
+        }
 
-        return new SchemaOperationPlan(drops, creates);
+        foreach (var (_, d) in after.Where(d => !before.ContainsKey(d.Key)))
+            creates.Statement($"CREATE INDEX {d.Index} ON {d.Table} ({d.Column})");
+
+        return new SchemaOperationPlan(drops.Operations, creates.Operations);
     }
 
-    private Dictionary<string, (string Index, string Table, string Column)> Declarations(IRelationalModel? model)
+    private Dictionary<string, (Identifier Index, TableRef Table, Identifier Column)> Declarations(IRelationalModel? model)
     {
-        Dictionary<string, (string, string, string)> found = [];
+        Dictionary<string, (Identifier, TableRef, Identifier)> found = [];
         if (model is null) return found;
 
         foreach (var entity in model.Model.GetEntityTypes())
@@ -95,7 +106,10 @@ internal sealed class TestPlanner(ISqlGenerationHelper sql, IDatabaseProvider pr
             if (entity.FindAnnotation(TestKit.Declared)?.Value is not string name) continue;
             var table  = StoreObjectIdentifier.Create(entity, StoreObjectType.Table)!.Value;
             var column = entity.GetProperties().First(p => !p.IsPrimaryKey()).GetColumnName(table)!;
-            found[name] = (sql.DelimitIdentifier($"test_{name}"), sql.DelimitIdentifier(table.Name, table.Schema), sql.DelimitIdentifier(column));
+            found[name] = (
+                dialect.Identifier($"test_{name}"),
+                new TableRef(table.Schema is null ? null : dialect.Identifier(table.Schema), dialect.Identifier(table.Name)),
+                dialect.Identifier(column));
         }
 
         return found;
