@@ -102,6 +102,15 @@ internal static class DeclarationCodec
             if (declaration.Kind != header.Kind || declaration.Name != header.Name || declaration.Epoch != header.Epoch)
                 throw new InvalidOperationException(SchemaKitStrings.ReadLostTheHeader(typeof(TDeclaration), key));
 
+            // Every other property the same way: a Read that takes a property and then drops it, or
+            // puts a default in its place, has satisfied the reader and built another declaration.
+            // Writing what was read must give what was stored. The comparison is of the JSON and
+            // not of the text, so it does not depend on how a character is escaped.
+            var rewritten = Value(declaration);
+            using var again = JsonDocument.Parse(rewritten);
+            if (!JsonElement.DeepEquals(again.RootElement, root))
+                throw new InvalidOperationException(SchemaKitStrings.ReadChangedTheDeclaration(typeof(TDeclaration), key, value, rewritten));
+
             return declaration;
         }
     }

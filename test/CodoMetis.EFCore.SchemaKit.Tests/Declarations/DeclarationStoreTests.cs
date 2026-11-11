@@ -123,6 +123,24 @@ public sealed class DeclarationStoreTests
         Assert.AreEqual(Email, entity.GetDeclarations<TestGuard>().Single(), "The first declaration must be the one still there, unchanged.");
     }
 
+    /// <summary>
+    /// The same for a declaration without a name, declared in two calls, by a convention and by
+    /// the user for instance. The second differs only in an operational option, so it has the
+    /// first's key, and storing it would overwrite the first's options without an error.
+    /// </summary>
+    [TestMethod]
+    public void An_unnamed_declaration_that_is_already_there_is_refused_and_the_first_stays()
+    {
+        var entity = Entity();
+        var index = new TestGuard.Unique([new GuardKey("Code")]);
+        entity.Declare([index]);
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => entity.Declare([index with { Concurrently = true }]));
+
+        StringAssert.Contains(error.Message, "already declares Test.Guard unique");
+        StringAssert.Contains((string)Stored(entity).Single().Value!, "\"concurrently\":false", "The first declaration's options must be the ones still stored.");
+    }
+
     [TestMethod]
     public void Two_declarations_that_differ_only_in_an_operational_option_are_one()
     {

@@ -121,6 +121,10 @@ internal static class SchemaKitStrings
         => $"{declaration.Name}.Read built a declaration for the annotation '{key}' whose kind, name or epoch is not the " +
            "one that was stored. Stored again, it would be another declaration.";
 
+    public static string ReadChangedTheDeclaration(Type declaration, string key, string stored, string rewritten)
+        => $"{declaration.Name}.Read built a declaration for the annotation '{key}' that is not the one that was stored. " +
+           $"Stored: {stored}. What it read writes: {rewritten}. Read must keep every property it takes from the reader.";
+
     // ---- contributors ---------------------------------------------------------------------------
 
     public static string DescriptorIsNotARecord(Type contributor, Type descriptor)
