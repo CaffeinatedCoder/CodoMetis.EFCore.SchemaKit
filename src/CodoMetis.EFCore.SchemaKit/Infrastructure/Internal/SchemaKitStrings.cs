@@ -83,6 +83,10 @@ internal static class SchemaKitStrings
     public static string DeclarationWithoutKind(Type type)
         => $"A declaration of type '{type.FullName}' has no kind. The kind names the case of the union in the model snapshot.";
 
+    public static string InvalidKind(Type type, string kind)
+        => $"A declaration of type '{type.FullName}' has the kind '{kind}'. A kind holds no white space and no control " +
+           "character: a declaration's key is over its kind and its name, with a line break between the two.";
+
     public static string EmptyDeclarationName(string owner, string kind)
         => $"A {owner} {kind} declaration has an empty name. Leave the name null for a default name.";
 
