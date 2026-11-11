@@ -143,6 +143,12 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 - **The kernel computes the key.** A declaration writes its properties through `SchemaJsonWriter`
   and marks what does not change the object with `writer.Operational`; the identity is the same
   call without that part. A named declaration's key is over its kind and its name.
+- **A string is written by `CanonicalJson`, never by a runtime encoder.** The encoders of
+  `System.Text.Encodings.Web` escape what their runtime's Unicode tables do not know, so their text,
+  and a key hashed over it, moves with the runtime (22 characters between .NET 9 and 10). The rule
+  escapes `"`, `\`, everything below U+0020, and U+0085, U+2028 and U+2029, which EF Core writes
+  unescaped into the snapshot's string literal, where they end the line. Property names are ASCII
+  letters, digits and `_`, since a name cannot be written raw.
 - **Nothing is omitted but a null, and the reader has no default.** There is no writer method that
   drops a `false` or a zero and none may be added; a reader method either requires its property or
   returns null. `DeclarationCodecTests` holds it for every writer method by reflection, so it stays

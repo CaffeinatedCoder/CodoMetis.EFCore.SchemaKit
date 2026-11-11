@@ -31,8 +31,10 @@ internal static class DeclarationCodec
     /// <summary>The format this version writes and the only one it reads here. The 5.x readers are their own.</summary>
     public const int FormatVersion = 2;
 
-    // The relaxed encoder keeps an operator readable in a snapshot ("&&", not "&&"). The
-    // value is never put into HTML, and it escapes what JSON itself requires.
+    // Strings do not go through this encoder: CanonicalJson writes them, by a rule that is the same
+    // on every runtime and that keeps an operator readable in a snapshot ("&&", not "\u0026\u0026").
+    // What is left to the encoder are property names, which are ASCII letters, digits and "_", and
+    // "$kind". The relaxed encoder writes each of those as itself.
     private static readonly JsonWriterOptions Options = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static string KeyPrefix(string owner) => $"{Prefix}{owner}:";
@@ -136,10 +138,10 @@ internal static class DeclarationCodec
             json.WriteStartObject();
             if (!forIdentity)
             {
-                json.WriteString(DeclarationCodecNames.Kind, declaration.Kind);
+                json.WriteCanonicalString(DeclarationCodecNames.Kind, declaration.Kind);
                 json.WriteNumber(DeclarationCodecNames.Version, FormatVersion);
                 json.WriteNumber(DeclarationCodecNames.Epoch, declaration.Epoch);
-                if (declaration.Name is { } name) json.WriteString(DeclarationCodecNames.Name, name);
+                if (declaration.Name is { } name) json.WriteCanonicalString(DeclarationCodecNames.Name, name);
             }
 
             declaration.Write(new SchemaJsonWriter(json, forIdentity));

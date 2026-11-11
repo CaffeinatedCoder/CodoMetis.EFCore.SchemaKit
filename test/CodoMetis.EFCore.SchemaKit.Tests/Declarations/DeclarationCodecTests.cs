@@ -43,6 +43,7 @@ public sealed class DeclarationCodecTests
         [new TestGuard.Unique([new GuardKey("A")]) { FillFactor = 70, Concurrently = true }],
         [new TestGuard.Unique([new GuardKey("A")]) { Where = new GuardFilter("{A} <> 'it''s' AND \"B\" && {C}") }],
         [new TestGuard.Unique([new GuardKey("A")]) { Name = "naïve \"name\" \\ 名前", Where = new GuardFilter("") }],
+        [new TestGuard.Unique([new GuardKey("A")]) { Where = new GuardFilter("\u0001\t\u007F\u2028\u0378\uA7DB\U0001F600") }],
         [new TestGuard.Trigger("Path")],
         [new TestGuard.Trigger("Path") { Name = "tr_path", Epoch = 7 }],
     ];
@@ -253,6 +254,89 @@ public sealed class DeclarationCodecTests
         => Assert.AreEqual(
             """{"$kind":"written","v":2,"r":1,"op":"&&","text":"a < b > 'c' + \"d\""}""",
             Json(w => { w.String("op", "&&"); w.String("text", "a < b > 'c' + \"d\""); }));
+
+    // ---- strings are written by one rule, on every runtime ---------------------------------------------
+
+    [TestMethod]
+    public void A_string_is_escaped_where_json_requires_it_and_nowhere_else()
+    {
+        static string Text(string value) => CanonicalJson.Quote(value, "p");
+
+        Assert.AreEqual("\"a \\\" b \\\\ c\"", Text("a \" b \\ c"));
+        Assert.AreEqual("\"\\b\\t\\n\\f\\r\"", Text("\b\t\n\f\r"));
+        Assert.AreEqual("\"\\u0000\\u0001\\u000B\\u001F\"", Text("\0\u0001\u000B\u001F"));
+        Assert.AreEqual("\" /<>&'+`\u007F\u0084\u0086\u00A0\u2027\u202A\uFEFF\uFFFF\"", Text(" /<>&'+`\u007F\u0084\u0086\u00A0\u2027\u202A\uFEFF\uFFFF"));
+        Assert.AreEqual("\"\\u0085\\u2028\\u2029\"", Text("\u0085\u2028\u2029"), "C#'s other line terminators: EF Core writes the value into a string literal in the snapshot and does not escape them.");
+        Assert.AreEqual("\"\U0001F600\U0010FFFF\"", Text("\U0001F600\U0010FFFF"));
+    }
+
+    /// <summary>
+    /// The runtime's encoders escape what their Unicode tables do not know as assigned, so the
+    /// text they write for one declaration changes with the runtime, and the key with it: .NET 9
+    /// escaped 22 characters that .NET 10 writes as themselves. Here every character of the BMP is
+    /// written as itself, the unassigned ones included, on every path a string takes into the
+    /// stored form. The five the rule escapes above U+001F are in the test before this one.
+    /// </summary>
+    [TestMethod]
+    public void Every_character_is_written_as_itself_whatever_the_runtime_knows_of_it()
+    {
+        var all = string.Concat(Enumerable.Range(0x20, 0x10000 - 0x20)
+            .Where(c => c is not ('"' or '\\' or 0x85 or 0x2028 or 0x2029) && !char.IsSurrogate((char)c))
+            .Select(c => (char)c)) + "\U0001F600";
+
+        Assert.AreEqual(
+            $$"""{"$kind":"written","v":2,"r":1,"a":"{{all}}","b":"{{all}}","c":["{{all}}"]}""",
+            Json(w =>
+            {
+                w.String("a", all);
+                w.OptionalString("b", all);
+                w.Strings("c", [all]);
+            }));
+
+        // The kind and the name, which the kernel writes. U+0378 has never been assigned.
+        var kind = "k\u0378\U0001F600";
+        var shaped = new Shaped("A", kind, all, 1);
+        Assert.AreEqual($$"""{"$kind":"{{kind}}","v":2,"r":1,"name":"{{all}}"}""", DeclarationCodec.Value(shaped));
+        Assert.AreEqual(shaped.Name, JsonNode.Parse(DeclarationCodec.Value(shaped))!["name"]!.GetValue<string>(), "What was written must read back as the string it was.");
+    }
+
+    [TestMethod]
+    public void A_string_that_is_not_well_formed_is_refused()
+    {
+        // Built here and not in a DataRow: an attribute's argument is stored as UTF-8, which has no
+        // form for half a surrogate pair, so the test would be handed U+FFFD.
+        foreach (var text in new[] { "\uD83D", "a\uDE00b", "\uDE00\uD83D", "ok \uD83D", "\uD83D\uD83D\uDE00" })
+        {
+            foreach (var write in new Action<SchemaJsonWriter>[]
+                     {
+                         w => w.String("p", text),
+                         w => w.OptionalString("p", text),
+                         w => w.Strings("p", ["fine", text]),
+                     })
+            {
+                var error = Assert.ThrowsExactly<InvalidOperationException>(() => Json(write));
+                StringAssert.Contains(error.Message, "'p' is not well-formed UTF-16");
+            }
+
+            // A name is hashed and not written for its key, so it is the value that refuses it; Declare asks for both.
+            StringAssert.Contains(
+                Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Value(new Shaped("A", "k", text, 1))).Message,
+                "'name' is not well-formed UTF-16");
+        }
+    }
+
+    [TestMethod]
+    [DataRow("a b"), DataRow("a.b"), DataRow("größe"), DataRow("$x"), DataRow("a\"b"), DataRow("a-b")]
+    public void A_property_name_is_made_of_ascii_letters_digits_and_underscores(string name)
+    {
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => Json(w => w.Boolean(name, true)));
+        StringAssert.Contains(error.Message, $"wrote a property named '{name}'. A property name is made of ASCII letters, digits and '_'");
+
+        var nested = Assert.ThrowsExactly<InvalidOperationException>(() => Json(w => w.Object("o", o => o.Boolean(name, true))));
+        StringAssert.Contains(nested.Message, "A property name is made of ASCII letters, digits and '_'");
+
+        Assert.AreEqual("""{"$kind":"written","v":2,"r":1,"aZ_09":true}""", Json(w => w.Boolean("aZ_09", true)));
+    }
 
     // ---- what a declaration must be --------------------------------------------------------------------
 

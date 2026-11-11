@@ -21,7 +21,10 @@ public sealed class SnapshotContext(DbContextOptions<SnapshotContext> options) :
             Name = "ux \"quoted\" \\ name",
             NullsDistinct = false,
             Include = ["Id"],
-            Where = new GuardFilter("{Name} <> 'it''s' AND {Id} > 0\n-- a second line"),
+            // With what the runtime's own encoders escape and the stored form writes as itself: a
+            // control character on each side of U+0020, a line separator, a code point no Unicode version has
+            // assigned, one that .NET 10 was the first to know, and one outside the BMP.
+            Where = new GuardFilter("{Name} <> 'it''s' AND {Id} > 0\n-- a second line \u0001\u007F\u2028\u0378\uA7DB\U0001F600"),
             Concurrently = true,
         },
         new TestGuard.Unique([new GuardKey("Id")]) { FillFactor = 0 },
