@@ -107,9 +107,17 @@ internal static class SchemaKitStrings
         => $"The annotation '{key}' is not a SchemaKit declaration: its value is not a JSON object. The model snapshot " +
            "was edited, or written by something else.";
 
-    public static string UnknownFormatVersion(string key, string found, int known)
-        => $"The annotation '{key}' has the format version {found}; this version of SchemaKit reads {known}. The snapshot " +
-           "was written by a newer SchemaKit: reading it as the older format would resolve it wrongly. Update the package.";
+    /// <param name="key">The annotation.</param>
+    /// <param name="found">The version as it is stored, or "none".</param>
+    /// <param name="version">The version when it is a whole number.</param>
+    /// <param name="known">The version this package reads.</param>
+    public static string UnknownFormatVersion(string key, string found, int? version, int known)
+        => $"The annotation '{key}' has the format version {found}; this version of SchemaKit reads {known}. " + version switch
+        {
+            null => "A format version is a whole number: the snapshot was edited by hand or is damaged.",
+            var higher when higher > known => "The snapshot was written by a newer SchemaKit: reading it as the older format would resolve it wrongly. Update the package.",
+            _ => "That is an older format, which this version does not read: reading it as the newer one would resolve it wrongly.",
+        };
 
     public static string DeclarationPropertyMissing(string path, string name)
         => $"The declaration '{path}' has no '{name}'. SchemaKit does not assume a value for a property that was not " +

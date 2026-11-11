@@ -179,18 +179,34 @@ public sealed class DeclarationCodecTests
         StringAssert.Contains(nested.Message, "'K.keys[0]' has a property 'opclass'");
     }
 
+    /// <summary>
+    /// Each is refused, and told what it is: only a higher version was written by a newer package,
+    /// and only for that one is updating the answer.
+    /// </summary>
     [TestMethod]
-    [DataRow(3), DataRow(1), DataRow(null)]
-    public void A_format_version_this_version_does_not_know_is_refused(int? version)
+    [DataRow("3", "The snapshot was written by a newer SchemaKit")]
+    [DataRow("1", "That is an older format, which this version does not read")]
+    [DataRow("0", "That is an older format")]
+    [DataRow("-1", "That is an older format")]
+    [DataRow(null, "A format version is a whole number")]
+    [DataRow("\"2\"", "A format version is a whole number")]
+    [DataRow("2.5", "A format version is a whole number")]
+    [DataRow("true", "A format version is a whole number")]
+    [DataRow("null", "A format version is a whole number")]
+    [DataRow("[2]", "A format version is a whole number")]
+    [DataRow("99999999999", "A format version is a whole number")]
+    public void A_format_version_this_version_does_not_know_is_refused(string? version, string reason)
     {
         var edited = Edit(new TestGuard.Trigger("Path"), json =>
         {
-            if (version is null) json.Remove("v"); else json["v"] = version;
+            if (version is null) json.Remove("v"); else json["v"] = JsonNode.Parse(version);
         });
 
         var error = Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Read<TestGuard>("K", edited));
 
-        StringAssert.Contains(error.Message, $"has the format version {version?.ToString() ?? "none"}; this version of SchemaKit reads 2");
+        StringAssert.Contains(error.Message, $"The annotation 'K' has the format version {version ?? "none"}; this version of SchemaKit reads 2. {reason}");
+        Assert.AreEqual(version == "3", error.Message.Contains("newer", StringComparison.Ordinal) && error.Message.Contains("Update the package", StringComparison.Ordinal),
+            "Only a higher version was written by a newer package.");
     }
 
     [TestMethod]
