@@ -21,8 +21,9 @@ Inputs:
    type is in the inheritance chain, EF 12's sixth constructor parameter is nobody's problem, and
    a package that replaced the differ before SchemaKit keeps working inside it.
 2. **One wiring point, no `.targets`.** `UseSchemaKit()` is the only registration. EF 11 hands the
-   context's own differ to design time, so the injected `DesignTimeServicesReferenceAttribute`,
-   its `build/` and `buildTransitive/` copies and the order-independence machinery of 5.x go.
+   context's own differ to design time (measured from a packed consumer, spike B), so the injected
+   `DesignTimeServicesReferenceAttribute`, its `build/` and `buildTransitive/` copies and the
+   order-independence machinery of 5.x go.
 3. **Missing wiring fails where the declaration is written.** A convention stamps the model when it
    is created; `DeclarePostgres` throws in `OnModelCreating` without the stamp.
 4. **No lowering into EF's native index metadata.** A native JSON-member index is rendered at apply
@@ -133,18 +134,33 @@ Resolving both services while the model is being built does not cycle on any of 
 The check runs once per model build; a model-cache hit skips it, and the decorators are still there,
 since they are resolved per context.
 
+**Design time needs nothing more.** Spike B measured it from a packed consumer outside the
+repository (`spikes/B.DesignTime`): a package with no `build/` folder, on SQLite, Npgsql and SQL
+Server, with a parameterless constructor, an `IDesignTimeDbContextFactory` and a host with
+`AddDbContext`. `migrations add`, `has-pending-model-changes`, `migrations script` with and without
+`--idempotent`, `database update`, a bundle and `dbcontext optimize` all use the context's differ. A
+change that only SchemaKit can see is reported by `has-pending-model-changes` and refused by
+`Migrate()`. A factory that forgets `UseSchemaKit()` fails at the declaration and writes no
+migration.
+
+**A compiled model is not the gap it was taken for.** `EnsureCreated()` and `Migrate()` build the
+design-time model from `OnModelCreating` even when a compiled model is in use, so a compiled model
+without `UseSchemaKit()` throws at the declaration there (measured, both providers). A context that
+only queries runs no SchemaKit code and needs none.
+
 **What no plugin can guard**, stated in the docs instead of promised away:
 
-- a compiled or prebuilt model used without `UseSchemaKit()`: no SchemaKit code runs;
 - a model cache shared through `UseMemoryCache` between options with and without `UseSchemaKit()`: the
   context without it gets the stamped model from the cache, so nothing throws, and its create script
   lacks every declaration (measured in spike A, condition C18);
 - a user's own `IDesignTimeServices` that registers a differ: EF adds it last, and a simulation of
-  EF's design-time composition cannot prove what the real collection holds;
+  EF's design-time composition cannot prove what the real collection holds. Measured in spike B:
+  the migration scaffolds the tables without the index, the snapshot records the declaration, and
+  no later diff ever notices;
 - a host with no SchemaKit at all applying 5.x migrations with pre-5.0.2 temporal operations, which
   carry no failure marker.
 
-The catalog verifier ([3.11](#311-the-catalog-verifier)) is the answer to all four, since it reads
+The catalog verifier ([3.11](#311-the-catalog-verifier)) is the answer to all three, since it reads
 the database and not the pipeline.
 
 ### 3.3 The seam
@@ -274,6 +290,11 @@ contributor compiled against an older contract miss a rebuild without anyone not
   through `search_path` and can remove the wrong one (`PgContributors.cs:99`).
 - **`ISchemaDescriptor.Scope`** is a closed `Table | Schema | Database`, replacing the mandatory
   `TableRef`. Domains and extensions are not table objects, and the contract is permanent.
+- **Every statement ends with the provider's terminator** (`ISqlGenerationHelper.StatementTerminator`).
+  EF runs a `SqlOperation` as it is. Spike B's first statement had none: `migrations add`,
+  `database update`, a bundle and `Migrate()` all accepted it, and both generated scripts failed to
+  apply with a syntax error, while a check of the script's text found the index in it. `SchemaSql`
+  appends the terminator itself, so a contributor cannot leave it out.
 - **No `IF EXISTS` on a drop, and no `DROP CONSTRAINT IF EXISTS` before an `ADD`.** 5.x's adoption
   shortcut is how a same-named exclusion constraint replaced a temporal one in silence. A collision
   fails. Adopting an existing object becomes an explicit operation, if it is wanted at all.
@@ -383,7 +404,7 @@ var report = await context.Database.VerifySchemaKitAsync(ct);
 | **Golden corpus** | [3.5](#35-resolution-and-renderer-epochs) | A rendering change that reaches no database |
 | **Translator parity** | The 5.x sweep and answers-alike test | An index no query uses; a predicate that answers differently |
 | **Compile probes** | The draft's 30, moved onto the real assemblies and the GA compiler | A forbidden declaration that compiles |
-| **Wiring removal** | Each registration removed in turn, from a packed consumer outside the repository: `migrations add`, `has-pending-model-changes`, `EnsureCreated`, script, idempotent script, bundle, `dbcontext optimize` must each fail or agree | Silent degradation of delivery |
+| **Wiring removal** | Each registration removed in turn, from a packed consumer outside the repository: `migrations add`, `has-pending-model-changes`, `EnsureCreated`, script, idempotent script, bundle, `dbcontext optimize` must each fail or agree. A generated script is **applied** to an empty database, the idempotent one twice; its text proves nothing (spike B) | Silent degradation of delivery; a script that does not run |
 | **Guard mutation** | Each guard is shown to fail without what it guards (`verify-the-guard`): a dependency edge, an epoch bump, a contributor registration | A test that asserts nothing |
 | **Newest EF patch lane** | As in 5.x, plus the operation-type table of [3.7](#37-dependencies-and-impact) | A patch that adds or changes an operation |
 
@@ -419,12 +440,12 @@ exit criterion.
 - Every EF reference is on rc.3 (Npgsql's pin).
 
 **Spikes.** A and B decide whether the host and its delivery work at all; both designs put them
-first. No public API is written before they pass.
+first. No public API is written before they pass. **Both passed on 2026-11-11.**
 
 | | Spike | It fails when | Then |
 |---|---|---|---|
 | **A** | Decorator plus resolve-time ownership check on Npgsql, SQL Server and SQLite; pooled contexts, `AddDbContextFactory`, `UseInternalServiceProvider`, a model-cache hit | Resolving the differ during model building cycles or the check is skipped on a cache hit | **Passed 2026-11-11** (#16): no cycle, and the outcome is in [3.2](#32-wiring-one-registration-three-guards). Runtime paths only; design time is spike B |
-| **B** | No `.targets`: a packed consumer outside the repository runs every path of the wiring-removal row | Any design-time path does not get the context's differ | A `ForProvider` attribute installs the same decorator, and the smoke test keeps its old job |
+| **B** | No `.targets`: a packed consumer outside the repository runs every path of the wiring-removal row | Any design-time path does not get the context's differ | **Passed 2026-11-11** (#17): every path gets it, in all three ways `dotnet ef` builds a context. No `.targets`, no fallback attribute. It also found the terminator rule of [3.8](#38-sql-vocabulary) and corrected the compiled-model residual in [3.2](#32-wiring-one-registration-three-guards) |
 | **C** | A real 5.x snapshot with exclusion constraints, and one temporal constraint moved to `WithoutOverlaps()`, diff to zero operations | The handover needs facts the snapshot does not hold | The guide documents one migration for that case (#10 allows exactly that) |
 | **D** | `CREATE INDEX CONCURRENTLY` and a trigger as `SqlOperation`s in an idempotent script, applied twice, and in a bundle, on PostgreSQL and SQL Server | The provider cannot wrap the statement | That combination is refused with the declaration named |
 | **E** | The impact answers for index, exclusion constraint and trigger against column rename, alter, drop, table rename and schema move, on live servers | A measured answer differs from the assumed one | The table is corrected; this spike is how it gets written |
@@ -484,8 +505,9 @@ yes), Q10 and Q11 (TypeKit on .NET 11), Q13 (operator classes typed by CLR type)
 
 ## 8. What stays uncertain
 
-- Spike B is not run. The no-`.targets` decision rests on reading EF's source, not on a packed
-  consumer. Spike A passed, for the runtime paths.
+- Spikes A and B passed, on EF Core `11.0.0-rc.3`. They have to be run again when Npgsql ships
+  11.0.0 and the floors move, since both rest on EF's composition order, which no API promises.
+- Spike B's SQL Server consumer ran the paths that need no database only.
 - Nothing here was compiled against the GA SDK.
 - Npgsql's rc.3 facts come from its source and tests, not from a run on this machine.
 - The impact table is a hypothesis until spike E measures it.

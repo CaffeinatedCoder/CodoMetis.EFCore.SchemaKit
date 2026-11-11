@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SchemaKit.Spikes.A.SpikeKit;
@@ -56,9 +57,15 @@ public sealed class InnerServices
     }
 }
 
-/// <summary>The differ decorator: the inner differ's operations, then one statement per declaration.</summary>
+/// <summary>
+/// The differ decorator: the inner differ's operations, with a real statement per declaration
+/// spliced around them, so a path can be judged by what the database ends up holding.
+/// </summary>
 public sealed class SpikeDiffer(IServiceProvider services, IDbContextOptions options, InnerServices inner) : IMigrationsModelDiffer
 {
+    private readonly ISqlGenerationHelper _sql = services.GetRequiredService<ISqlGenerationHelper>();
+    private readonly bool _dropNeedsTable = services.GetRequiredService<IDatabaseProvider>().Name.Contains("SqlServer");
+
     public IMigrationsModelDiffer Inner { get; } =
         inner.Create<IMigrationsModelDiffer>(services, options, options.FindExtension<SpikeOptionsExtension>()?.InnerDiffer);
 
@@ -67,16 +74,42 @@ public sealed class SpikeDiffer(IServiceProvider services, IDbContextOptions opt
 
     public IReadOnlyList<MigrationOperation> GetDifferences(IRelationalModel? source, IRelationalModel? target)
     {
-        var operations = Inner.GetDifferences(source, target).ToList();
-        var before     = Names(source);
-        operations.AddRange(Names(target).Except(before).Select(name => new SqlOperation { Sql = $"/* spike:{name} */ SELECT 1" }));
+        var before = Declarations(source);
+        var after  = Declarations(target);
+
+        // Drops before the inner differ's operations, creates after them: 5.x's order. Each statement
+        // ends with the provider's terminator: EF runs a SqlOperation as it is, so `database update`,
+        // a bundle and Migrate() accept one without, and a generated script does not apply (spike B).
+        List<MigrationOperation> operations = [];
+        foreach (var (name, table) in before.Where(d => !after.ContainsKey(d.Key)))
+            operations.Add(new SqlOperation
+            {
+                Sql = _dropNeedsTable
+                    ? $"DROP INDEX {table.Index} ON {table.Table} /* spike:{name} */{_sql.StatementTerminator}"
+                    : $"DROP INDEX {table.Index} /* spike:{name} */{_sql.StatementTerminator}",
+            });
+        operations.AddRange(Inner.GetDifferences(source, target));
+        foreach (var (name, table) in after.Where(d => !before.ContainsKey(d.Key)))
+            operations.Add(new SqlOperation { Sql = $"CREATE INDEX {table.Index} ON {table.Table} ({table.Column}) /* spike:{name} */{_sql.StatementTerminator}" });
         return operations;
     }
 
-    private static HashSet<string> Names(IRelationalModel? model)
-        => model is null
-            ? []
-            : [.. model.Model.GetEntityTypes().Select(e => e.FindAnnotation(SpikeKitExtensions.Declared)?.Value).OfType<string>()];
+    /// <summary>Declared name to its index (<c>spike_</c> plus the name), table and first non-key column, all delimited.</summary>
+    private Dictionary<string, (string Index, string Table, string Column)> Declarations(IRelationalModel? model)
+    {
+        Dictionary<string, (string, string, string)> found = [];
+        if (model is null) return found;
+
+        foreach (var entity in model.Model.GetEntityTypes())
+        {
+            if (entity.FindAnnotation(SpikeKitExtensions.Declared)?.Value is not string name) continue;
+            var table  = StoreObjectIdentifier.Create(entity, StoreObjectType.Table)!.Value;
+            var column = entity.GetProperties().First(p => !p.IsPrimaryKey()).GetColumnName(table)!;
+            found[name] = (_sql.DelimitIdentifier($"spike_{name}"), _sql.DelimitIdentifier(table.Name, table.Schema), _sql.DelimitIdentifier(column));
+        }
+
+        return found;
+    }
 }
 
 /// <summary>The generator decorator: hands the whole list to the inner generator.</summary>

@@ -46,6 +46,24 @@ jobs:
     name: Spikes
     runs-on: ubuntu-latest
 
+    # For the spikes that write to a database. The image floats within its major on purpose, as a
+    # consumer's server does.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: spike
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      SPIKE_PG: Host=localhost;Port=5432;Username=postgres;Password=spike;Database=spike_b
+
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -54,19 +72,36 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Run every spike
+      - name: Run every spike project
         run: |
           shopt -s nullglob
-          projects=(spikes/*/*.csproj)
-          if (( ${#projects[@]} == 0 )); then
-            echo "No spike project; nothing to run."
-            exit 0
-          fi
-          for project in "${projects[@]}"; do
+          for project in spikes/*/*.csproj; do
             echo "::group::$project"
             dotnet test "$project" --logger "trx;LogFileName=$(basename "$project" .csproj).trx" --results-directory TestResults
             echo "::endgroup::"
           done
+
+      # A spike whose subject is delivery brings a script: it packs, restores into a project outside
+      # the checkout and drives the real tools. Its table goes to the job summary.
+      - name: Run every spike script
+        run: |
+          shopt -s nullglob
+          status=0
+          for script in spikes/*/run.sh; do
+            spike=$(basename "$(dirname "$script")")
+            echo "::group::$script"
+            "$script" "$RUNNER_TEMP/$spike" || status=1
+            echo "::endgroup::"
+            {
+              echo "### $spike"
+              echo
+              echo "| Consumer | Path | | Outcome |"
+              echo "|---|---|---|---|"
+              cat "$RUNNER_TEMP/$spike/results.md"
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit "$status"
 
   ci:
     name: CI
