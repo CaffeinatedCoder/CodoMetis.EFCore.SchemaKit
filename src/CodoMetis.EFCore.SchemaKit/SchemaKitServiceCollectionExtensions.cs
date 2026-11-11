@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using CodoMetis.EFCore.SchemaKit.Contributors.Internal;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using CodoMetis.EFCore.SchemaKit.Metadata.Internal;
 using CodoMetis.EFCore.SchemaKit.Migrations.Internal;
@@ -43,10 +45,34 @@ public static class SchemaKitServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Adds a contributor: what renders one kind of schema object. A package that brings a kind of
+    /// its own calls this from its options extension's <c>ApplyServices</c>, or on the collection of
+    /// a provider passed to <see cref="DbContextOptionsBuilder.UseInternalServiceProvider" />. It
+    /// touches neither <see cref="IMigrationsModelDiffer" /> nor <see cref="IMigrationsSqlGenerator" />.
+    /// </summary>
+    /// <remarks>
+    /// Adding the same contributor twice adds it once. Two different contributors with one owner
+    /// are refused at the first diff.
+    /// </remarks>
+    /// <param name="services">The collection the context's services are built from.</param>
+    /// <typeparam name="TContributor">The contributor.</typeparam>
+    /// <returns>The same collection.</returns>
+    [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+    public static IServiceCollection AddSchemaContributor<TContributor>(this IServiceCollection services)
+        where TContributor : class, ISchemaContributor
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<ISchemaContributor, TContributor>());
+        return services;
+    }
+
     /// <summary>What both registration paths add besides the two decorators.</summary>
     internal static void AddShared(IServiceCollection services)
     {
         services.TryAddScoped<ISchemaOperationPlanner, NoSchemaOperations>();
+        services.TryAddScoped<SchemaContributorDependencies>();
+        services.TryAddScoped<SchemaContributorRegistry>();
 
         // The dialect of a provider without a SchemaKit package; a provider package registers its
         // own before this. The identifier limit is the design-time model's, so this must not be

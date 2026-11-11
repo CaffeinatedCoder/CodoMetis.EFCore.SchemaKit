@@ -52,6 +52,14 @@ internal static class Setup
     public static DbContextOptionsBuilder Use(this DbContextOptionsBuilder builder, Provider provider, string? connection = null)
         => builder.UseProvider(provider, connection).UseTestKit();
 
+    /// <inheritdoc cref="UseProvider(DbContextOptionsBuilder, Provider, string?)" />
+    public static DbContextOptionsBuilder<TContext> UseProvider<TContext>(this DbContextOptionsBuilder<TContext> builder, Provider provider, string? connection = null)
+        where TContext : DbContext
+    {
+        ((DbContextOptionsBuilder)builder).UseProvider(provider, connection);
+        return builder;
+    }
+
     /// <summary>The provider alone: a context nothing has contributed to.</summary>
     public static DbContextOptionsBuilder UseProvider(this DbContextOptionsBuilder builder, Provider provider, string? connection = null)
     {

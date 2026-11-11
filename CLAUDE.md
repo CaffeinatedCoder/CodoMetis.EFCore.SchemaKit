@@ -8,12 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 a new package with a new API and an entirely new core, in its own repository. The EF Core 10 line
 stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch with this one.
 
-**The kernel host exists; nothing can be declared yet.** The repository holds:
+**The kernel has its host, its SQL vocabulary, the contributor contract and the declaration store.
+A declaration can be stored and read back; nothing turns one into DDL yet** (the resolver is #43,
+the planner #24). The repository holds:
 
 | Path | What |
 |---|---|
-| `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards) and the SQL vocabulary statements are built from. Public are the three registration methods and the vocabulary, which is marked experimental (`SK9001`) until the contributor contract freezes at rc.1; the rest is internal |
-| `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` stands in for the planning layer that does not exist yet |
+| `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
+| `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` stands in for the planning layer that does not exist yet; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer). B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
@@ -126,6 +128,34 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   others. It delimits and terminates through the provider's `ISqlGenerationHelper` and writes
   literals through its type mapping. It counts characters; PostgreSQL counts bytes, so its package
   overrides `Measure`.
+
+## Declarations and the contributor contract
+
+`src/CodoMetis.EFCore.SchemaKit/Declarations` and `Contributors`
+(`design/schemakit-core-plan.md`, sections 3.4, 3.6, 3.7 and 3.10).
+
+- **A declaration is one annotation, `CodoMetis:{Owner}:{hash}`, and its key and value are a file
+  format.** They sit in consumers' snapshots. `DeclarationStoreTests` holds one key and one value
+  verbatim; a change that moves either is a format change, not a refactoring.
+- **`Declare` never replaces.** A key that is taken, on the entity type or earlier in the same call,
+  throws before anything is stored. `Redeclare` is the only replacing path. Do not add an
+  "or update" overload: the draft's identity lost a unique index that way without an error.
+- **The kernel computes the key.** A declaration writes its properties through `SchemaJsonWriter`
+  and marks what does not change the object with `writer.Operational`; the identity is the same
+  call without that part. A named declaration's key is over its kind and its name.
+- **Nothing is omitted but a null, and the reader has no default.** There is no writer method that
+  drops a `false` or a zero and none may be added; a reader method either requires its property or
+  returns null. `DeclarationCodecTests` holds it for every writer method by reflection, so it stays
+  true of one added later.
+- **A property nothing read, an unknown `v`, a reader that loses the name or the epoch: each is
+  refused.** They are all the same failure, a declaration that comes out of a snapshot as another one.
+- **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
+  The base class refuses an `InPlace` with no statement and statements beside another answer.
+- **The unions are closed for the major.** `ContractValueTests` lists every case; adding one is a
+  decision to take with the maintainer, since it breaks every exhaustive switch of a contributor.
+- **`SchemaContributorRegistry` is a diff-time service.** A contributor may take the dialect, which
+  reads the design-time model, so the registry must never be a constructor parameter of the differ
+  or the generator.
 
 Locally the integration tests go inconclusive without `SCHEMAKIT_TEST_PG`. When `CI` is set they
 fail instead: an unreachable server must not retire them while the build reports green.

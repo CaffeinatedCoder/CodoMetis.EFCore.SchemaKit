@@ -1,8 +1,8 @@
 namespace CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 
 /// <summary>
-/// The messages of the wiring guards. Each names what is wrong, what would have happened without
-/// the refusal, and the call that fixes it.
+/// SchemaKit's messages. Each names what is wrong, what would have happened without the refusal,
+/// and what fixes it.
 /// </summary>
 internal static class SchemaKitStrings
 {
@@ -55,4 +55,103 @@ internal static class SchemaKitStrings
            "and SchemaKit declarations would be left out of migrations without an error. Remove the " +
            "EFCore.ComplexIndexes, EFCore.ComplexIndexes.PostgreSQL and EFCore.ComplexIndexes.SqlServer package " +
            "references; SchemaKit reads their snapshots and migrations.";
+
+    // ---- declarations ---------------------------------------------------------------------------
+
+    public static string DeclaredTwice(string entityType, string first, string second)
+        => $"'{entityType}' declares the same schema object twice: {first} and {second}. One would replace the other " +
+           "without an error and the database would hold one object where the model declares two. Give them different " +
+           "names, or remove one.";
+
+    public static string AlreadyDeclared(string entityType, string declaration)
+        => $"'{entityType}' already declares {declaration}. Declare() never replaces a declaration: the first would be " +
+           "gone without an error. Use Redeclare() to change the one that is there.";
+
+    public static string RedeclaredOntoOneKey(string entityType, string first, string second)
+        => $"Redeclare() on '{entityType}' would turn two declarations into one: {first} and {second}. Nothing was changed.";
+
+    public static string AmendReturnedNull(string entityType)
+        => $"The function passed to Redeclare() on '{entityType}' returned null. Return the declaration itself to leave it as it is.";
+
+    public static string NameIsAmbiguous(string entityType, string owner, string name)
+        => $"'{entityType}' has more than one {owner} declaration named '{name}'. Read them with GetDeclarations() and pick by kind.";
+
+    public static string InvalidOwner(Type type, string? owner)
+        => $"'{type.FullName}' has the owner '{owner}'. An owner is the middle part of an annotation key, " +
+           "CodoMetis:{Owner}:{hash}: it is not empty and holds no colon and no white space.";
+
+    public static string DeclarationWithoutKind(Type type)
+        => $"A declaration of type '{type.FullName}' has no kind. The kind names the case of the union in the model snapshot.";
+
+    public static string EmptyDeclarationName(string owner, string kind)
+        => $"A {owner} {kind} declaration has an empty name. Leave the name null for a default name.";
+
+    public static string InvalidEpoch(string owner, string kind, int epoch)
+        => $"A {owner} {kind} declaration has the resolution epoch {epoch}. Epochs start at 1.";
+
+    public static string ReservedPropertyName(string name)
+        => $"A declaration wrote a property named '{name}'. '$kind', 'v', 'r' and 'name' are written by SchemaKit.";
+
+    public static string PropertyWrittenTwice(string name)
+        => $"A declaration wrote the property '{name}' twice in one object. A reader would see one of the two values.";
+
+    public static string DeclarationNotJson(string key)
+        => $"The annotation '{key}' is not a SchemaKit declaration: its value is not a JSON object. The model snapshot " +
+           "was edited, or written by something else.";
+
+    public static string UnknownFormatVersion(string key, string found, int known)
+        => $"The annotation '{key}' has the format version {found}; this version of SchemaKit reads {known}. The snapshot " +
+           "was written by a newer SchemaKit: reading it as the older format would resolve it wrongly. Update the package.";
+
+    public static string DeclarationPropertyMissing(string path, string name)
+        => $"The declaration '{path}' has no '{name}'. SchemaKit does not assume a value for a property that was not " +
+           "written; the snapshot was edited, or written by another version of the package that owns the declaration.";
+
+    public static string DeclarationPropertyMalformed(string path, string name, string expected)
+        => $"The declaration '{path}' has a '{name}' that is not {expected}.";
+
+    public static string DeclarationPropertyNotRead(string path, string name)
+        => $"The declaration '{path}' has a property '{name}' that the package owning it does not read. It was written " +
+           "by a newer version of that package; dropping it would change the object without an error. Update the package.";
+
+    public static string ReadReturnedNull(Type declaration, string key)
+        => $"{declaration.Name}.Read returned null for the annotation '{key}'.";
+
+    public static string ReadLostTheHeader(Type declaration, string key)
+        => $"{declaration.Name}.Read built a declaration for the annotation '{key}' whose kind, name or epoch is not the " +
+           "one that was stored. Stored again, it would be another declaration.";
+
+    public static string ReadChangedTheDeclaration(Type declaration, string key, string stored, string rewritten)
+        => $"{declaration.Name}.Read built a declaration for the annotation '{key}' that is not the one that was stored. " +
+           $"Stored: {stored}. What it read writes: {rewritten}. Read must keep every property it takes from the reader.";
+
+    // ---- contributors ---------------------------------------------------------------------------
+
+    public static string DescriptorIsNotARecord(Type contributor, Type descriptor)
+        => $"'{contributor.FullName}' has the descriptor '{descriptor.FullName}', which is not a record. Descriptors are " +
+           "compared by value: with reference equality every migration would drop and create the object again.";
+
+    public static string RoutedToTheWrongContributor(Type value, string owner, Type expected)
+        => $"A '{value.FullName}' was handed to the {owner} contributor, which takes '{expected.FullName}'.";
+
+    public static string PlanReturnedNull(Type contributor)
+        => $"'{contributor.FullName}'.Plan returned null. Answer None, InPlace or Rebuild.";
+
+    public static string ImpactReturnedNull(Type contributor)
+        => $"'{contributor.FullName}'.ImpactOf returned null. Answer Unaffected, Follows, Lost or Blocks.";
+
+    public static string InPlaceWithoutStatements(Type contributor, QualifiedName name)
+        => $"'{contributor.FullName}'.Plan answered InPlace for '{name}' and wrote no statement, so the change would not " +
+           "reach the database. Write the statements, or answer None or Rebuild.";
+
+    public static string StatementsWithoutInPlace(Type contributor, QualifiedName name, string answer)
+        => $"'{contributor.FullName}'.Plan answered {answer} for '{name}' and wrote statements, which that answer does " +
+           "not run. Answer InPlace, or write none.";
+
+    public static string ContributorWithoutPlacement(Type contributor)
+        => $"'{contributor.FullName}' has no placement. Answer SchemaPlacement.BeforeTables or SchemaPlacement.AfterTables(order).";
+
+    public static string TwoContributorsForOneOwner(string owner, Type first, Type second)
+        => $"Two contributors have the owner '{owner}': '{first.FullName}' and '{second.FullName}'. A declaration is " +
+           "rendered by the one contributor of its owner; with two, which one rendered would depend on the order of registration.";
 }
