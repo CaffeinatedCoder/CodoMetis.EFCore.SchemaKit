@@ -1,0 +1,24 @@
+<Project>
+    <PropertyGroup>
+        <Version>11.0.0-preview.1</Version>
+        <Authors>CaffeinatedCoder</Authors>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <Nullable>enable</Nullable>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    </PropertyGroup>
+
+    <!--
+        Warnings are errors, with one carve-out, as in EFCore.ComplexIndexes: NU1901-NU1904 report a
+        vulnerable transitive package, so whether the build passes would depend on advisories
+        published upstream and not on anything in the commit. They stay visible as warnings.
+
+        A missing case in a switch over a `closed` hierarchy is CS8509, a warning. The design rests
+        on it being an error, so TreatWarningsAsErrors is not optional here.
+    -->
+    <PropertyGroup>
+        <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    </PropertyGroup>
+</Project>
