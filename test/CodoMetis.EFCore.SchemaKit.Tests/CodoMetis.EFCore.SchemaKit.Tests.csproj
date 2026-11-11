@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>CodoMetis.EFCore.SchemaKit.Tests</RootNamespace>
+        <!-- Tests play a stranger's package and drive EF's design-time services, both EF-internal.
+             The shipping project never disables this; InternalApiConventionTests holds it to that. -->
+        <NoWarn>$(NoWarn);EF1001;1591</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Npgsql EF rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; everything follows it. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="MSTest" Version="4.3.3" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    </ItemGroup>
+
+</Project>

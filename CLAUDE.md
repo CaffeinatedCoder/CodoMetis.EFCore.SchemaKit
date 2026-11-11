@@ -8,10 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 a new package with a new API and an entirely new core, in its own repository. The EF Core 10 line
 stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch with this one.
 
-**No shipping code exists yet.** The repository holds:
+**The kernel host exists; nothing can be declared yet.** The repository holds:
 
 | Path | What |
 |---|---|
+| `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host: `UseSchemaKit()`, the differ and generator decorators, the wiring guards. Its public surface is three methods; everything else is internal until the contributor contract freezes at rc.1 |
+| `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` stands in for the planning layer that does not exist yet |
+| `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer). B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
@@ -23,8 +26,21 @@ predicate translator without null compensation. Do not copy from it without read
 ## Commands
 
 ```bash
-# The probes and the prototype's behaviour tests
+# Build everything that ships, and its tests
+dotnet build CodoMetis.EFCore.SchemaKit.slnx
+
+# The kernel's tests
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
+
+# One class, one method
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "ClassName~WiringConditionTests"
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "FullyQualifiedName~C05_replace_service_before"
+
+# The probes and the prototype's behaviour tests (outside the solution: they pin their own compiler)
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
+
+# Spike B, the stand-in for the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
+spikes/B.DesignTime/run.sh
 ```
 
 `global.json` pins SDK `11.0.100` with `rollForward: latestPatch`. A machine with only a prerelease
@@ -53,6 +69,31 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
 9. **No `IF EXISTS` on a drop, no `DROP … IF EXISTS` before an `ADD`.** A collision fails.
 10. **A declaration for a provider that is not the active one is an error,** unless the options
     ignore that provider explicitly.
+
+## The host
+
+`UseSchemaKit()` is the whole registration. What it sets up, and why each part is there
+(`design/schemakit-core-plan.md`, section 3.2; every part has tests that fail without it):
+
+- **Three parts keep SchemaKit outermost.** `UseSchemaKit()` takes over the `ReplaceService` entry of
+  `IMigrationsModelDiffer` and `IMigrationsSqlGenerator`, keeping an earlier replacement as the
+  inner; `SchemaKitOptionsExtension.ApplyServices` adds registrations of its own, so a replacement
+  keyed on EF's type cannot remove it; and the ownership checks refuse what is left.
+- **`InnerServices` finds what to wrap** by replaying every other extension's `ApplyServices` into a
+  scratch collection. That is why no EF-internal type is named anywhere under `src/`.
+- **`SchemaKitWiringConvention`** runs when a model is created: it resolves both services, throws
+  unless the outermost is SchemaKit's, refuses an assembly that still carries the 5.x design-time
+  reference, and stamps the model (`CodoMetis:SchemaKit`). A declaration API calls
+  `SchemaKitModelStamp.Require` first. The stamp lands in snapshots, so its name and value are
+  permanent from 11.0.0.
+- **`SchemaKitModelDiffer`** asks an internal `ISchemaOperationPlanner` for operations before and
+  after the inner differ's and splices them; `HasDifferences` runs the same plan. The host knows
+  nothing of declarations or contributors: they arrive behind that planner.
+- **`SchemaKitSqlGenerator`** runs `IMigrationOperationRewriter`s (for operations 5.x scaffolded) and
+  hands the inner generator the whole list in one call.
+
+A test suite that varies the wiring creates many internal service providers; EF Core raises the
+twenty-first as an error, which `Harness/Setup.cs` switches off.
 
 ## What counts as correct
 
