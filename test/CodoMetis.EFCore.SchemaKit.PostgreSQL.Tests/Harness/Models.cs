@@ -27,6 +27,18 @@ public sealed class Booking
     public NpgsqlRange<DateOnly> Period { get; set; }
 }
 
+/// <summary>A stay and a hold are both reservations of a room, kept in one table.</summary>
+public class Reservation
+{
+    public int Id { get; set; }
+    public int RoomId { get; set; }
+    public NpgsqlRange<DateOnly> Period { get; set; }
+}
+
+public sealed class Stay : Reservation;
+
+public sealed class Hold : Reservation;
+
 /// <summary>One model of a test. A context type per model, so no test reads a model another cached.</summary>
 public interface ITestModel
 {
@@ -251,6 +263,29 @@ public static class Models
             var grants = Grants(modelBuilder);
             grants.Ignore(x => x.RevokedOn);
             grants.DeclarePostgres(_ => [ActivePeriod with { Where = null }]);
+        }
+    }
+
+    /// <summary>No two stays of a room overlap, declared on the stay: but holds are in the same table.</summary>
+    public sealed class StaysMayNotOverlap : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Reservation>().ToTable("reservations");
+            modelBuilder.Entity<Hold>();
+            modelBuilder.Entity<Stay>().DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: "ex_stay")]);
+        }
+    }
+
+    /// <summary>No two reservations of a room overlap, which is what the constraint in the table does.</summary>
+    public sealed class ReservationsMayNotOverlap : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Reservation>().ToTable("reservations")
+                .DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: "ex_stay")]);
+            modelBuilder.Entity<Hold>();
+            modelBuilder.Entity<Stay>();
         }
     }
 

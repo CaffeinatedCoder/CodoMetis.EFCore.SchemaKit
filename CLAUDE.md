@@ -198,6 +198,12 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   `Dependency.Extension` over what it creates and asks `ISchemaDialect.EnsureExtension` for each,
   with the target model, ahead of every other statement. The kernel's own dialect refuses: an
   object must not be created as if a dependency nothing can satisfy were met.
+- **A declaration on a derived type that shares its table with a base type is refused, on the
+  target side only** (#82). An object is the table's: declared on a derived type it would hold
+  among the sibling types' rows too. The source side is read as it is, since a snapshot that holds
+  such a declaration describes an object that exists; moved to the base type it is the same object
+  and the migration is empty. The cost for now: a column only the derived type has cannot be
+  named from the base type, so nothing can be declared on it while the two share a table.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
   the dialect.
 - **EF Core's operations are read, never changed.** `BaseChanges` maps every `MigrationOperation`

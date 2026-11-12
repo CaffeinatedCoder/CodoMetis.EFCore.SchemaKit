@@ -21,8 +21,61 @@ public sealed class Planned<TModel>(DbContextOptions<Planned<TModel>> options) :
     protected override void OnModelCreating(ModelBuilder modelBuilder) => TModel.Build(modelBuilder);
 }
 
+public class Animal
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+}
+
+public sealed class Dog : Animal
+{
+    public string Trick { get; set; } = "";
+}
+
 public static class PlanModels
 {
+    private static readonly TestGuard.Unique AnimalName = new([new GuardKey("Name")]) { Name = "ux_animal" };
+
+    /// <summary>Two types in one table, and the object declared on the derived one.</summary>
+    public sealed class OnADerivedTypeOfASharedTable : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Animal>();
+            modelBuilder.Entity<Dog>().Metadata.Declare([AnimalName]);
+        }
+    }
+
+    /// <summary>The same object, declared on the type the table belongs to.</summary>
+    public sealed class OnTheBaseTypeOfASharedTable : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Animal>().Metadata.Declare([AnimalName]);
+            modelBuilder.Entity<Dog>();
+        }
+    }
+
+    /// <summary>The derived type in a table of its own, with an object on a column only it has.</summary>
+    public sealed class OnADerivedTypeWithItsOwnTable : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Animal>().UseTptMappingStrategy();
+            modelBuilder.Entity<Dog>().ToTable("Dogs").Metadata.Declare([new TestGuard.Unique([new GuardKey("Trick")]) { Name = "ux_trick" }]);
+        }
+    }
+
+    /// <summary>A column only the derived type has, named from the base type.</summary>
+    public sealed class ADerivedTypesColumnFromTheBase : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Animal>().Metadata.Declare([new TestGuard.Unique([new GuardKey("Trick")]) { Name = "ux_trick" }]);
+            modelBuilder.Entity<Dog>();
+        }
+    }
+
     private static readonly TestGuard.Unique Name = new([new GuardKey("Name")]) { Name = "ux_name" };
 
     private static void Declare(ModelBuilder modelBuilder, params ISchemaObject[] declarations)
@@ -304,6 +357,67 @@ public sealed class SchemaOperationPlannerTests
     [TestMethod]
     public void A_difference_in_how_an_object_is_built_is_no_difference()
         => Assert.AreEqual(0, Diff<PlanModels.Guarded, PlanModels.Concurrently>().Count);
+
+    // ---- a table two types share -------------------------------------------------------------------------
+
+    /// <summary>
+    /// An object is attached to a table. Declared on a derived type that shares its table, a unique
+    /// index or an exclusion constraint would hold among the rows of the sibling types too: the
+    /// migration applies, and the database refuses writes the model allows. So it is refused, and
+    /// the message names the type to declare it on.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_declaration_on_a_derived_type_that_shares_its_table_is_refused(Provider provider)
+    {
+        using var context = Context<PlanModels.OnADerivedTypeOfASharedTable>(provider);
+        var differ = context.GetService<IMigrationsModelDiffer>();
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => differ.GetDifferences(null, Model(context)));
+        StringAssert.Contains(error.Message, "Dog declares Test.Guard unique 'ux_animal'");
+        StringAssert.Contains(error.Message, "Declare it on Animal");
+        Assert.ThrowsExactly<InvalidOperationException>(() => differ.HasDifferences(null, Model(context)));
+    }
+
+    [TestMethod]
+    public void On_the_base_type_or_on_a_derived_type_with_a_table_of_its_own_it_is_declared()
+    {
+        using var onBase = Context<PlanModels.OnTheBaseTypeOfASharedTable>();
+        using var ownTable = Context<PlanModels.OnADerivedTypeWithItsOwnTable>();
+
+        CollectionAssert.Contains(Describe(onBase.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(onBase))), """CREATE UNIQUE INDEX ux_animal ON "Animal" ("Name");""");
+        CollectionAssert.Contains(Describe(ownTable.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(ownTable))), """CREATE UNIQUE INDEX ux_trick ON "Dogs" ("Trick");""");
+    }
+
+    /// <summary>
+    /// The refusal is for where a migration leads, not for where it starts. A snapshot that holds
+    /// such a declaration describes an object the database has; with the declaration moved to the
+    /// base type the object is the same one, and the migration is empty. Refused on the source
+    /// side too, there would be no way off such a snapshot.
+    /// </summary>
+    [TestMethod]
+    public void A_snapshot_that_holds_one_is_read_and_moving_it_to_the_base_type_costs_nothing()
+    {
+        using var derived = Context<PlanModels.OnADerivedTypeOfASharedTable>();
+        using var onBase = Context<PlanModels.OnTheBaseTypeOfASharedTable>();
+        using var bare = Context<PlanModels.Bare>();
+
+        Assert.AreEqual(0, onBase.GetService<IMigrationsModelDiffer>().GetDifferences(Model(derived), Model(onBase)).Count);
+        // And it can be dropped with its table, as any object of the snapshot can.
+        CollectionAssert.Contains(Describe(bare.GetService<IMigrationsModelDiffer>().GetDifferences(Model(derived), Model(bare))), "DROP INDEX ux_animal;");
+    }
+
+    /// <summary>
+    /// What the rule costs for now, held as a fact: a column only the derived type has cannot be
+    /// named from the base type, so an object on it cannot be declared while the two share a table.
+    /// </summary>
+    [TestMethod]
+    public void A_column_of_the_derived_type_cannot_be_named_from_the_base_type()
+    {
+        using var context = Context<PlanModels.ADerivedTypesColumnFromTheBase>();
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+        StringAssert.Contains(error.Message, "Trick");
+    }
 
     // ---- extensions ------------------------------------------------------------------------------------
 
