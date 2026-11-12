@@ -7,17 +7,26 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 /// <param name="Elements">Each element as it is written: <c>"column" WITH op</c>, <c>(expression) WITH op</c>.</param>
 /// <param name="Where">The condition, or the empty fragment.</param>
 /// <param name="Deferral">When it is checked.</param>
+/// <param name="Extension">
+/// The extension the constraint cannot be created without, or null. Not compared: it says how the
+/// constraint comes to be, and a constraint that is there needs nothing done for it.
+/// </param>
 internal sealed record PgExclusionDescriptor(
     TableRef Table,
     QualifiedName Name,
     SqlName Method,
     ValueList<SqlFragment> Elements,
     SqlFragment Where,
-    Deferral Deferral) : ISchemaDescriptor
+    Deferral Deferral,
+    Operational<SqlName?> Extension) : ISchemaDescriptor
 {
     public SchemaScope Scope => new SchemaScope.Table(Table);
 
-    public ValueList<Dependency> Dependencies => [.. ElementReads.Concat(Where.Dependencies).Distinct()];
+    public ValueList<Dependency> Dependencies =>
+    [
+        .. ElementReads.Concat(Where.Dependencies).Distinct(),
+        .. Extension.Value is { } extension ? new Dependency[] { new Dependency.Extension(extension) } : [],
+    ];
 
     /// <summary>What the elements read, apart from the condition: PostgreSQL treats the two differently when a column goes.</summary>
     public IEnumerable<Dependency> ElementReads => Elements.SelectMany(element => element.Dependencies);
@@ -63,7 +72,43 @@ internal sealed class PgExclusionContributor(SchemaContributorDependencies depen
                 };
             })],
             declaration.Where is { } where ? resolver.Template(where.Template) : SqlFragment.Empty,
-            declaration.Deferral);
+            declaration.Deferral,
+            new Operational<SqlName?>(NeedsBtreeGist(declaration, resolver) ? resolver.Dialect.Name(BtreeGist) : null));
+    }
+
+    internal const string BtreeGist = "btree_gist";
+
+    // 5.x's rule, unchanged. Under GiST every element needs a default GiST operator class for its
+    // type, whatever its operator. A scalar has one only through btree_gist, and without it
+    // PostgreSQL refuses the constraint: "data type integer has no default operator class for
+    // access method gist". A column is judged by its store type. An expression's type is not known
+    // here, so it counts when it is compared with an operator B-tree has.
+    private static bool NeedsBtreeGist(PgExclusion declaration, SchemaResolver resolver)
+        => declaration is PgExclusion.Gist gist
+           && gist.Elements.Any(element => element.Target switch
+           {
+               KeyTarget.Column column => !HasGistOperatorClass(resolver.StoreType(column.Path)),
+               KeyTarget.Template      => BtreeOperators.Contains(element.Operator.Token),
+           });
+
+    private static readonly HashSet<string> BtreeOperators = ["=", "<>", "!=", "<", "<=", ">", ">="];
+
+    // The types with a default GiST operator class of their own: the geometric and text-search
+    // types of the core, and the types of the extensions that bring one. Ranges and multiranges
+    // are told by their names' ending.
+    private static readonly HashSet<string> GistTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "box", "circle", "point", "polygon", "tsvector", "tsquery",
+        "geometry", "geography", "box2d", "box3d", "ltree", "cube", "hstore", "seg",
+    };
+
+    internal static bool HasGistOperatorClass(string storeType)
+    {
+        var parenthesis = storeType.IndexOf('(');
+        var type = (parenthesis < 0 ? storeType : storeType[..parenthesis]).Trim();
+
+        // An array, of ranges too, ends in "[]" and is in neither set: no array has such a class.
+        return type.EndsWith("range", StringComparison.OrdinalIgnoreCase) || GistTypes.Contains(type);
     }
 
     // No DROP CONSTRAINT IF EXISTS in front, as 5.x wrote it to adopt a constraint that was there

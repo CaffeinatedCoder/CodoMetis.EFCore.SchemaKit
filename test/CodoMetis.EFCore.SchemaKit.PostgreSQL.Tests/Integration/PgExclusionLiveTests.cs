@@ -157,6 +157,93 @@ public sealed class PgExclusionLiveTests
             database.Exclusions());
     }
 
+    // ── btree_gist ──
+
+    private static List<string> Extensions(LiveDatabase database)
+    {
+        using var connection = database.Open();
+        return connection.Column("SELECT extname::text FROM pg_extension WHERE extname <> 'plpgsql' ORDER BY 1");
+    }
+
+    /// <summary>
+    /// The premise of every other test here, said once: the database of a test has no extension,
+    /// and the model declares none. Each path that created the constraint installed it.
+    /// </summary>
+    [TestMethod]
+    public void A_database_without_the_extension_gets_it_from_the_migration()
+    {
+        using var database = new LiveDatabase();
+        Assert.AreEqual(0, Extensions(database).Count);
+
+        database.Create<Models.Scheduling>();
+
+        CollectionAssert.AreEqual(new[] { "btree_gist" }, Extensions(database));
+    }
+
+    [TestMethod]
+    public void A_constraint_on_a_range_alone_installs_nothing()
+    {
+        using var database = new LiveDatabase();
+
+        database.Create<Models.RangeOnly>();
+
+        Assert.AreEqual(0, Extensions(database).Count);
+        Assert.AreEqual(1, database.Exclusions().Count);
+    }
+
+    /// <summary>An expression compared by <c>=</c> needs it as a column does: without the statement this add fails.</summary>
+    [TestMethod]
+    public void A_constraint_with_an_expression_compared_by_equality_gets_the_extension()
+    {
+        using var database = new LiveDatabase();
+
+        database.Create<Models.ExpressionCompared>();
+
+        CollectionAssert.AreEqual(new[] { "btree_gist" }, Extensions(database));
+    }
+
+    [TestMethod]
+    public void A_model_that_declares_the_extension_itself_applies()
+    {
+        using var database = new LiveDatabase();
+
+        database.Create<Models.SchedulingWithTheExtensionDeclared>();
+
+        CollectionAssert.AreEqual(new[] { Scheduling }, database.Exclusions());
+    }
+
+    /// <summary>
+    /// What the switch means, and why the injection exists: suppressed, the migration installs
+    /// nothing, and on a database that lacks the extension PostgreSQL refuses the constraint. With
+    /// the extension installed by other means the same migration applies.
+    /// </summary>
+    [TestMethod]
+    public void Suppressed_the_migration_needs_the_extension_to_be_there()
+    {
+        using var without = new LiveDatabase();
+        var refusal = Assert.ThrowsExactly<PostgresException>(without.Create<Models.SchedulingSuppressed>);
+        Assert.AreEqual(PostgresErrorCodes.UndefinedObject, refusal.SqlState);
+        StringAssert.Contains(refusal.MessageText, "no default operator class for access method \"gist\"");
+
+        using var with = new LiveDatabase();
+        with.Execute("CREATE EXTENSION btree_gist");
+        with.Create<Models.SchedulingSuppressed>();
+        CollectionAssert.AreEqual(new[] { Scheduling }, with.Exclusions());
+    }
+
+    /// <summary>A constraint is added to a table that exists, on a database that was created without the extension.</summary>
+    [TestMethod]
+    public void A_later_migration_installs_the_extension_too()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.RangeOnly>();
+
+        database.Migrate<Models.RangeOnly, Models.Scheduling>();
+
+        CollectionAssert.AreEqual(new[] { "btree_gist" }, Extensions(database));
+        CollectionAssert.AreEqual(new[] { Scheduling }, database.Exclusions());
+    }
+
     // ── Behaviour: what must fail does, what must pass does ──
 
     [TestMethod]

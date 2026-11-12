@@ -166,6 +166,13 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         var before = new SchemaSql(Dialect);
         var after  = new SchemaSql(Dialect);
 
+        // Ahead of everything: the extensions what is created depends on. One statement for each,
+        // however many objects need it, and whether one is needed at all is the dialect's answer
+        // for the model the migration leads to. A dependency left unanswered here is an object
+        // whose creation fails at apply, or on the one database that lacks the extension.
+        foreach (var extension in creates.SelectMany(create => create.Descriptor.Dependencies).OfType<Dependency.Extension>().Select(e => e.Name).Distinct())
+            Dialect.EnsureExtension(extension, target!.Model, before);
+
         // Before EF Core's operations: what is attached to tables goes first, the latest placement
         // first, then what tables are made of is created.
         foreach (var drop in AttachedToTables(drops).OrderByDescending(d => d.Contributor.Placement.Rank).ThenByDescending(drops.IndexOf))

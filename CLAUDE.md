@@ -12,8 +12,8 @@ stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch
 resolver, the planner and the lambda translator, and the PostgreSQL package has the first real
 contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
 every path, on PostgreSQL 16 and 18. Nothing is published** (what is left of the resolver is #43,
-of the planner #24, of the translator #26, of exclusion constraints #25: `btree_gist` injection,
-name claims, the 5.x reader, the read model without an opt-in). The repository holds:
+of the planner #24, of the translator #26, of exclusion constraints #25: name claims, the 5.x
+reader, the read model without an opt-in). The repository holds:
 
 | Path | What |
 |---|---|
@@ -194,6 +194,10 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   never rebuilt).
 - **A declaration whose owner has no contributor is refused,** on either side. #22 adds the
   explicit way out.
+- **An extension a created object depends on is ensured once and first.** The planner collects
+  `Dependency.Extension` over what it creates and asks `ISchemaDialect.EnsureExtension` for each,
+  with the target model, ahead of every other statement. The kernel's own dialect refuses: an
+  object must not be created as if a dependency nothing can satisfy were met.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
   the dialect.
 - **EF Core's operations are read, never changed.** `BaseChanges` maps every `MigrationOperation`
@@ -264,6 +268,8 @@ what is still missing: JSON members, TPC).
   property path.** Everything else stays as written, array literals included.
 - **A fragment records what it reads,** and composition keeps it. SQL without a placeholder depends
   on the whole table. `SqlFragment` still compares by its text alone.
+- **`StoreType(path)` is the column's type as the model states it,** asked of the declared
+  property in the table like its column. A snapshot records it, so both sides answer alike.
 - **A default name is built from tokens, not from SQL:** a column's name, a template's letters and
   digits. Rendering a part differently must not rename the object.
 - **Under EF Core's renames (`ISchemaRenames`) the SQL takes the new names and a default name does
@@ -298,8 +304,14 @@ what is still missing).
 - **`ImpactOf` is the measured table** (plan, section 3.7): renames follow, an altered column leaves
   it alone, a dropped column that is an element takes the constraint with it (`Lost`), one the
   condition alone reads has to have the constraint out of its way (`RebuildAround`).
-- **`=` on a scalar column needs `btree_gist`,** which a model declares itself for now
-  (`HasPostgresExtension("btree_gist")`).
+- **`=` on a scalar column needs `btree_gist`, and the migration brings it.** The descriptor lists
+  the extension as a dependency by 5.x's rule (a column by its store type, an expression by its
+  operator, GiST only), in an `Operational<>` field: it says how the constraint comes to be, not
+  what it is, so a column whose type changes does not rebuild the constraint for it. The dialect
+  writes `CREATE EXTENSION IF NOT EXISTS btree_gist`, and nothing when the model declares the
+  extension with `HasPostgresExtension` or calls `SuppressBtreeGistInjection()`, which sets 5.x's
+  annotation `CustomTemporal:SuppressAutoExtension`. The test models declare no extension, so
+  every live test that creates a constraint measures it.
 - **The live tests take a database each** (`LiveDatabase`) and compare what a migration leaves with
   what `EnsureCreated()` builds for the target model, by the catalog's own text.
 

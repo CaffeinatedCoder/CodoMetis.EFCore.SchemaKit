@@ -37,6 +37,10 @@ internal static class SchemaKitStrings
     public static string NotAnOperator(string token)
         => $"'{token}' is not an operator: an operator is one to 63 of + - * / < > = ~ ! @ # % ^ & | ` ? and contains no comment start.";
 
+    public static string NoExtensions(string extension)
+        => $"A declared object depends on the database extension '{extension}', and the dialect in use cannot install one. " +
+           "A provider's SchemaKit package brings the dialect that can; without one, nothing declares an object that needs an extension.";
+
     public const string NoStringMapping = "The provider maps no string type, so SchemaKit cannot write a string literal.";
 
     public const string EmptyStatement = "A statement with no text was added.";

@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace CodoMetis.EFCore.SchemaKit;
@@ -35,6 +36,20 @@ public interface ISchemaDialect
 
     /// <summary>What ends a statement. <see cref="SchemaSql" /> appends it to every one.</summary>
     string StatementTerminator { get; }
+
+    /// <summary>
+    /// Writes what makes a database extension present, for an object about to be created that
+    /// lists it as a <see cref="Dependency.Extension" />. The kernel calls it once per extension
+    /// and migration, ahead of every other statement.
+    /// </summary>
+    /// <remarks>
+    /// Whether anything has to be written is the provider's to say: a model may install the
+    /// extension through the provider's own API, or state that it is installed some other way.
+    /// </remarks>
+    /// <param name="extension">The extension.</param>
+    /// <param name="model">The model the migration leads to.</param>
+    /// <param name="sql">Where the statement goes, if there is one.</param>
+    void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql);
 }
 
 /// <summary>What <see cref="SchemaDialect" /> is built from. A record, so adding a member breaks no derived dialect.</summary>
@@ -125,6 +140,17 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
 
     /// <inheritdoc />
     public virtual string StatementTerminator => Dependencies.SqlGenerationHelper.StatementTerminator;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Refused here: what installs an extension is a provider's own statement, and an object whose
+    /// dependency nothing satisfies must not be created as if something had.
+    /// </remarks>
+    public virtual void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql)
+    {
+        ArgumentNullException.ThrowIfNull(extension);
+        throw new InvalidOperationException(SchemaKitStrings.NoExtensions(extension.Name));
+    }
 
     [GeneratedRegex("^[a-z_][a-z0-9_$]*$")]
     private static partial Regex BareName();
