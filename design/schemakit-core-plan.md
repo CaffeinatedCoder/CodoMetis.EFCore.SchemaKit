@@ -472,6 +472,13 @@ var report = await context.Database.VerifySchemaKitAsync(ct);
   let a suite pass on SQLite while saying nothing about the invariant; GPT held, and was right.
 - **11.0.0 creates no objects on SQLite.** SQLite enters with the row guard (CaffeinatedCoder/EFCore.ComplexIndexes#64), behind a
   generator decorator with a fail-closed marker, as 5.x does it.
+- **A statement after a rebuild has to be placed by the generator, not by the differ** (measured
+  2026-11-12, #65). SQLite's generator moves a table rebuild to the end of the migration, behind
+  every statement that follows the operation it was written for. The planner knows the rebuild
+  (`TableRebuilt`) and re-creates what a contributor reports as lost, but its create runs before
+  the rebuild and fails on the object that is still there. So until the generator decorator
+  places such a create after the rebuild, that migration fails to apply; without the planner's
+  answer it applied and left the database without the object.
 - **SQLite replay is still owed.** 5.x migrations hold `CustomIndex:AfterTableRebuild` operations
   and a deliberate failing marker; the kernel's generator decorator has to replay them on a fresh
   database.

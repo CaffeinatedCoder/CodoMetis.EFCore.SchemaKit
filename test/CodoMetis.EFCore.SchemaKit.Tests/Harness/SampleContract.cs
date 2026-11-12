@@ -143,18 +143,21 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
     /// <summary>The same for <see cref="ImpactOf" />.</summary>
     public Func<BaseChange, Impact>? ImpactOverride { get; set; }
 
+    /// <summary>Every change <see cref="ImpactOf" /> was asked about, in order.</summary>
+    public List<BaseChange> Asked { get; } = [];
+
     protected override TestGuardDescriptor Resolve(TestGuard declaration, SchemaResolver resolver) => declaration switch
     {
         TestGuard.Unique unique => new(
             resolver.Table,
             resolver.Table.Qualify(resolver.Dialect.Identifier(unique.Name ?? $"ux_{string.Join("_", unique.Keys.Select(k => k.Column))}")),
-            [.. unique.Keys.Select(k => resolver.Dialect.Identifier(k.Column))],
+            [.. unique.Keys.Select(k => SampleColumns.Of(resolver, k.Column))],
             IsTrigger: false,
             new Operational<bool>(unique.Concurrently)),
         TestGuard.Trigger trigger => new(
             resolver.Table,
             new QualifiedName(null, resolver.Dialect.Identifier(trigger.Name ?? $"tr_{trigger.Column}")),
-            [resolver.Dialect.Identifier(trigger.Column)],
+            [SampleColumns.Of(resolver, trigger.Column)],
             IsTrigger: true,
             new Operational<bool>(false)),
     };
@@ -184,7 +187,13 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
         return new SchemaChange.InPlace();
     }
 
-    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => ImpactOverride is not null ? ImpactOverride(change) : change switch
+    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change)
+    {
+        Asked.Add(change);
+        return ImpactOverride is not null ? ImpactOverride(change) : Default(change);
+    }
+
+    private static Impact Default(BaseChange change) => change switch
     {
         BaseChange.ColumnRenamed => new Impact.Follows(),
         BaseChange.ColumnAltered => new Impact.Unaffected(),
@@ -201,6 +210,13 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
             : [new NameClaim.Relation(descriptor.Name.Schema, descriptor.Name.Name)];
 }
 
+internal static class SampleColumns
+{
+    /// <summary>The column a path resolves to, as the samples' descriptors hold it.</summary>
+    public static Identifier Of(SchemaResolver resolver, string path)
+        => ((Dependency.Column)resolver.Column(path).Dependencies.Single()).Name;
+}
+
 /// <summary>A contributor placed before <see cref="TestGuardContributor" /> among those that come after the tables.</summary>
 public sealed class LooseGuardContributor(SchemaContributorDependencies dependencies)
     : SchemaContributor<LooseGuard, TestGuardDescriptor>(dependencies)
@@ -210,7 +226,7 @@ public sealed class LooseGuardContributor(SchemaContributorDependencies dependen
     protected override TestGuardDescriptor Resolve(LooseGuard declaration, SchemaResolver resolver) => new(
         resolver.Table,
         resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? $"lx_{declaration.Column}")),
-        [resolver.Dialect.Identifier(declaration.Column)],
+        [SampleColumns.Of(resolver, declaration.Column)],
         IsTrigger: false,
         new Operational<bool>(false));
 
@@ -245,11 +261,12 @@ public sealed record TestDomain(string Type) : ISchemaDeclaration<TestDomain>
         => new(reader.String("type")) { Name = header.Name, Epoch = header.Epoch };
 }
 
-public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type) : ISchemaDescriptor
+public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type, TableRef DeclaredOn) : ISchemaDescriptor
 {
     public SchemaScope Scope => new SchemaScope.Schema(Name.Schema);
 
-    public ValueList<Dependency> Dependencies => [];
+    /// <summary>The table it was declared on, so that the planner has a change to ask this contributor about.</summary>
+    public ValueList<Dependency> Dependencies => [new Dependency.WholeTable(DeclaredOn)];
 
     public ISchemaDescriptor WithName(QualifiedName name) => this with { Name = name };
 }
@@ -261,7 +278,9 @@ public sealed class TestDomainContributor(SchemaContributorDependencies dependen
     public override SchemaPlacement Placement => SchemaPlacement.BeforeTables;
 
     protected override TestDomainDescriptor Resolve(TestDomain declaration, SchemaResolver resolver)
-        => new(resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? "dom")), resolver.Dialect.Name(declaration.Type));
+        => new(resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? "dom")), resolver.Dialect.Name(declaration.Type), resolver.Table);
+
+    public Func<BaseChange, Impact>? ImpactOverride { get; set; }
 
     protected override void Create(TestDomainDescriptor descriptor, SchemaSql sql) => sql.Statement($"CREATE DOMAIN {descriptor.Name} AS {descriptor.Type}");
 
@@ -275,7 +294,7 @@ public sealed class TestDomainContributor(SchemaContributorDependencies dependen
         return new SchemaChange.InPlace();
     }
 
-    protected override Impact ImpactOf(TestDomainDescriptor descriptor, BaseChange change) => new Impact.Unaffected();
+    protected override Impact ImpactOf(TestDomainDescriptor descriptor, BaseChange change) => ImpactOverride?.Invoke(change) ?? new Impact.Unaffected();
 
     protected override IEnumerable<NameClaim> Claims(TestDomainDescriptor descriptor) => [];
 }
@@ -369,7 +388,12 @@ internal sealed class TestResolver(TableRef table, ISchemaDialect dialect) : Sch
 
     public override ISchemaDialect Dialect => dialect;
 
-    public override SqlFragment Column(string path) => throw new NotSupportedException();
+    /// <summary>The path is the column: enough for the tests of the contract, which are not about resolution.</summary>
+    public override SqlFragment Column(string path)
+    {
+        var column = dialect.Identifier(path);
+        return new SqlFragment(dialect.Delimit(column), [new Dependency.Column(table, column)], path);
+    }
 
     public override SqlFragment Template(string template) => throw new NotSupportedException();
 }

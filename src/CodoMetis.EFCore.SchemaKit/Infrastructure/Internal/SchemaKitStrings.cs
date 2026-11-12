@@ -208,6 +208,15 @@ internal static class SchemaKitStrings
         => $"'{contributor.FullName}'.Plan answered Rebuild for '{name}', and its placement is BeforeTables: tables are " +
            "made of its objects, so one cannot be dropped and created again around them. Answer InPlace, or change the object under another name.";
 
+    public static string UnknownOperation(Type operation)
+        => $"The migration holds an operation of type '{operation.FullName}', which SchemaKit does not know. What it does " +
+           "to the schema objects this model declares cannot be told, and one of them could be dropped or left broken " +
+           "without an error. Report the operation type to SchemaKit, or move it to a migration of its own.";
+
+    public static string RebuildAroundBeforeTables(Type contributor, QualifiedName name)
+        => $"'{contributor.FullName}'.ImpactOf answered RebuildAround for '{name}', and its placement is BeforeTables: " +
+           "tables are made of its objects, so one cannot be dropped and created again around an operation on a table.";
+
     public static string PlanReturnedNull(Type contributor)
         => $"'{contributor.FullName}'.Plan returned null. Answer None, InPlace or Rebuild.";
 
