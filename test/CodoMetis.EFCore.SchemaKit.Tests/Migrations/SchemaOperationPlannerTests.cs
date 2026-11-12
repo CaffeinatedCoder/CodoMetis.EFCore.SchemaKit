@@ -191,6 +191,16 @@ public static class PlanModels
         }
     }
 
+    /// <summary>Two domains of one extension's type, and an index: three objects, one extension.</summary>
+    public sealed class TwoDomainsOfAnExtension : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Declare(
+            modelBuilder,
+            Name,
+            new TestDomain("citext") { Name = "dom", Extension = "citext" },
+            new TestDomain("citext") { Name = "dom2", Extension = "citext" });
+    }
+
     public sealed class Domain : IPlanModel
     {
         public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestDomain("integer") { Name = "dom" });
@@ -294,6 +304,61 @@ public sealed class SchemaOperationPlannerTests
     [TestMethod]
     public void A_difference_in_how_an_object_is_built_is_no_difference()
         => Assert.AreEqual(0, Diff<PlanModels.Guarded, PlanModels.Concurrently>().Count);
+
+    // ---- extensions ------------------------------------------------------------------------------------
+
+    /// <summary>A dialect as a provider's package brings it: it can install an extension.</summary>
+    private sealed class InstallingDialect(SchemaDialectDependencies dependencies) : SchemaDialect(dependencies)
+    {
+        public override void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql)
+            => sql.Statement($"CREATE EXTENSION {extension} FOR {model.GetEntityTypes().Count()}");
+    }
+
+    private static void Installing(IServiceCollection services)
+        => services.AddScoped<ISchemaDialect>(provider => new InstallingDialect(new SchemaDialectDependencies(
+            provider.GetRequiredService<Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper>(),
+            provider.GetRequiredService<Microsoft.EntityFrameworkCore.Storage.IRelationalTypeMappingSource>())));
+
+    /// <summary>
+    /// An extension is asked for once, however many created objects list it, and ahead of every
+    /// statement, those of what tables are made of included. The dialect is handed the model the
+    /// migration leads to: one entity type here.
+    /// </summary>
+    [TestMethod]
+    public void An_extension_created_objects_depend_on_is_ensured_once_and_first()
+    {
+        using var bare = Context<PlanModels.Bare>(more: Installing);
+        using var context = Context<PlanModels.TwoDomainsOfAnExtension>(more: Installing);
+        var differ = context.GetService<IMigrationsModelDiffer>();
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "CREATE EXTENSION citext FOR 1;",
+                // In the order of their annotation keys, as every list of declarations is.
+                "CREATE DOMAIN dom2 AS citext;",
+                "CREATE DOMAIN dom AS citext;",
+                CreateIndex,
+            },
+            Describe(differ.GetDifferences(Model(bare), Model(context))));
+
+        // Nothing created, nothing ensured: not for what is there already, and not for what is dropped.
+        Assert.AreEqual(0, differ.GetDifferences(Snapshot(context), Model(context)).Count);
+        Assert.IsFalse(Describe(differ.GetDifferences(Model(context), Model(bare))).Any(statement => statement.Contains("EXTENSION")));
+    }
+
+    /// <summary>
+    /// The kernel's own dialect, of a provider without a SchemaKit package, has no statement for an
+    /// extension. It refuses, since the alternative is an object created as if its dependency were met.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void The_kernels_dialect_refuses_a_dependency_on_an_extension(Provider provider)
+    {
+        using var context = Context<PlanModels.TwoDomainsOfAnExtension>(provider);
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+        StringAssert.Contains(error.Message, "'citext'");
+    }
 
     // ---- creates and drops -----------------------------------------------------------------------------
 

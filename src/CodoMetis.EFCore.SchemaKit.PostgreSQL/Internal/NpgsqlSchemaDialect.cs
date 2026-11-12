@@ -1,4 +1,6 @@
 using System.Text;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 
@@ -18,5 +20,28 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
     /// <summary>NAMEDATALEN - 1 of a stock server, for a model that states no limit.</summary>
     public const int DefaultMaxIdentifierLength = 63;
 
+    /// <summary>
+    /// The model annotation that says the extensions are installed some other way. 5.x's key, so
+    /// that a model which set it there still says it here.
+    /// </summary>
+    public const string SuppressExtensions = "CustomTemporal:SuppressAutoExtension";
+
     protected override int Measure(string name) => Encoding.UTF8.GetByteCount(name);
+
+    public override void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql)
+    {
+        ArgumentNullException.ThrowIfNull(extension);
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(sql);
+
+        if (model.FindAnnotation(SuppressExtensions)?.Value is true) return;
+
+        // Declared with HasPostgresExtension, it is Npgsql's to create, and Npgsql does.
+        if (model.GetPostgresExtensions().Any(declared => string.Equals(declared.Name, extension.Name, StringComparison.Ordinal))) return;
+
+        // IF NOT EXISTS, unlike everything SchemaKit creates: the extension is not the model's
+        // object. Another migration, another context or the operator may have installed it, and
+        // none of them would be wrong.
+        sql.Statement($"CREATE EXTENSION IF NOT EXISTS {extension}");
+    }
 }

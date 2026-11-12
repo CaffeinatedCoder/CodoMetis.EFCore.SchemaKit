@@ -274,6 +274,19 @@ public abstract class SchemaResolver
     public abstract SqlFragment Template(string template);
 
     /// <summary>
+    /// The store type of a property path's column, as the model states it: <c>integer</c>,
+    /// <c>character varying(50)</c>, <c>daterange</c>. For what the database decides by the type
+    /// of a column and not by its name, such as which operator classes it has.
+    /// </summary>
+    /// <remarks>
+    /// It is the model's fact, not the CLR type's: a converter, <c>HasColumnType</c> or a provider's
+    /// plugin decides it, and a snapshot records it.
+    /// </remarks>
+    /// <param name="path">The property names from the entity type down, separated by dots.</param>
+    /// <exception cref="InvalidOperationException">The path names no property, or one with no column in the table.</exception>
+    public abstract string StoreType(string path);
+
+    /// <summary>
     /// The declared name, or the default <c>{prefix}_{table}_{parts}</c>. Either is checked by the
     /// dialect, so a name the database would shorten is refused here.
     /// </summary>

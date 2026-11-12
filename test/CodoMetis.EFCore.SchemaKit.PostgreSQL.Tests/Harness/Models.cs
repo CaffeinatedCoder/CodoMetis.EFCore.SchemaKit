@@ -38,12 +38,9 @@ public sealed class Db<TModel>(DbContextOptions<Db<TModel>> options) : DbContext
 {
     public DbSet<RoleGrant> Grants => Set<RoleGrant>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        // "=" on an integer under GiST needs it. Declared by hand: SchemaKit does not add it yet.
-        modelBuilder.HasPostgresExtension("btree_gist");
-        TModel.Build(modelBuilder);
-    }
+    // No extension is declared here: "=" on an integer under GiST needs btree_gist, and that the
+    // migration brings it is what the tests on a live server measure.
+    protected override void OnModelCreating(ModelBuilder modelBuilder) => TModel.Build(modelBuilder);
 }
 
 internal static class Contexts
@@ -104,6 +101,71 @@ public static class Models
     public sealed class Scheduling : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod]);
+    }
+
+    /// <summary><see cref="Scheduling" /> in a model that declares the extension itself, as 5.x's <c>UseBtreeGist()</c> did.</summary>
+    public sealed class SchedulingWithTheExtensionDeclared : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.HasPostgresExtension("btree_gist");
+            Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod]);
+        }
+    }
+
+    /// <summary><see cref="Scheduling" /> in a model that says the extension is installed some other way.</summary>
+    public sealed class SchedulingSuppressed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.SuppressBtreeGistInjection();
+            Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod]);
+        }
+    }
+
+    /// <summary>A range and nothing else: GiST has an operator class for it without any extension.</summary>
+    public sealed class RangeOnly : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.Period), name: "ex_range")]);
+    }
+
+    /// <summary>The same range under SP-GiST, which btree_gist has nothing for.</summary>
+    public sealed class RangeOnlySpGist : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ =>
+            [new PgExclusion.SpGist(new ExclusionElement(new KeyTarget.Column("Period"), ExclusionOperator.Overlaps)) { Name = "ex_range" }]);
+    }
+
+    /// <summary>A text column under SP-GiST, which has an operator class for text of its own.</summary>
+    public sealed class TextSpGist : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ =>
+            [new PgExclusion.SpGist(new ExclusionElement(new KeyTarget.Column("Note"), new ExclusionOperator("<>"))) { Name = "ex_note" }]);
+    }
+
+    /// <summary>A range and an expression compared by an operator B-tree has: the expression's type is unknown, its operator is not.</summary>
+    public sealed class ExpressionCompared : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period), name: "ex_note")]);
+    }
+
+    /// <summary>A text column compared by <c>=</c>: it needs the extension.</summary>
+    public sealed class NoteAsText : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Equal(x => x.Note).Overlaps(x => x.Period), name: "ex_note")]);
+    }
+
+    /// <summary><see cref="NoteAsText" /> with the column as an <c>ltree</c>, which GiST has an operator class for: the same constraint, needing nothing.</summary>
+    public sealed class NoteAsLtree : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasColumnType("ltree");
+            grants.DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.Note).Overlaps(x => x.Period), name: "ex_note")]);
+        }
     }
 
     public sealed class Renamed : ITestModel

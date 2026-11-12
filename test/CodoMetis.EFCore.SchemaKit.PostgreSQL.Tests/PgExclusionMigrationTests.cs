@@ -2,6 +2,7 @@ using CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Harness;
 using CodoMetis.EFCore.SchemaKit.Tests.Harness;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests;
@@ -20,6 +21,9 @@ public sealed class PgExclusionMigrationTests
     private const string Add =
         """ALTER TABLE role_grants ADD CONSTRAINT ex_role_grant_active_period EXCLUDE USING gist ("GranteeId" WITH =, "RoleId" WITH =, "Period" WITH &&) WHERE ("RevokedOn" IS NULL) DEFERRABLE INITIALLY DEFERRED;""";
 
+    /// <summary>"=" on an integer under GiST has an operator class through this extension only.</summary>
+    private const string Extension = "CREATE EXTENSION IF NOT EXISTS btree_gist;";
+
     private const string Drop = """ALTER TABLE role_grants DROP CONSTRAINT ex_role_grant_active_period;""";
 
     /// <summary>5.x's statement, clause for clause, without the <c>DROP CONSTRAINT IF EXISTS</c> it put in front.</summary>
@@ -30,13 +34,14 @@ public sealed class PgExclusionMigrationTests
         var script = context.Database.GenerateCreateScript();
 
         StringAssert.Contains(script, Add);
+        Assert.IsTrue(script.IndexOf(Extension, StringComparison.Ordinal) is >= 0 and var extension && extension < script.IndexOf("CREATE TABLE", StringComparison.Ordinal), script);
         Assert.IsTrue(script.IndexOf("CREATE TABLE role_grants", StringComparison.Ordinal) < script.IndexOf(Add, StringComparison.Ordinal), script);
         Assert.IsFalse(script.Contains("IF EXISTS ex_", StringComparison.Ordinal), script);
     }
 
     [TestMethod]
-    public void A_new_constraint_is_one_statement()
-        => CollectionAssert.AreEqual(new[] { Add }, Contexts.Diff<Models.Bare, Models.Scheduling>().Shape());
+    public void A_new_constraint_is_one_statement_after_the_extension_it_needs()
+        => CollectionAssert.AreEqual(new[] { Extension, Add }, Contexts.Diff<Models.Bare, Models.Scheduling>().Shape());
 
     /// <summary>A drop names the constraint and says no <c>IF EXISTS</c>: one that is gone already is a database that differs from the snapshot.</summary>
     [TestMethod]
@@ -53,7 +58,7 @@ public sealed class PgExclusionMigrationTests
     [TestMethod]
     public void Another_deferral_is_a_rebuild()
         => CollectionAssert.AreEqual(
-            new[] { Drop, Add.Replace(" DEFERRABLE INITIALLY DEFERRED", "") },
+            new[] { Extension, Drop, Add.Replace(" DEFERRABLE INITIALLY DEFERRED", "") },
             Contexts.Diff<Models.Scheduling, Models.Immediate>().Shape());
 
     /// <summary>
@@ -63,8 +68,109 @@ public sealed class PgExclusionMigrationTests
     [TestMethod]
     public void A_constraint_without_a_name_gets_the_default_one()
         => CollectionAssert.AreEqual(
-            new[] { """ALTER TABLE role_grants ADD CONSTRAINT "EX_role_grants_GranteeId_lowerNote_Period" EXCLUDE USING gist ("GranteeId" WITH =, (lower("Note")) WITH =, "Period" WITH &&);""" },
+            new[] { Extension, """ALTER TABLE role_grants ADD CONSTRAINT "EX_role_grants_GranteeId_lowerNote_Period" EXCLUDE USING gist ("GranteeId" WITH =, (lower("Note")) WITH =, "Period" WITH &&);""" },
             Contexts.Diff<Models.Bare, Models.Unnamed>().Shape());
+
+    // ── btree_gist ──
+
+    private static List<string> Create<TModel>() where TModel : ITestModel
+    {
+        using var context = Contexts.Of<TModel>();
+        return context.GetService<IMigrationsModelDiffer>().GetDifferences(null, context.Relational()).Shape();
+    }
+
+    /// <summary>Once for a migration, however many constraints need it, and before anything else of the migration.</summary>
+    [TestMethod]
+    public void Two_constraints_that_need_the_extension_get_it_once_and_first()
+    {
+        var operations = Create<Models.TwoSchemas>();
+
+        Assert.AreEqual(Extension, operations[0], string.Join("\n", operations));
+        Assert.AreEqual(1, operations.Count(o => o.Contains("EXTENSION", StringComparison.Ordinal)));
+        Assert.AreEqual(2, operations.Count(o => o.Contains("EXCLUDE", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// What needs it, by 5.x's rule: a column whose type GiST has no operator class for, and an
+    /// expression compared by an operator B-tree has. A range needs nothing, and SP-GiST is not GiST.
+    /// </summary>
+    [TestMethod]
+    public void The_extension_is_added_for_what_needs_it_and_for_nothing_else()
+    {
+        Assert.IsFalse(Create<Models.RangeOnly>().Any(o => o.Contains("EXTENSION", StringComparison.Ordinal)));
+        Assert.IsFalse(Create<Models.RangeOnlySpGist>().Any(o => o.Contains("EXTENSION", StringComparison.Ordinal)));
+        // A text column needs it under GiST (NoteAsText), and not here: btree_gist is GiST's.
+        Assert.IsFalse(Create<Models.TextSpGist>().Any(o => o.Contains("EXTENSION", StringComparison.Ordinal)));
+        Assert.AreEqual(Extension, Create<Models.ExpressionCompared>()[0]);
+        Assert.AreEqual(Extension, Create<Models.Scheduling>()[0]);
+    }
+
+    [TestMethod]
+    [DataRow("integer", false), DataRow("text", false), DataRow("character varying(50)", false), DataRow("uuid", false)]
+    [DataRow("daterange", true), DataRow("int4range", true), DataRow("tstzmultirange", true), DataRow("TSTZRANGE", true)]
+    [DataRow("point", true), DataRow("tsvector", true), DataRow("geometry(Point, 4326)", true), DataRow("ltree", true)]
+    // No array has a GiST operator class of its own, an array of ranges included.
+    [DataRow("integer[]", false), DataRow("daterange[]", false)]
+    public void A_store_type_has_a_gist_operator_class_of_its_own_or_not(string storeType, bool has)
+        => Assert.AreEqual(has, Internal.PgExclusionContributor.HasGistOperatorClass(storeType));
+
+    /// <summary>Declared with <c>HasPostgresExtension</c>, the extension is Npgsql's to create, and it is created once.</summary>
+    [TestMethod]
+    public void A_model_that_declares_the_extension_itself_gets_no_second_statement()
+    {
+        var operations = Create<Models.SchedulingWithTheExtensionDeclared>();
+
+        Assert.IsFalse(operations.Contains(Extension), string.Join("\n", operations));
+        CollectionAssert.Contains(operations, "AlterDatabaseOperation");
+        CollectionAssert.Contains(operations, Add);
+    }
+
+    [TestMethod]
+    public void A_model_that_suppresses_the_injection_gets_none()
+        => CollectionAssert.AreEqual(new[] { "CreateTableOperation", Add }, Create<Models.SchedulingSuppressed>());
+
+    /// <summary>
+    /// The extension says how a constraint comes to be, not what it is: a constraint that is there
+    /// is the same constraint whether or not this model would install the extension for it.
+    /// </summary>
+    [TestMethod]
+    public void Whether_the_extension_is_installed_for_it_does_not_change_a_constraint()
+    {
+        Assert.AreEqual(0, Contexts.Diff<Models.Scheduling, Models.SchedulingSuppressed>().Count);
+        CollectionAssert.AreEqual(new[] { "AlterDatabaseOperation" }, Contexts.Diff<Models.Scheduling, Models.SchedulingWithTheExtensionDeclared>().Shape());
+    }
+
+    /// <summary>
+    /// A column's type moves from one that needs the extension to one that does not. The constraint
+    /// is the same by name and definition, and PostgreSQL keeps it through the change: were the
+    /// need compared, this would drop and add it.
+    /// </summary>
+    [TestMethod]
+    public void A_type_change_that_ends_the_need_for_the_extension_leaves_the_constraint_alone()
+    {
+        Assert.AreEqual(Extension, Create<Models.NoteAsText>()[0]);
+        Assert.IsFalse(Create<Models.NoteAsLtree>().Contains(Extension));
+
+        // Npgsql installs and removes ltree for the column by itself (AlterDatabaseOperation).
+        // Nothing of SchemaKit's stands beside EF Core's operations, in either direction.
+        foreach (var operations in new[] { Contexts.Diff<Models.NoteAsText, Models.NoteAsLtree>(), Contexts.Diff<Models.NoteAsLtree, Models.NoteAsText>() })
+        {
+            CollectionAssert.Contains(operations.Shape(), "AlterColumnOperation");
+            Assert.AreEqual(0, operations.Sql().Count, string.Join(" | ", operations.Shape()));
+        }
+    }
+
+    /// <summary>
+    /// The switch is 5.x's annotation, key and value: a model that carried it there, or a snapshot
+    /// that still does, says the same here.
+    /// </summary>
+    [TestMethod]
+    public void The_suppress_switch_is_the_annotation_5x_wrote()
+    {
+        using var context = Contexts.Of<Models.SchedulingSuppressed>();
+
+        Assert.AreEqual(true, context.GetService<IDesignTimeModel>().Model.FindAnnotation("CustomTemporal:SuppressAutoExtension")?.Value);
+    }
 
     // ── A model against its own snapshot ──
 
@@ -76,7 +182,7 @@ public sealed class PgExclusionMigrationTests
     [TestMethod]
     public void A_model_and_its_compiled_snapshot_differ_in_nothing()
     {
-        foreach (var context in new DbContext[] { Contexts.Of<Models.Scheduling>(), Contexts.Of<Models.Unnamed>(), Contexts.Of<Models.TwoSchemas>() })
+        foreach (var context in new DbContext[] { Contexts.Of<Models.Scheduling>(), Contexts.Of<Models.Unnamed>(), Contexts.Of<Models.TwoSchemas>(), Contexts.Of<Models.SchedulingSuppressed>() })
         {
             using var _ = context;
             var differ = context.GetService<IMigrationsModelDiffer>();
@@ -87,6 +193,10 @@ public sealed class PgExclusionMigrationTests
             Assert.AreEqual(0, differ.GetDifferences(stored, context.Relational()).Count, code);
             Assert.AreEqual(0, differ.GetDifferences(context.Relational(), stored).Count, code);
             Assert.IsFalse(differ.HasDifferences(stored, context.Relational()));
+
+            // And the snapshot answers what the model answers about a column's type: from nothing,
+            // both lead to the same statements, the extension's among them or not.
+            CollectionAssert.AreEqual(differ.GetDifferences(null, context.Relational()).Sql(), differ.GetDifferences(null, stored).Sql(), code);
         }
     }
 
@@ -141,7 +251,7 @@ public sealed class PgExclusionMigrationTests
     [TestMethod]
     public void A_dropped_element_column_takes_the_constraint_with_it_and_the_new_one_is_added_after()
         => CollectionAssert.AreEqual(
-            new[] { "DropColumnOperation", Add.Replace("\"RoleId\" WITH =, ", "") },
+            new[] { Extension, "DropColumnOperation", Add.Replace("\"RoleId\" WITH =, ", "") },
             Contexts.Diff<Models.Scheduling, Models.WithoutRole>().Shape());
 
     /// <summary>
@@ -151,7 +261,7 @@ public sealed class PgExclusionMigrationTests
     [TestMethod]
     public void A_dropped_condition_column_needs_the_constraint_out_of_the_way_first()
         => CollectionAssert.AreEqual(
-            new[] { Drop, "DropColumnOperation", Add.Replace(" WHERE (\"RevokedOn\" IS NULL)", "") },
+            new[] { Extension, Drop, "DropColumnOperation", Add.Replace(" WHERE (\"RevokedOn\" IS NULL)", "") },
             Contexts.Diff<Models.Scheduling, Models.WithoutRevocation>().Shape());
 
     /// <summary>A constraint is named within its table, so it is the table that is qualified.</summary>

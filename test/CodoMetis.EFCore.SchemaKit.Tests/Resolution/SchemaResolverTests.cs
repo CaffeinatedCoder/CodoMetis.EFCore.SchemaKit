@@ -145,6 +145,35 @@ public sealed class SchemaResolverTests
     /// The premise of the property-bag rule, so that the test above cannot pass for another reason:
     /// the snapshot has no CLR type and no converter to ask.
     /// </summary>
+    /// <summary>
+    /// What the database decides by a column's type is asked of the model, not of the CLR type: a
+    /// converter and an explicit column type both change it, and the snapshot holds what they made.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_paths_store_type_is_the_columns_on_the_model_and_on_its_snapshot(Provider provider)
+    {
+        using var sides = Resolve(provider);
+        var entity = sides.Context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(Person))!;
+        var text = entity.FindProperty(nameof(Person.Name))!.GetColumnType();
+        var number = entity.FindProperty(nameof(Person.Id))!.GetColumnType();
+        Assert.AreNotEqual(text, number);
+
+        foreach (var (side, resolver) in sides.Both)
+        {
+            Assert.AreEqual(number, resolver.StoreType("Id"), side);
+            Assert.AreEqual(text, resolver.StoreType("Name"), side);
+            // The converter stores a string, so the column is one, whatever the property's type is.
+            Assert.AreEqual(text, resolver.StoreType("Email"), side);
+            Assert.AreEqual(text, resolver.StoreType("Email.Value"), side);
+            Assert.AreEqual(text, resolver.StoreType("Address.City"), side);
+
+            StringAssert.Contains(Refused(() => resolver.StoreType("Nope")), "Nope", side);
+            StringAssert.Contains(Refused(() => resolver.StoreType("lower(Name)")), "lower(Name)", side);
+        }
+
+        if (provider == Provider.Npgsql) Assert.AreEqual("integer", sides.Snapshot.StoreType("Id"));
+    }
+
     [TestMethod]
     public void A_snapshot_keeps_a_converted_property_as_an_indexer_property_of_the_stored_type()
     {

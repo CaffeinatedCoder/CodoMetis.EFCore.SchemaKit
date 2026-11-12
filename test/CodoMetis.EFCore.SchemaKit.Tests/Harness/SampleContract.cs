@@ -264,18 +264,26 @@ public sealed record TestDomain(string Type) : ISchemaDeclaration<TestDomain>
 
     public int Epoch { get; init; } = 1;
 
-    public void Write(SchemaJsonWriter writer) => writer.String("type", Type);
+    /// <summary>A database extension the domain's type comes from, or null.</summary>
+    public string? Extension { get; init; }
+
+    public void Write(SchemaJsonWriter writer)
+    {
+        writer.String("type", Type);
+        writer.OptionalString("extension", Extension);
+    }
 
     public static TestDomain Read(SchemaDeclarationHeader header, SchemaJsonReader reader)
-        => new(reader.String("type")) { Name = header.Name, Epoch = header.Epoch };
+        => new(reader.String("type")) { Name = header.Name, Epoch = header.Epoch, Extension = reader.OptionalString("extension") };
 }
 
-public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type, TableRef DeclaredOn) : ISchemaDescriptor
+public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type, TableRef DeclaredOn, SqlName? Extension = null) : ISchemaDescriptor
 {
     public SchemaScope Scope => new SchemaScope.Schema(Name.Schema);
 
     /// <summary>The table it was declared on, so that the planner has a change to ask this contributor about.</summary>
-    public ValueList<Dependency> Dependencies => [new Dependency.WholeTable(DeclaredOn)];
+    public ValueList<Dependency> Dependencies
+        => Extension is null ? [new Dependency.WholeTable(DeclaredOn)] : [new Dependency.WholeTable(DeclaredOn), new Dependency.Extension(Extension)];
 
     public ISchemaDescriptor WithName(QualifiedName name) => this with { Name = name };
 }
@@ -287,7 +295,11 @@ public sealed class TestDomainContributor(SchemaContributorDependencies dependen
     public override SchemaPlacement Placement => SchemaPlacement.BeforeTables;
 
     protected override TestDomainDescriptor Resolve(TestDomain declaration, SchemaResolver resolver)
-        => new(resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? "dom")), resolver.Dialect.Name(declaration.Type), resolver.Table);
+        => new(
+            resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? "dom")),
+            resolver.Dialect.Name(declaration.Type),
+            resolver.Table,
+            declaration.Extension is { } extension ? resolver.Dialect.Name(extension) : null);
 
     public Func<BaseChange, Impact>? ImpactOverride { get; set; }
 
@@ -405,6 +417,8 @@ internal sealed class TestResolver(TableRef table, ISchemaDialect dialect) : Sch
     }
 
     public override SqlFragment Template(string template) => throw new NotSupportedException();
+
+    public override string StoreType(string path) => throw new NotSupportedException();
 }
 
 /// <summary>A package's options extension that adds services, which is how a contributor is registered.</summary>

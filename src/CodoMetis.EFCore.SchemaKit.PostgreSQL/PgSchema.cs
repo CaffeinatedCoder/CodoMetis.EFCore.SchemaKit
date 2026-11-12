@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using NpgsqlTypes;
 
@@ -52,8 +53,11 @@ public readonly struct PgSchema<TEntity>
     /// operator at once.
     /// </summary>
     /// <remarks>
-    /// An element compared by <c>=</c> on a scalar column needs the <c>btree_gist</c> extension;
-    /// declare it with <c>modelBuilder.HasPostgresExtension("btree_gist")</c>.
+    /// An element on a scalar column, such as one compared by <c>=</c>, needs the
+    /// <c>btree_gist</c> extension. The migration that adds the constraint installs it
+    /// (<c>CREATE EXTENSION IF NOT EXISTS</c>), unless the model declares it with
+    /// <c>HasPostgresExtension("btree_gist")</c> or calls
+    /// <see cref="PostgresDeclarationExtensions.SuppressBtreeGistInjection" />.
     /// </remarks>
     /// <param name="elements">The elements, as <c>pg.Equal(…).Overlaps(…)</c> builds them.</param>
     /// <param name="where">The rows the constraint covers; all of them when null.</param>
@@ -198,6 +202,23 @@ internal static class Exclusions
 /// <summary>Where PostgreSQL declarations meet EF Core's builders.</summary>
 public static class PostgresDeclarationExtensions
 {
+    /// <summary>
+    /// Says that <c>btree_gist</c> is installed some other way, so that no migration of this model
+    /// writes <c>CREATE EXTENSION</c> for it: for a database whose extensions the migrating role
+    /// may not create, or that keeps them in a schema of their own.
+    /// </summary>
+    /// <remarks>
+    /// A constraint that needs the extension then fails to apply on a database that lacks it.
+    /// </remarks>
+    /// <param name="modelBuilder">The model's builder.</param>
+    /// <returns>The same builder.</returns>
+    public static ModelBuilder SuppressBtreeGistInjection(this ModelBuilder modelBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+        modelBuilder.Model.SetAnnotation(Internal.NpgsqlSchemaDialect.SuppressExtensions, true);
+        return modelBuilder;
+    }
+
     /// <summary>
     /// Declares PostgreSQL objects on the entity type: one call, a list of values.
     /// </summary>

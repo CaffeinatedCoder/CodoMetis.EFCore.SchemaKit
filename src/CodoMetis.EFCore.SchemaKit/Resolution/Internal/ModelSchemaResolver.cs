@@ -65,6 +65,18 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         return new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column)], own);
     }
 
+    public override string StoreType(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (!IsPropertyPath(path))
+            throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(_entityType.ShortName(), path));
+
+        // Asked of the declared property in this table, as its column is. A snapshot holds the type
+        // as an annotation and a configured model computes it from the mapping: one answer.
+        return FindProperty(path).GetColumnType(_storeObject)
+               ?? throw new InvalidOperationException(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable));
+    }
+
     public override SqlFragment Template(string template)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(template);
