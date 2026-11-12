@@ -164,6 +164,14 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   true of one added later.
 - **A property nothing read, a property stored twice, an unknown `v`, a reader that loses the name
   or the epoch: each is refused.** They are all the same failure, a declaration that comes out of a snapshot as another one.
+- **Features ship without the experimental mark** (decided 2026-11-12). What a consumer calls to
+  declare, read and amend carries no `SK9001`: a provider's entry points, `GetDeclarations`,
+  `FindDeclaration`, `Redeclare`. The contract other packages implement keeps it until `rc.1`,
+  and so does `Declare`, which only a contributor's package calls. `ConsumerCompileTests` compiles
+  a consumer's code against the shipped assemblies with nothing suppressed; every other test
+  project opts in and would not notice. **A mark on a static class does not reach its extension
+  methods called as extensions:** the compiler reports a marked type where it is written, and
+  `entity.Declare(…)` does not write the class. Mark the method.
 - **`KeyTarget`, `Predicate` and `ValueList<T>` are what a declaration is made of, and carry no
   experimental mark:** a consumer writes them and reads them back. `KeyTarget.Of` and
   `Predicate.Of` are the translator's only public entry points. A lambda that is one property is a
