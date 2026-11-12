@@ -26,16 +26,32 @@ internal sealed class ModelSchemaResolver : SchemaResolver
 {
     private readonly IReadOnlyEntityType _entityType;
     private readonly StoreObjectIdentifier _storeObject;
+    private readonly ISchemaRenames? _renames;
+    private readonly TableRef _ownTable;
 
-    public ModelSchemaResolver(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaDialect dialect)
+    /// <param name="entityType">The entity type the declaration is on.</param>
+    /// <param name="table">The table, as the entity type's own model names it.</param>
+    /// <param name="dialect">The dialect.</param>
+    /// <param name="renames">
+    /// For the source side of a diff whose objects follow EF Core's renames: the table and its
+    /// columns are answered as the target model names them. Null to resolve a model as it is.
+    /// </param>
+    public ModelSchemaResolver(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaDialect dialect, ISchemaRenames? renames = null)
     {
         _entityType = entityType;
         _storeObject = table;
+        _renames = renames;
         Dialect = dialect;
-        Table = new TableRef(table.Schema is null ? null : dialect.Identifier(table.Schema), dialect.Identifier(table.Name));
+        _ownTable = new TableRef(table.Schema is null ? null : dialect.Identifier(table.Schema), dialect.Identifier(table.Name));
+        Table = renames?.Forward(_ownTable) ?? _ownTable;
     }
 
     public override TableRef Table { get; }
+
+    // A default name is built from what the model itself calls its table and its columns. Under a
+    // rename the object's SQL takes the new names and its name does not, so that it differs from
+    // the target's in the name alone: a rename of the object, not another object.
+    private protected override TableRef NamedAfter => _ownTable;
 
     public override ISchemaDialect Dialect { get; }
 
@@ -45,8 +61,8 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         if (!IsPropertyPath(path))
             throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(_entityType.ShortName(), path));
 
-        var column = ResolveColumn(path);
-        return new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column)], column.Name);
+        var (column, own) = ResolveColumn(path);
+        return new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column)], own);
     }
 
     public override SqlFragment Template(string template)
@@ -70,9 +86,9 @@ internal sealed class ModelSchemaResolver : SchemaResolver
                 var end = template.IndexOf('}', i + 1);
                 if (end > i + 1 && IsPropertyPath(template.AsSpan(i + 1, end - i - 1)))
                 {
-                    var column = ResolveColumn(template[(i + 1)..end]);
+                    var (column, own) = ResolveColumn(template[(i + 1)..end]);
                     sql.Append(Dialect.Delimit(column));
-                    token.Append(column.Name);
+                    token.Append(own);
                     Dependency read = new Dependency.Column(Table, column);
                     if (!reads.Contains(read)) reads.Add(read);
                     i = end;
@@ -91,12 +107,14 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         return new SqlFragment(sql.ToString(), [.. reads], NameTokens.Of(token.ToString()));
     }
 
-    private Identifier ResolveColumn(string path)
+    /// <summary>The column of a path as the SQL names it, and as the model itself names it, which a default name is built from.</summary>
+    private (Identifier Column, string Own) ResolveColumn(string path)
     {
         var property = FindProperty(path);
-        var column = property.GetColumnName(_storeObject)
-                     ?? throw new InvalidOperationException(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, Table));
-        return Dialect.Identifier(column);
+        var own = property.GetColumnName(_storeObject)
+                  ?? throw new InvalidOperationException(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable));
+        var column = Dialect.Identifier(own);
+        return (_renames?.Forward(Table, column) ?? column, own);
     }
 
     /// <summary>
@@ -195,6 +213,20 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     }
 }
 
+/// <summary>
+/// The renames EF Core applies between the two models of a diff. The source side is resolved under
+/// them when its objects follow: the database renames an index's column along, so the object the
+/// source model describes is, after EF Core's operations, the one under the new names.
+/// </summary>
+internal interface ISchemaRenames
+{
+    /// <summary>A table of the source model as the target model names it.</summary>
+    TableRef Forward(TableRef table);
+
+    /// <summary>A column, its table named as the target has it, as the target model names the column.</summary>
+    Identifier Forward(TableRef table, Identifier column);
+}
+
 /// <summary>What a default name takes from SQL that is not a column.</summary>
 internal static class NameTokens
 {
@@ -221,22 +253,26 @@ internal static class ResolutionEpoch
 internal sealed class SchemaResolverFactory(ISchemaDialect dialect)
 {
     /// <summary>The resolver for a declaration of an entity type, in the table the type is mapped to.</summary>
-    public SchemaResolver Create(IReadOnlyEntityType entityType, ISchemaObject declaration)
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="declaration">The declaration.</param>
+    /// <param name="renames">For the source side of a diff, EF Core's renames to resolve under; null for a model as it is.</param>
+    public SchemaResolver Create(IReadOnlyEntityType entityType, ISchemaObject declaration, ISchemaRenames? renames = null)
         => Create(
             entityType,
             StoreObjectIdentifier.Create(entityType, StoreObjectType.Table)
             ?? throw new InvalidOperationException(SchemaKitStrings.DeclaredOnUnmappedType(entityType.ShortName(), Describe(declaration))),
-            declaration);
+            declaration,
+            renames);
 
     /// <summary>The resolver for a declaration of an entity type, in one of the type's tables.</summary>
-    public SchemaResolver Create(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaObject declaration)
+    public SchemaResolver Create(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaObject declaration, ISchemaRenames? renames = null)
     {
         // An epoch this version does not know is how a later version resolves. Resolving it as
         // epoch 1 would give the source side of a diff another answer than the version that wrote it.
         if (declaration.Epoch != ResolutionEpoch.Current)
             throw new InvalidOperationException(SchemaKitStrings.UnknownEpoch(entityType.ShortName(), Describe(declaration), declaration.Epoch, ResolutionEpoch.Current));
 
-        return new ModelSchemaResolver(entityType, table, dialect);
+        return new ModelSchemaResolver(entityType, table, dialect, renames);
     }
 
     private static string Describe(ISchemaObject declaration)

@@ -196,8 +196,12 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   columns carried forward through EF Core's renames, and the answer that asks most decides:
   `RebuildAround` drops before and creates after even when both sides are equal, `Lost` creates
   again without a drop. Either decides before `Plan` is asked.
-- **`Follows` is taken as it stands.** The source side is not resolved again under a renamed table
-  or column yet, so an object on a renamed table is dropped and created.
+- **An object that follows EF Core's renames is compared under the new names.** `ImpactOf` is
+  asked with the object as it is. When every rename that touches it is answered `Follows`, its
+  declaration is resolved again with the table and the columns as the target names them, and that
+  is what is matched. So a renamed table or column leaves what reads it alone. A default name is
+  still built from the source's own table and columns, which makes it a name-only change: one
+  `InPlace` rename. A drop names the object as it is before EF Core's operations (`Before`).
 - **Which operations SQLite rebuilds a table for is the provider's rule,** and
   `BaseChanges.RebuiltOnSqlite` is a copy of it, held against the provider's generator by a test.
 - **On SQLite a create after a rebuild does not work yet.** SQLite's generator moves the rebuild
@@ -209,7 +213,7 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 ## The resolver
 
 `src/CodoMetis.EFCore.SchemaKit/Resolution` (`design/schemakit-core-plan.md`, section 3.5; #43 lists
-what is still missing: JSON members, renames, TPC).
+what is still missing: JSON members, TPC).
 
 - **It reads metadata only,** which is what a configured model and a snapshot have in common. Every
   rule is tested on both (`SchemaResolverTests`, through `Harness/Snapshots.cs`): an answer that
@@ -225,6 +229,8 @@ what is still missing: JSON members, renames, TPC).
   on the whole table. `SqlFragment` still compares by its text alone.
 - **A default name is built from tokens, not from SQL:** a column's name, a template's letters and
   digits. Rendering a part differently must not rename the object.
+- **Under EF Core's renames (`ISchemaRenames`) the SQL takes the new names and a default name does
+  not.** Only the planner hands a resolver renames, for the source side of a diff.
 - **What a method returns for an input it accepted is epoch 1.** Changing it is a new epoch
   (`ResolutionEpoch`), and a declaration of an epoch the version does not know is refused.
 

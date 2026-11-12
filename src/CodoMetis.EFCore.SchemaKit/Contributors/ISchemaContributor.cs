@@ -245,6 +245,9 @@ public abstract class SchemaResolver
     /// <summary>The dialect the descriptor's names and fragments are made with.</summary>
     public abstract ISchemaDialect Dialect { get; }
 
+    /// <summary>The table a default name is built from: <see cref="Table" />, unless the resolver answers under a rename.</summary>
+    private protected virtual TableRef NamedAfter => Table;
+
     /// <summary>For composing the descriptor's fragments. Statements written to it go nowhere.</summary>
     public SchemaSql Sql => field ??= new SchemaSql(Dialect);
 
@@ -289,6 +292,6 @@ public abstract class SchemaResolver
         if (declared is not null) return Dialect.Identifier(declared);
 
         var tokens = parts.Select(part => part.NameToken ?? NameTokens.Of(part.Text));
-        return Dialect.Identifier(string.Join("_", [prefix, Table.Name.Name, .. tokens]));
+        return Dialect.Identifier(string.Join("_", [prefix, NamedAfter.Name.Name, .. tokens]));
     }
 }
