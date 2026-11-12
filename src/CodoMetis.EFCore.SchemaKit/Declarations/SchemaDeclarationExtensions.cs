@@ -10,7 +10,11 @@ namespace CodoMetis.EFCore.SchemaKit;
 /// Declaring, reading and amending schema objects on EF Core's own metadata. A provider's typed
 /// entry point, a convention and a contributor's package all go through these.
 /// </summary>
-[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+/// <remarks>
+/// Reading and amending are a consumer's: a convention reads what is declared and changes it, and
+/// needs no opt-in for that. <see cref="Declare" /> alone is marked experimental: a consumer
+/// declares through a provider's typed entry point, and only a contributor's package calls it.
+/// </remarks>
 public static class SchemaDeclarationExtensions
 {
     /// <summary>
@@ -28,6 +32,7 @@ public static class SchemaDeclarationExtensions
     /// <exception cref="InvalidOperationException">
     /// <c>UseSchemaKit()</c> is not on the context's options, or a declaration's key is taken.
     /// </exception>
+    [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
     public static void Declare(this IMutableEntityType entityType, IEnumerable<ISchemaObject> declarations)
     {
         ArgumentNullException.ThrowIfNull(entityType);

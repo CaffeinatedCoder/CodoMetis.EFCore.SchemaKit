@@ -17,6 +17,15 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SchemaKitServiceCollectionExtensions",
     ];
 
+    /// <summary>
+    /// What a consumer reads and amends declarations with. The class is unmarked; the one method
+    /// of it that belongs to the contract carries the mark itself.
+    /// </summary>
+    private static readonly string[] ReadModel =
+    [
+        "CodoMetis.EFCore.SchemaKit.SchemaDeclarationExtensions",
+    ];
+
     private static readonly string[] ContributorContract =
     [
         "CodoMetis.EFCore.SchemaKit.BaseChange",
@@ -56,7 +65,6 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SchemaChange+Rebuild",
         "CodoMetis.EFCore.SchemaKit.SchemaContributor`2",
         "CodoMetis.EFCore.SchemaKit.SchemaContributorDependencies",
-        "CodoMetis.EFCore.SchemaKit.SchemaDeclarationExtensions",
         "CodoMetis.EFCore.SchemaKit.SchemaDeclarationHeader",
         "CodoMetis.EFCore.SchemaKit.SchemaDialect",
         "CodoMetis.EFCore.SchemaKit.SchemaDialectDependencies",
@@ -96,7 +104,7 @@ public sealed class PublicSurfaceTests
     [TestMethod]
     public void The_public_types_are_the_ones_meant_to_be()
         => CollectionAssert.AreEqual(
-            Registration.Concat(ContributorContract).Concat(DeclarationValues).Order(StringComparer.Ordinal).ToList(),
+            Registration.Concat(ReadModel).Concat(ContributorContract).Concat(DeclarationValues).Order(StringComparer.Ordinal).ToList(),
             Exported.Select(t => t.FullName).Order(StringComparer.Ordinal).ToList(),
             "The public surface changed: " + string.Join(", ", Exported.Select(t => t.FullName)));
 
@@ -109,12 +117,29 @@ public sealed class PublicSurfaceTests
     public void Every_contract_type_is_marked_experimental()
     {
         var unmarked = Exported
-            .Where(t => !Registration.Contains(t.FullName) && !DeclarationValues.Contains(t.FullName))
+            .Where(t => !Registration.Contains(t.FullName) && !ReadModel.Contains(t.FullName) && !DeclarationValues.Contains(t.FullName))
             .Where(t => (t.DeclaringType ?? t).GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId != "SK9001")
             .Select(t => t.FullName)
             .ToList();
 
         Assert.AreEqual(0, unmarked.Count, "Public without [Experimental(\"SK9001\")]: " + string.Join(", ", unmarked));
+    }
+
+    /// <summary>
+    /// Reading and amending carry no mark; <c>Declare</c>, which only a contributor's package
+    /// calls, does. A method added to the class has to be put on one side here.
+    /// </summary>
+    [TestMethod]
+    public void Of_the_declaration_methods_only_Declare_is_marked_experimental()
+    {
+        var marked = typeof(SchemaDeclarationExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .ToDictionary(m => m.Name, m => m.GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId);
+
+        Assert.IsNull(typeof(SchemaDeclarationExtensions).GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>());
+        CollectionAssert.AreEquivalent(
+            new Dictionary<string, string?> { ["Declare"] = "SK9001", ["Redeclare"] = null, ["GetDeclarations"] = null, ["FindDeclaration"] = null },
+            marked);
     }
 
     /// <summary>The other way round: a consumer who writes a declaration is asked for no opt-in.</summary>
