@@ -30,6 +30,11 @@ public sealed class ContributorContractTests
         protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.Entity<Thing>();
     }
 
+    private sealed class Unplaced(DbContextOptions<Unplaced> options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.Entity<Thing>();
+    }
+
     /// <summary>Takes the dialect, as a contributor may: the dialect reads the design-time model.</summary>
     private sealed class DialectContributor(SchemaContributorDependencies dependencies, ISchemaDialect dialect)
         : SchemaContributor<LooseGuard, TestGuardDescriptor>(dependencies)
@@ -188,6 +193,21 @@ public sealed class ContributorContractTests
         Assert.AreEqual(new Impact.Lost(), contributor.ImpactOf(descriptor, new BaseChange.TableRebuilt(resolver.Table)));
     }
 
+    /// <summary>A null would reach the planner as "no answer", and the planner must act on every answer.</summary>
+    [TestMethod]
+    public void An_impact_that_is_null_is_refused()
+    {
+        using var context = Context();
+        var (contributor, typed, resolver, _) = Kit(context);
+        var descriptor = contributor.Resolve(Email, resolver);
+
+        typed.ImpactOverride = _ => null!;
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => contributor.ImpactOf(descriptor, new BaseChange.TableDropped(resolver.Table)));
+
+        StringAssert.Contains(error.Message, "ImpactOf returned null. Answer Unaffected, Follows, Lost or Blocks.");
+        StringAssert.Contains(error.Message, nameof(TestGuardContributor));
+    }
+
     // ---- routing ----------------------------------------------------------------------------------------
 
     [TestMethod]
@@ -258,6 +278,20 @@ public sealed class ContributorContractTests
         StringAssert.Contains(error.Message, "Two contributors have the owner 'Test.Guard'");
         StringAssert.Contains(error.Message, nameof(TestGuardContributor));
         StringAssert.Contains(error.Message, nameof(RivalGuardContributor));
+    }
+
+    /// <summary>Without a placement the planner would not know which side of EF Core's operations to put the contributor's on.</summary>
+    [TestMethod]
+    public void A_contributor_without_a_placement_is_refused()
+    {
+        var builder = new DbContextOptionsBuilder<Unplaced>().UseProvider(Provider.Sqlite);
+        ServicesExtension.Add(builder, "unplaced", services => services.AddSchemaContributor<UnplacedContributor>());
+        using var context = new Unplaced(builder.UseSchemaKit().Options);
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<SchemaContributorRegistry>());
+
+        StringAssert.Contains(error.Message, "has no placement. Answer SchemaPlacement.BeforeTables or SchemaPlacement.AfterTables(order).");
+        StringAssert.Contains(error.Message, nameof(UnplacedContributor));
     }
 
     [TestMethod]

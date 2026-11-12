@@ -153,8 +153,8 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   drops a `false` or a zero and none may be added; a reader method either requires its property or
   returns null. `DeclarationCodecTests` holds it for every writer method by reflection, so it stays
   true of one added later.
-- **A property nothing read, an unknown `v`, a reader that loses the name or the epoch: each is
-  refused.** They are all the same failure, a declaration that comes out of a snapshot as another one.
+- **A property nothing read, a property stored twice, an unknown `v`, a reader that loses the name
+  or the epoch: each is refused.** They are all the same failure, a declaration that comes out of a snapshot as another one.
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
 - **The unions are closed for the major.** `ContractValueTests` lists every case; adding one is a

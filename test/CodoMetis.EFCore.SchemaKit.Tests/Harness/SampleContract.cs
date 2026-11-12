@@ -140,6 +140,9 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
     /// <summary>What the next <see cref="Plan" /> answers in place of its own judgement, for the tests of the base class.</summary>
     public Func<SchemaSql, SchemaChange>? PlanOverride { get; set; }
 
+    /// <summary>The same for <see cref="ImpactOf" />.</summary>
+    public Func<BaseChange, Impact>? ImpactOverride { get; set; }
+
     protected override TestGuardDescriptor Resolve(TestGuard declaration, SchemaResolver resolver) => declaration switch
     {
         TestGuard.Unique unique => new(
@@ -171,7 +174,7 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
         return new SchemaChange.InPlace();
     }
 
-    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => change switch
+    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => ImpactOverride is not null ? ImpactOverride(change) : change switch
     {
         BaseChange.ColumnRenamed => new Impact.Follows(),
         BaseChange.ColumnAltered => new Impact.Unaffected(),
@@ -194,6 +197,19 @@ public sealed class RivalGuardContributor(SchemaContributorDependencies dependen
 {
     public override SchemaPlacement Placement => SchemaPlacement.BeforeTables;
     protected override TestGuardDescriptor Resolve(TestGuard declaration, SchemaResolver resolver) => throw new NotSupportedException();
+    protected override void Create(TestGuardDescriptor descriptor, SchemaSql sql) => throw new NotSupportedException();
+    protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql) => throw new NotSupportedException();
+    protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql) => throw new NotSupportedException();
+    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => throw new NotSupportedException();
+    protected override IEnumerable<NameClaim> Claims(TestGuardDescriptor descriptor) => throw new NotSupportedException();
+}
+
+/// <summary>A contributor that does not say where its operations go.</summary>
+public sealed class UnplacedContributor(SchemaContributorDependencies dependencies)
+    : SchemaContributor<LooseGuard, TestGuardDescriptor>(dependencies)
+{
+    public override SchemaPlacement Placement => null!;
+    protected override TestGuardDescriptor Resolve(LooseGuard declaration, SchemaResolver resolver) => throw new NotSupportedException();
     protected override void Create(TestGuardDescriptor descriptor, SchemaSql sql) => throw new NotSupportedException();
     protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql) => throw new NotSupportedException();
     protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql) => throw new NotSupportedException();
