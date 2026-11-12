@@ -71,6 +71,30 @@ public sealed class PgExclusionMigrationTests
             new[] { Extension, """ALTER TABLE role_grants ADD CONSTRAINT "EX_role_grants_GranteeId_lowerNote_Period" EXCLUDE USING gist ("GranteeId" WITH =, (lower("Note")) WITH =, "Period" WITH &&);""" },
             Contexts.Diff<Models.Bare, Models.Unnamed>().Shape());
 
+    // ── A table two types share ──
+
+    /// <summary>
+    /// Declared on a stay, the constraint would refuse two overlapping holds as well: it is the
+    /// table's, and nothing in it says "stay". So it is refused where the model is diffed, with the
+    /// type to declare it on; declared there it says what it does.
+    /// </summary>
+    [TestMethod]
+    public void A_constraint_on_a_derived_type_that_shares_its_table_is_refused()
+    {
+        using var onStay = Contexts.Of<Models.StaysMayNotOverlap>();
+        var refusal = Assert.ThrowsExactly<InvalidOperationException>(() => onStay.Database.GenerateCreateScript());
+        StringAssert.Contains(refusal.Message, "Stay declares Pg.Exclusion gist 'ex_stay'");
+        StringAssert.Contains(refusal.Message, "Declare it on Reservation");
+
+        using var onReservation = Contexts.Of<Models.ReservationsMayNotOverlap>();
+        StringAssert.Contains(
+            onReservation.Database.GenerateCreateScript(),
+            """ALTER TABLE reservations ADD CONSTRAINT ex_stay EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""");
+
+        // A snapshot that still has it on the stay is the same constraint: moving it costs nothing.
+        Assert.AreEqual(0, Contexts.Diff<Models.StaysMayNotOverlap, Models.ReservationsMayNotOverlap>().Count);
+    }
+
     // ── btree_gist ──
 
     private static List<string> Create<TModel>() where TModel : ITestModel

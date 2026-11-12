@@ -79,8 +79,8 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
     public SchemaOperationPlan Plan(IRelationalModel? source, IRelationalModel? target, IReadOnlyList<MigrationOperation> inner)
     {
-        var from = Resolve(source);
-        var to   = Resolve(target);
+        var from = Resolve(source, isTarget: false);
+        var to   = Resolve(target, isTarget: true);
         if (from.Count == 0 && to.Count == 0) return SchemaOperationPlan.Empty;
 
         // What an operation of a type nobody has looked at does to these objects is not known.
@@ -265,8 +265,27 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         return pairs;
     }
 
+    /// <summary>
+    /// The base type whose table the entity type shares, the topmost one, or null when its table is
+    /// its own. An object is attached to a table, not to the rows of one type in it: declared on a
+    /// derived type, an exclusion constraint or a unique index would hold among its siblings' rows
+    /// too, and the database would refuse writes the model allows.
+    /// </summary>
+    private static IReadOnlyEntityType? TableOwner(IReadOnlyEntityType entityType)
+    {
+        if (StoreObjectIdentifier.Create(entityType, StoreObjectType.Table) is not { } table) return null;
+
+        IReadOnlyEntityType? owner = null;
+        for (var type = entityType.BaseType; type is not null; type = type.BaseType)
+        {
+            if (StoreObjectIdentifier.Create(type, StoreObjectType.Table) is { } shared && shared.Equals(table)) owner = type;
+        }
+
+        return owner;
+    }
+
     /// <summary>Every declaration of a model as a descriptor, in the order of its entity types and of their annotation keys.</summary>
-    private List<Resolved> Resolve(IRelationalModel? model)
+    private List<Resolved> Resolve(IRelationalModel? model, bool isTarget)
     {
         List<Resolved> resolved = [];
         if (model is null) return resolved;
@@ -286,7 +305,16 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                                   ?? throw new InvalidOperationException(SchemaKitStrings.NoContributorForOwner(entityType.ShortName(), owner));
 
                 foreach (var declaration in ((IDeclarationSource)contributor).Declarations(entityType))
+                {
+                    // Only where the migration leads: a snapshot that holds such a declaration, from
+                    // an earlier version or from 5.x, describes an object that exists, and refusing
+                    // it would leave no way to migrate off it.
+                    if (isTarget && TableOwner(entityType) is { } tableOwner)
+                        throw new InvalidOperationException(SchemaKitStrings.DeclaredOnDerivedTypeOfSharedTable(
+                            entityType.ShortName(), DeclarationCodec.Describe(declaration), tableOwner.ShortName()));
+
                     resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
+                }
             }
         }
 

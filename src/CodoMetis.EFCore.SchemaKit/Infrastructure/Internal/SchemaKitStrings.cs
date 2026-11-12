@@ -180,6 +180,11 @@ internal static class SchemaKitStrings
     public static string DeclaredOnUnmappedType(string entity, string declaration)
         => $"{entity} declares {declaration}, but is not mapped to a table. The declaration would produce nothing, without an error.";
 
+    public static string DeclaredOnDerivedTypeOfSharedTable(string entity, string declaration, string owner)
+        => $"{entity} declares {declaration}, but shares its table with its base type {owner}. An object belongs to the table, " +
+           $"not to the rows of {entity} in it: it would hold among the rows of every type in the table. Declare it on {owner}, " +
+           "which says what it does.";
+
     public static string UnknownEpoch(string entity, string declaration, int epoch, int known)
         => $"{declaration} on {entity} was written under the resolution epoch {epoch}; this version of SchemaKit resolves " +
            $"epoch {known}. Resolving it by other rules could describe another object than the database holds. Update the package.";
