@@ -10,7 +10,7 @@ namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 /// </summary>
 /// <remarks>
 /// Internal on purpose. The public seam is the contributor contract, which is not frozen before
-/// rc.1; the planner that reads contributors replaces <see cref="NoSchemaOperations" />.
+/// rc.1; <see cref="SchemaOperationPlanner" /> is the planner that reads contributors.
 /// </remarks>
 internal interface ISchemaOperationPlanner
 {
@@ -29,11 +29,4 @@ internal sealed record SchemaOperationPlan(IReadOnlyList<MigrationOperation> Bef
     public static SchemaOperationPlan Empty { get; } = new([], []);
 
     public bool IsEmpty => Before.Count == 0 && After.Count == 0;
-}
-
-/// <summary>The planner of a context nothing has contributed to.</summary>
-internal sealed class NoSchemaOperations : ISchemaOperationPlanner
-{
-    public SchemaOperationPlan Plan(IRelationalModel? source, IRelationalModel? target, IReadOnlyList<MigrationOperation> inner)
-        => SchemaOperationPlan.Empty;
 }

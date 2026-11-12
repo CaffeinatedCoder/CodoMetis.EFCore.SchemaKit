@@ -21,7 +21,9 @@ public sealed class SnapshotContext(DbContextOptions<SnapshotContext> options) :
             Concurrently = true,
         },
         new TestGuard.Unique([new GuardKey("Id")]) { FillFactor = 0 },
-        new TestGuard.Trigger("Name") { Epoch = 2 },
+        // Epoch 1, the one this version resolves: scaffolding the snapshot runs the planner, which
+        // refuses any other. That another epoch survives the stored form is DeclarationCodecTests'.
+        new TestGuard.Trigger("Name"),
     ];
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -40,7 +42,11 @@ public sealed class SnapshotRoundTripTests
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
     public void Declarations_read_from_a_compiled_snapshot_are_the_values_that_were_declared(Provider provider)
     {
-        using var context = new SnapshotContext(new DbContextOptionsBuilder<SnapshotContext>().UseProvider(provider).UseSchemaKit().Options);
+        // The contributor is what a package that declares brings: scaffolding runs the planner, and a
+        // declaration nothing renders is refused there.
+        var builder = new DbContextOptionsBuilder<SnapshotContext>().UseProvider(provider);
+        ServicesExtension.Add(builder, "guards", services => services.AddSchemaContributor<TestGuardContributor>());
+        using var context = new SnapshotContext(builder.UseSchemaKit().Options);
         var declared = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(Thing))!;
 
         var (model, code) = Snapshots.Of(context);
