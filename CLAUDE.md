@@ -9,10 +9,10 @@ a new package with a new API and an entirely new core, in its own repository. Th
 stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch with this one.
 
 **The kernel has its host, its SQL vocabulary, the contributor contract, the declaration store, the
-first slice of the resolver and the first slice of the planner. A declaration is stored, resolved
-and turned into statements around EF Core's operations by a registered contributor; no package
-with a real contributor exists yet** (the rest of the resolver is #43, of the planner #24, the
-PostgreSQL package #25). The repository holds:
+resolver, the planner and the lambda translator. A declaration is stored, resolved and turned into
+statements around EF Core's operations by a registered contributor, and a lambda becomes a
+template; no package with a real contributor exists yet** (what is left of the resolver is #43, of
+the planner #24, of the translator #26; the PostgreSQL package is #25). The repository holds:
 
 | Path | What |
 |---|---|
@@ -209,6 +209,28 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   still there: the migration fails to apply, where before it applied and lost the object. The
   generator decorator has to place it (plan, section 3.12). Do not ship a contributor for SQLite
   before that.
+
+## The lambda translator
+
+`src/CodoMetis.EFCore.SchemaKit/Translation` (`design/schemakit-core-plan.md`, section 3.9; #26 lists
+what is still missing: the parity sweep, `[SchemaFunction]`).
+
+- **It is 5.x's translator, ported with its rules unchanged.** Each comment in it that names a
+  failure records one that happened. Do not simplify a rule because it looks redundant: a stored
+  template must come out the same, and `LambdaTranslatorTests` holds each one.
+- **A lambda becomes a template where it is written,** with `{Path}` placeholders the resolver
+  fills in. No service is needed, which is what lets a declaration be a value in `OnModelCreating`.
+- **Spelled as the provider's queries spell it,** character for character: an index serves only a
+  query whose expression matches it. The spellings are PostgreSQL's; SQL Server's come with #29.
+- **A comparison that can be NULL is written as EF Core writes it.** `x.Tag != "blocked"` keeps the
+  rows whose tag is null, as C# does; a negation over such a comparison is pushed down to it.
+- **The accepted constructs are data** (`StringMethods`, `ValueMembers`, the operator sets,
+  `LiteralTypes`). Add a construct to a table, not only to the dispatch: the sweep and the analyzer
+  read the tables.
+- **A literal is written as it is.** 5.x doubled a brace inside a literal for a second template
+  grammar it had; the resolver has one grammar and takes nothing inside quotes for a placeholder.
+- **Refused where the lambda is written:** an enum comparison, a `DateTime` or `Guid` literal, a
+  member of a scalar, a method outside the tables.
 
 ## The resolver
 
