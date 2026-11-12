@@ -84,8 +84,13 @@ internal static class DeclarationCodec
                 throw new InvalidOperationException(SchemaKitStrings.DeclarationNotJson(key));
 
             // The version first: what the other properties mean depends on it.
-            if (!root.TryGetProperty(DeclarationCodecNames.Version, out var v) || !v.TryGetInt32(out var version) || version != FormatVersion)
-                throw new InvalidOperationException(SchemaKitStrings.UnknownFormatVersion(key, v.ValueKind == JsonValueKind.Undefined ? "none" : v.GetRawText(), FormatVersion));
+            // The kind before the number: TryGetInt32 throws on anything that is not a number, with
+            // a message of its own that names no annotation.
+            int? version = root.TryGetProperty(DeclarationCodecNames.Version, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var number)
+                ? number
+                : null;
+            if (version != FormatVersion)
+                throw new InvalidOperationException(SchemaKitStrings.UnknownFormatVersion(key, v.ValueKind == JsonValueKind.Undefined ? "none" : v.GetRawText(), version, FormatVersion));
 
             var reader = new SchemaJsonReader(root, key);
             reader.Skip(DeclarationCodecNames.Version);
