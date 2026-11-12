@@ -123,6 +123,10 @@ internal static class SchemaKitStrings
             _ => "That is an older format, which this version does not read: reading it as the newer one would resolve it wrongly.",
         };
 
+    public static string DeclarationPropertyTwice(string path, string name)
+        => $"The declaration '{path}' has the property '{name}' twice. SchemaKit writes a property once, and taking " +
+           "either value would be a guess: the model snapshot was edited by hand or is damaged.";
+
     public static string DeclarationPropertyMissing(string path, string name)
         => $"The declaration '{path}' has no '{name}'. SchemaKit does not assume a value for a property that was not " +
            "written; the snapshot was edited, or written by another version of the package that owns the declaration.";

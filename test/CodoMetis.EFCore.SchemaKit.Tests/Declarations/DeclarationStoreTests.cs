@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using CodoMetis.EFCore.SchemaKit.Declarations.Internal;
@@ -253,6 +254,30 @@ public sealed class DeclarationStoreTests
         var byKey = declarations.OrderBy(DeclarationCodec.Key, StringComparer.Ordinal).ToList();
         CollectionAssert.AreEqual(byKey, forward.GetDeclarations<TestGuard>().ToList());
         CollectionAssert.AreEqual(byKey, backward.GetDeclarations<TestGuard>().ToList());
+
+        // EF Core's own entity types return their annotations sorted by name, so the two above hold
+        // without the store ordering anything. The order is the store's promise, not EF Core's: an
+        // entity type that returns them otherwise gets the same answer.
+        var unsorted = DispatchProxy.Create<IReadOnlyEntityType, ReversedAnnotations>();
+        ((ReversedAnnotations)unsorted).Inner = forward;
+        var returned = unsorted.GetAnnotations().Select(a => a.Name).Where(n => n.StartsWith("CodoMetis:Test.Guard:", StringComparison.Ordinal)).ToList();
+        CollectionAssert.AreNotEqual(returned.Order(StringComparer.Ordinal).ToList(), returned, "The entity type of this test has to return them out of order.");
+
+        CollectionAssert.AreEqual(byKey, unsorted.GetDeclarations<TestGuard>().ToList());
+    }
+
+    /// <summary>An entity type that is another's in everything but the order of its annotations.</summary>
+    public class ReversedAnnotations : DispatchProxy
+    {
+        public IReadOnlyEntityType Inner { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            var result = targetMethod!.Invoke(Inner, args);
+            return targetMethod.Name == nameof(IReadOnlyAnnotatable.GetAnnotations)
+                ? ((IEnumerable<IAnnotation>)result!).Reverse().ToList()
+                : result;
+        }
     }
 
     // ---- Redeclare: the one replacing path ------------------------------------------------------------

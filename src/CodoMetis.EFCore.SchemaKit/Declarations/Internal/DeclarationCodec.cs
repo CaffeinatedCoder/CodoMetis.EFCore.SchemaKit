@@ -83,6 +83,11 @@ internal static class DeclarationCodec
             if (root.ValueKind != JsonValueKind.Object)
                 throw new InvalidOperationException(SchemaKitStrings.DeclarationNotJson(key));
 
+            // Before anything is read: a property that is there twice has two values, and the reader
+            // would take the second without a word.
+            if (Repeated(root, key) is var (path, name))
+                throw new InvalidOperationException(SchemaKitStrings.DeclarationPropertyTwice(path, name));
+
             // The version first: what the other properties mean depends on it.
             // The kind before the number: TryGetInt32 throws on anything that is not a number, with
             // a message of its own that names no annotation.
@@ -119,6 +124,35 @@ internal static class DeclarationCodec
                 throw new InvalidOperationException(SchemaKitStrings.ReadChangedTheDeclaration(typeof(TDeclaration), key, value, rewritten));
 
             return declaration;
+        }
+    }
+
+    /// <summary>The first property an object of the value holds twice, with the path of that object.</summary>
+    private static (string Path, string Name)? Repeated(JsonElement element, string path)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                HashSet<string> seen = new(StringComparer.Ordinal);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!seen.Add(property.Name)) return (path, property.Name);
+                    if (Repeated(property.Value, $"{path}.{property.Name}") is { } nested) return nested;
+                }
+
+                return null;
+
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (Repeated(item, $"{path}[{index++}]") is { } nested) return nested;
+                }
+
+                return null;
+
+            default:
+                return null;
         }
     }
 

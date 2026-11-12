@@ -209,6 +209,34 @@ public sealed class DeclarationCodecTests
             "Only a higher version was written by a newer package.");
     }
 
+    /// <summary>
+    /// JSON allows it and the reader would take the second value. Which of the two the snapshot
+    /// meant is not known, so neither is taken.
+    /// </summary>
+    [TestMethod]
+    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[],"nullsDistinct":false,"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'nullsDistinct' twice")]
+    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[],"nullsDistinct":true,"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'nullsDistinct' twice")]
+    [DataRow("""{"$kind":"unique","v":2,"v":2,"r":1,"keys":[],"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'v' twice")]
+    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[{"column":"A","descending":false},{"column":"B","column":"C","descending":false}],"nullsDistinct":true,"include":[],"concurrently":false}""", "'K.keys[1]' has the property 'column' twice")]
+    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[],"nullsDistinct":true,"include":[],"where":{"template":"a","template":"b"},"concurrently":false}""", "'K.where' has the property 'template' twice")]
+    public void A_property_that_is_stored_twice_is_refused(string value, string message)
+    {
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Read<TestGuard>("K", value));
+
+        StringAssert.Contains(error.Message, message);
+        StringAssert.Contains(error.Message, "edited by hand or is damaged");
+    }
+
+    /// <summary>The same value with each property once is read: the rows above are refused for the repetition alone.</summary>
+    [TestMethod]
+    public void The_value_the_repetitions_are_made_from_is_read()
+    {
+        var read = DeclarationCodec.Read<TestGuard>(
+            "K", """{"$kind":"unique","v":2,"r":1,"keys":[{"column":"A","descending":false}],"nullsDistinct":true,"include":[],"where":{"template":"a"},"concurrently":false}""");
+
+        Assert.AreEqual(new TestGuard.Unique([new GuardKey("A")]) { Where = new GuardFilter("a") }, read);
+    }
+
     [TestMethod]
     [DataRow("not json"), DataRow("[]"), DataRow("\"text\""), DataRow("")]
     public void A_value_that_is_not_a_json_object_is_refused(string value)
