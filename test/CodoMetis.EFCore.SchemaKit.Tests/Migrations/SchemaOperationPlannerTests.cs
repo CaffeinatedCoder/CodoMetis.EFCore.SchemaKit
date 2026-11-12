@@ -254,6 +254,27 @@ public static class PlanModels
             new TestDomain("citext") { Name = "dom2", Extension = "citext" });
     }
 
+    /// <summary>A domain of the extension's type that says nothing of the extension, and the same one that does.</summary>
+    public sealed class DomainWithoutItsExtension : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestDomain("citext") { Name = "dom" });
+    }
+
+    public sealed class DomainWithItsExtension : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestDomain("citext") { Name = "dom", Extension = "citext" });
+    }
+
+    /// <summary><see cref="Guarded" />, and the column the index is on becomes a computed one.</summary>
+    public sealed class GuardedComputed : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).HasComputedColumnSql("'x'", stored: true);
+            Declare(modelBuilder, Name);
+        }
+    }
+
     public sealed class Domain : IPlanModel
     {
         public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestDomain("integer") { Name = "dom" });
@@ -459,6 +480,25 @@ public sealed class SchemaOperationPlannerTests
         // Nothing created, nothing ensured: not for what is there already, and not for what is dropped.
         Assert.AreEqual(0, differ.GetDifferences(Snapshot(context), Model(context)).Count);
         Assert.IsFalse(Describe(differ.GetDifferences(Model(context), Model(bare))).Any(statement => statement.Contains("EXTENSION")));
+    }
+
+    /// <summary>
+    /// An object that stays can come to depend on an extension: the database rebuilds an index
+    /// under a column's new type, and the operator class it then needs is an extension's. Nothing
+    /// is created, and the extension is ensured all the same. Not the other way round, and not
+    /// when both sides depend on it.
+    /// </summary>
+    [TestMethod]
+    public void An_extension_an_object_comes_to_depend_on_is_ensured_though_nothing_is_created()
+    {
+        using var without = Context<PlanModels.DomainWithoutItsExtension>(more: Installing);
+        using var with = Context<PlanModels.DomainWithItsExtension>(more: Installing);
+        var differ = with.GetService<IMigrationsModelDiffer>();
+
+        CollectionAssert.AreEqual(new[] { "CREATE EXTENSION citext FOR 1;" }, Describe(differ.GetDifferences(Model(without), Model(with))));
+        Assert.IsTrue(differ.HasDifferences(Model(without), Model(with)));
+        Assert.AreEqual(0, differ.GetDifferences(Model(with), Model(without)).Count);
+        Assert.AreEqual(0, differ.GetDifferences(Model(with), Model(with)).Count);
     }
 
     /// <summary>

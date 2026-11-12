@@ -325,6 +325,92 @@ public sealed class SchemaImpactTests
             $"Not in the table: {string.Join(", ", found.Except(known))}. In the table and in no assembly: {string.Join(", ", known.Except(found))}.");
     }
 
+    // ---- an alter that is written as a drop and an add ------------------------------------------------------
+
+    private static AlterColumnOperation Alter(Action<AlterColumnOperation>? now = null, Action<AddColumnOperation>? before = null, string column = "Name")
+    {
+        var old = new AddColumnOperation { ClrType = typeof(string), IsNullable = false };
+        before?.Invoke(old);
+        var alter = new AlterColumnOperation { Table = "Thing", Name = column, ClrType = typeof(string), IsNullable = false, OldColumn = old };
+        now?.Invoke(alter);
+        return alter;
+    }
+
+    public static IEnumerable<object[]> Alterations =>
+    [
+        [Provider.Npgsql, "becomes computed", Alter(now: a => { a.ComputedColumnSql = "'x'"; a.IsStored = true; })],
+        [Provider.Npgsql, "stops being computed", Alter(before: a => { a.ComputedColumnSql = "'x'"; a.IsStored = true; })],
+        [Provider.Npgsql, "computed otherwise", Alter(now: a => { a.ComputedColumnSql = "'y'"; a.IsStored = true; }, before: a => { a.ComputedColumnSql = "'x'"; a.IsStored = true; })],
+        [Provider.Npgsql, "computed the same", Alter(now: a => { a.ComputedColumnSql = "'x'"; a.IsStored = true; a.IsNullable = true; }, before: a => { a.ComputedColumnSql = "'x'"; a.IsStored = true; })],
+        [Provider.Npgsql, "another type", Alter(now: a => a.ColumnType = "character varying(50)")],
+        [Provider.Npgsql, "nullable", Alter(now: a => a.IsNullable = true)],
+        [Provider.Npgsql, "a default", Alter(now: a => a.DefaultValue = "x")],
+        [Provider.Npgsql, "a default by SQL", Alter(now: a => a.DefaultValueSql = "'x'")],
+        [Provider.Npgsql, "a comment", Alter(now: a => a.Comment = "c")],
+        [Provider.Npgsql, "a collation", Alter(now: a => a.Collation = "C")],
+        [Provider.Npgsql, "becomes a generated tsvector", Alter(now: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); })],
+        [Provider.Npgsql, "a tsvector over other columns", Alter(
+            now: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); },
+            before: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Name" }); })],
+        [Provider.Npgsql, "a tsvector as it was", Alter(
+            now: a => { a.ColumnType = "tsvector"; a.IsNullable = true; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); },
+            before: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); })],
+
+        [Provider.SqlServer, "becomes computed", Alter(now: a => a.ComputedColumnSql = "'x'")],
+        [Provider.SqlServer, "stops being computed", Alter(before: a => a.ComputedColumnSql = "'x'")],
+        [Provider.SqlServer, "computed otherwise", Alter(now: a => a.ComputedColumnSql = "'y'", before: a => a.ComputedColumnSql = "'x'")],
+        [Provider.SqlServer, "persisted", Alter(now: a => { a.ComputedColumnSql = "'x'"; a.IsStored = true; }, before: a => a.ComputedColumnSql = "'x'")],
+        [Provider.SqlServer, "another type", Alter(now: a => a.ColumnType = "nvarchar(50)")],
+        [Provider.SqlServer, "nullable", Alter(now: a => a.IsNullable = true)],
+        [Provider.SqlServer, "a default", Alter(now: a => a.DefaultValue = "x")],
+        [Provider.SqlServer, "a comment", Alter(now: a => a.Comment = "c")],
+        [Provider.SqlServer, "a collation", Alter(now: a => a.Collation = "Latin1_General_CI_AS")],
+    ];
+
+    /// <summary>
+    /// Which alterations a provider writes as <c>DROP COLUMN</c> and <c>ADD COLUMN</c> is the
+    /// provider's rule, and the kernel keeps a copy of it. Here each provider's own generator is
+    /// asked. Where it drops the column, the database drops what it drops with a column, and the
+    /// kernel has to have said <c>ColumnDropped</c>.
+    /// </summary>
+    [TestMethod, DynamicData(nameof(Alterations))]
+    public void The_kernel_takes_for_a_drop_what_the_providers_generator_writes_as_one(Provider provider, string what, AlterColumnOperation operation)
+    {
+        // Asked first, as the planner asks at diff time: Npgsql's generator rewrites the operation
+        // it is handed (it turns the tsvector annotations into a computation), and asked afterwards
+        // the kernel's rule would be reading the generator's answer.
+        var taken = BaseChanges.DroppedAndAdded(operation);
+
+        using var context = SchemaOperationPlannerTests.Context<PlanModels.Bare>(provider);
+        var sql = string.Join("\n", context.GetService<IMigrationsSqlGenerator>()
+            .Generate([operation], context.GetService<IDesignTimeModel>().Model)
+            .Select(command => command.CommandText));
+
+        Assert.AreEqual(sql.Contains("DROP COLUMN", StringComparison.Ordinal), taken, $"{what}:\n{sql}");
+    }
+
+    /// <summary>
+    /// Both models declare the index and neither changes it. EF Core makes its column a computed
+    /// one, which the provider writes as a drop and an add, and the database drops the index with
+    /// the column. The contributor hears of a drop, answers that the index is lost, and it is
+    /// created again after the column is back.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer)]
+    public void An_alter_written_as_drop_and_add_is_a_dropped_column_to_what_reads_it(Provider provider)
+    {
+        using var from = SchemaOperationPlannerTests.Context<PlanModels.Guarded>(provider);
+        using var to = SchemaOperationPlannerTests.Context<PlanModels.GuardedComputed>(provider);
+        var guard = (TestGuardContributor)to.GetService<SchemaContributorRegistry>().Find("Test.Guard")!;
+
+        var operations = SchemaOperationPlannerTests.Describe(
+            to.GetService<IMigrationsModelDiffer>().GetDifferences(SchemaOperationPlannerTests.Model(from), SchemaOperationPlannerTests.Model(to)));
+
+        Assert.AreEqual(nameof(AlterColumnOperation), operations[0]);
+        Assert.AreEqual(2, operations.Count, string.Join(" | ", operations));
+        StringAssert.StartsWith(operations[1], "CREATE UNIQUE INDEX");
+        Assert.IsInstanceOfType<BaseChange.ColumnDropped>(guard.Asked.Single());
+    }
+
     // ---- SQLite, where a table is rebuilt -------------------------------------------------------------------
 
     public static IEnumerable<object[]> SqliteOperations =>

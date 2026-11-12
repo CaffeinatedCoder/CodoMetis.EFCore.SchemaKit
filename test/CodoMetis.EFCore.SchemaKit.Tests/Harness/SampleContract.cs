@@ -277,13 +277,14 @@ public sealed record TestDomain(string Type) : ISchemaDeclaration<TestDomain>
         => new(reader.String("type")) { Name = header.Name, Epoch = header.Epoch, Extension = reader.OptionalString("extension") };
 }
 
-public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type, TableRef DeclaredOn, SqlName? Extension = null) : ISchemaDescriptor
+/// <param name="Extension">Not compared: it says how the domain comes to be, not what it is.</param>
+public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type, TableRef DeclaredOn, Operational<SqlName?> Extension = default) : ISchemaDescriptor
 {
     public SchemaScope Scope => new SchemaScope.Schema(Name.Schema);
 
     /// <summary>The table it was declared on, so that the planner has a change to ask this contributor about.</summary>
     public ValueList<Dependency> Dependencies
-        => Extension is null ? [new Dependency.WholeTable(DeclaredOn)] : [new Dependency.WholeTable(DeclaredOn), new Dependency.Extension(Extension)];
+        => Extension.Value is { } extension ? [new Dependency.WholeTable(DeclaredOn), new Dependency.Extension(extension)] : [new Dependency.WholeTable(DeclaredOn)];
 
     public ISchemaDescriptor WithName(QualifiedName name) => this with { Name = name };
 }
@@ -299,7 +300,7 @@ public sealed class TestDomainContributor(SchemaContributorDependencies dependen
             resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? "dom")),
             resolver.Dialect.Name(declaration.Type),
             resolver.Table,
-            declaration.Extension is { } extension ? resolver.Dialect.Name(extension) : null);
+            new Operational<SqlName?>(declaration.Extension is { } extension ? resolver.Dialect.Name(extension) : null));
 
     public Func<BaseChange, Impact>? ImpactOverride { get; set; }
 

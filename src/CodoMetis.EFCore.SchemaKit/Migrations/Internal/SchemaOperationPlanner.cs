@@ -170,7 +170,15 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         // however many objects need it, and whether one is needed at all is the dialect's answer
         // for the model the migration leads to. A dependency left unanswered here is an object
         // whose creation fails at apply, or on the one database that lacks the extension.
-        foreach (var extension in creates.SelectMany(create => create.Descriptor.Dependencies).OfType<Dependency.Extension>().Select(e => e.Name).Distinct())
+        //
+        // An object that stays can come to need one too: a column's type changes, the database
+        // rebuilds the object's index under the new type, and the operator class it then needs is
+        // an extension's (#81). So what a target object depends on and its source did not counts
+        // as well, though nothing is created.
+        var needed = creates.SelectMany(create => Extensions(create.Descriptor))
+            .Concat(same.Concat(changed).SelectMany(pair => Extensions(pair.Target.Descriptor).Except(Extensions(pair.Source.Before))))
+            .Distinct();
+        foreach (var extension in needed)
             Dialect.EnsureExtension(extension, target!.Model, before);
 
         // Before EF Core's operations: what is attached to tables goes first, the latest placement
@@ -264,6 +272,9 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
         return pairs;
     }
+
+    private static IEnumerable<SqlName> Extensions(ISchemaDescriptor descriptor)
+        => descriptor.Dependencies.OfType<Dependency.Extension>().Select(extension => extension.Name);
 
     /// <summary>
     /// The base type whose table the entity type shares, the topmost one, or null when its table is

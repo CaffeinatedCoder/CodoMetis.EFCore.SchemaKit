@@ -113,6 +113,13 @@ internal sealed class BaseChanges : ISchemaRenames
                     changes.Add(renamed);
                     break;
 
+                // What the provider writes decides, not what the operation is called: an alter that
+                // is written as a drop and an add takes with it whatever the database drops with a
+                // column, and the objects that read it have to hear of a drop.
+                case AlterColumnOperation alter when DroppedAndAdded(alter):
+                    changes.Add(new BaseChange.ColumnDropped(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name)));
+                    break;
+
                 case AlterColumnOperation alter:
                     changes.Add(new BaseChange.ColumnAltered(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name)));
                     break;
@@ -177,6 +184,27 @@ internal sealed class BaseChanges : ISchemaRenames
 
         _ => null,
     };
+
+    /// <summary>
+    /// Whether the providers write the alter as <c>DROP COLUMN</c> and <c>ADD COLUMN</c>. Npgsql and
+    /// SQL Server both do when the column's computation changes: neither database can alter one.
+    /// Held against both generators by a test: this is the kernel's copy of a rule that is not its own.
+    /// </summary>
+    /// <remarks>
+    /// PostgreSQL drops an index and an exclusion constraint with a column without a word. Taken
+    /// for an alteration, such an operation applied cleanly and left the database without the
+    /// constraint, and no later diff saw it missing (#80; 5.x's issue 184).
+    /// </remarks>
+    internal static bool DroppedAndAdded(AlterColumnOperation alter)
+        => alter.ComputedColumnSql != alter.OldColumn.ComputedColumnSql
+           || alter.IsStored != alter.OldColumn.IsStored
+           // Npgsql computes a generated tsvector column from these two and compares the result.
+           || !Equals(alter[TsVectorConfig], alter.OldColumn[TsVectorConfig])
+           || !(alter[TsVectorProperties] as string[] ?? []).SequenceEqual(alter.OldColumn[TsVectorProperties] as string[] ?? [], StringComparer.Ordinal);
+
+    private const string TsVectorConfig = "Npgsql:TsVectorConfig";
+
+    private const string TsVectorProperties = "Npgsql:TsVectorProperties";
 
     /// <summary>The changes that touch what a descriptor of the source side depends on.</summary>
     public IEnumerable<BaseChange> Touching(ISchemaDescriptor descriptor) => Changes.Where(change => change switch

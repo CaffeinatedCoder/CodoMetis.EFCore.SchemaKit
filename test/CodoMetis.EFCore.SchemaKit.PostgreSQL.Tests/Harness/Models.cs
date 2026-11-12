@@ -243,6 +243,28 @@ public static class Models
         }
     }
 
+    /// <summary><see cref="Scheduling" />, and a column that is an element becomes a computed one: Npgsql drops it and adds it again.</summary>
+    public sealed class SchedulingWithAComputedGrantee : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.GranteeId).HasComputedColumnSql("\"RoleId\" * 10", stored: true);
+            grants.DeclarePostgres(_ => [ActivePeriod]);
+        }
+    }
+
+    /// <summary><see cref="Scheduling" />, and the column only the condition reads becomes a computed one.</summary>
+    public sealed class SchedulingWithAComputedRevocation : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.RevokedOn).HasComputedColumnSql("NULL::date", stored: true);
+            grants.DeclarePostgres(_ => [ActivePeriod]);
+        }
+    }
+
     /// <summary>The constraint under its name without the role, and EF Core drops the role's column: an element of the constraint there was.</summary>
     public sealed class WithoutRole : ITestModel
     {

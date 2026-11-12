@@ -197,7 +197,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 - **An extension a created object depends on is ensured once and first.** The planner collects
   `Dependency.Extension` over what it creates and asks `ISchemaDialect.EnsureExtension` for each,
   with the target model, ahead of every other statement. The kernel's own dialect refuses: an
-  object must not be created as if a dependency nothing can satisfy were met.
+  object must not be created as if a dependency nothing can satisfy were met. An object that
+  stays counts too, for what its target descriptor depends on and its source did not: a column's
+  type change makes the database rebuild an index under the new type (#81).
 - **A declaration on a derived type that shares its table with a base type is refused, on the
   target side only** (#82). An object is the table's: declared on a derived type it would hold
   among the sibling types' rows too. The source side is read as it is, since a snapshot that holds
@@ -220,6 +222,12 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   is what is matched. So a renamed table or column leaves what reads it alone. A default name is
   still built from the source's own table and columns, which makes it a name-only change: one
   `InPlace` rename. A drop names the object as it is before EF Core's operations (`Before`).
+- **An `AlterColumnOperation` the provider writes as drop and add is a `ColumnDropped`** (#80).
+  Npgsql and SQL Server both do that when a column's computation changes (and Npgsql for a
+  generated `tsvector`). PostgreSQL drops an index and an exclusion constraint with the column in
+  silence, so as an alteration the migration applied and the object was gone for good.
+  `BaseChanges.DroppedAndAdded` is a copy of the providers' rule, held against both generators by
+  a test. What the provider writes decides, not what the operation is called.
 - **Which operations SQLite rebuilds a table for is the provider's rule,** and
   `BaseChanges.RebuiltOnSqlite` is a copy of it, held against the provider's generator by a test.
 - **On SQLite a create after a rebuild does not work yet.** SQLite's generator moves the rebuild

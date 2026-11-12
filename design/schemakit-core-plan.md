@@ -347,7 +347,15 @@ new core has one mechanism.
     for `ALTER COLUMN` as a whole (its issues 84 and 141).
   - **SQL Server refuses `sp_rename` of a column under a filtered index** (Msg 5074), as 5.x found
     (its issue 182); a plain index follows the rename.
-  - Not measured: a change from nullable to not null, a clustered index, a computed column, and
+  - **A change of a column's computation is a drop and an add** (measured 2026-11-12 on
+    PostgreSQL 16 and 18, #80). Npgsql's and SQL Server's generators both write `DROP COLUMN` and
+    `ADD COLUMN` for an `AlterColumnOperation` whose `ComputedColumnSql` or `IsStored` differs, so
+    the column's row of the table is "Drop column", not "Alter column". The kernel says
+    `ColumnDropped` for it. On SQL Server this is read from the generator's text, not run.
+  - **A type change makes PostgreSQL rebuild the constraint's index under the new type,** which
+    needs that type's operator class: an extension the object did not need before is ensured
+    although nothing is created (#81).
+  - Not measured: a change from nullable to not null, a clustered index, and
     SQLite, whose table rebuild is `TableRebuilt` and has no statement to run here.
 
 - **Fail closed.** A convention test holds a table of every `MigrationOperation` type in EF Core
