@@ -99,5 +99,23 @@ public sealed class DeclarationValueTests
         Assert.AreEqual(active.And(ranked), active.And(ranked).And(ranked));
         // Only the last conjunct is recognised; the first is added again, as in 5.x.
         Assert.AreEqual(new Predicate("(({RevokedOn} IS NULL) AND ({Rank} > 0)) AND ({RevokedOn} IS NULL)"), active.And(ranked).And(active));
+        // And three deep: what And wrote is still one group in front of the last conjunct.
+        Assert.AreEqual(active.And(ranked).And(active), active.And(ranked).And(active).And(active));
     }
+
+    /// <summary>
+    /// A predicate written by hand may end in what looks like a conjunct and is none: AND binds
+    /// tighter than OR. Taken for one, the condition stays wider than the one asked for, and a
+    /// constraint covers rows it was told to leave out. Nothing fails.
+    /// </summary>
+    [TestMethod]
+    [DataRow("{A} OR {B} AND ({C})", "{C}", "({A} OR {B} AND ({C})) AND ({C})")]
+    [DataRow("({A}) OR ({B}) AND ({C})", "{C}", "(({A}) OR ({B}) AND ({C})) AND ({C})")]
+    [DataRow("NOT ({A}) AND ({C})", "{C}", "(NOT ({A}) AND ({C})) AND ({C})")]
+    // A parenthesis inside a literal closes nothing.
+    [DataRow("({A} = ')') OR ({B}) AND ({C})", "{C}", "(({A} = ')') OR ({B}) AND ({C})) AND ({C})")]
+    [DataRow("({A} = ')' OR {B}) AND ({C})", "{C}", "({A} = ')' OR {B}) AND ({C})")]
+    [DataRow("({A} = 'it''s (') AND ({C})", "{C}", "({A} = 'it''s (') AND ({C})")]
+    public void Only_a_conjunct_And_itself_wrote_is_taken_for_one(string template, string added, string expected)
+        => Assert.AreEqual(expected, new Predicate(template).And(new Predicate(added)).Template);
 }

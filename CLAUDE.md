@@ -168,6 +168,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   experimental mark:** a consumer writes them and reads them back. `KeyTarget.Of` and
   `Predicate.Of` are the translator's only public entry points. A lambda that is one property is a
   `Column`, anything else a `Template`; the two are rendered and named differently.
+  `Predicate.And` takes for a conjunct only what it wrote itself, `(…) AND (other)` with the
+  first parenthesis closing right before the `AND`: a hand-written `{A} OR {B} AND ({C})` ends the
+  same way and is no conjunction (#83).
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
 - **A contributor derives from `SchemaContributor<,>`.** The interface is what the kernel calls, not
