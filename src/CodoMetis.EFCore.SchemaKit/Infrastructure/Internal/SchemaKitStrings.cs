@@ -203,7 +203,7 @@ internal static class SchemaKitStrings
         => $"'{contributor.FullName}'.Plan returned null. Answer None, InPlace or Rebuild.";
 
     public static string ImpactReturnedNull(Type contributor)
-        => $"'{contributor.FullName}'.ImpactOf returned null. Answer Unaffected, Follows, Lost or Blocks.";
+        => $"'{contributor.FullName}'.ImpactOf returned null. Answer Unaffected, Follows, Lost or RebuildAround.";
 
     public static string InPlaceWithoutStatements(Type contributor, QualifiedName name)
         => $"'{contributor.FullName}'.Plan answered InPlace for '{name}' and wrote no statement, so the change would not " +

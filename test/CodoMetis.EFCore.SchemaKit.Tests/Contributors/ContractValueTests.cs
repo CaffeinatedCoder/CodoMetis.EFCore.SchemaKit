@@ -38,7 +38,7 @@ public sealed class ContractValueTests
     /// </summary>
     [TestMethod]
     [DataRow(typeof(SchemaChange), "InPlace,None,Rebuild")]
-    [DataRow(typeof(Impact), "Blocks,Follows,Lost,Unaffected")]
+    [DataRow(typeof(Impact), "Follows,Lost,RebuildAround,Unaffected")]
     [DataRow(typeof(BaseChange), "ColumnAltered,ColumnDropped,ColumnRenamed,TableDropped,TableMoved,TableRebuilt,TableRenamed")]
     [DataRow(typeof(Dependency), "Column,Extension,SchemaObject,WholeTable")]
     [DataRow(typeof(NameClaim), "Constraint,Relation,TableIndex,Trigger")]

@@ -52,10 +52,12 @@ public closed record Impact
     public sealed record Lost : Impact;
 
     /// <summary>
-    /// The operation fails while the object exists. SchemaKit drops it before and creates it after,
-    /// even when it is unchanged.
+    /// The object cannot stay as it is through the operation: the operation fails while the object
+    /// exists, or it succeeds and leaves the object broken, as the rename of a column does to a
+    /// trigger whose body names it. SchemaKit drops the object before and creates it after, even
+    /// when it is unchanged.
     /// </summary>
-    public sealed record Blocks : Impact;
+    public sealed record RebuildAround : Impact;
 }
 
 /// <summary>

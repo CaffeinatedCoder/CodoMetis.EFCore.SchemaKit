@@ -30,7 +30,7 @@ Inputs:
    time from the model present then. That is the failure this package exists to prevent.
 5. **Contributors answer two more questions, and both are mandatory:** what to do with a changed
    pair (`None`, `InPlace`, `Rebuild`), and what an EF operation on a column or table they depend
-   on does to their object (`Unaffected`, `Follows`, `Lost`, `Blocks`). The second one replaces
+   on does to their object (`Unaffected`, `Follows`, `Lost`, `RebuildAround`). The second one replaces
    five separate 5.x bug fixes with one mechanism.
 6. **A declaration never replaces another one silently.** The draft's identity rule loses an index
    without a word (confirmed in the prototype).
@@ -302,7 +302,7 @@ new core has one mechanism.
   | `Unaffected` | The object survives as it is | does nothing |
   | `Follows` | The database renames or moves it along | compares the source under its new identity, emits nothing |
   | `Lost` | The database drops it without saying so | requires the target not to declare it, or re-creates it after |
-  | `Blocks` | The operation fails while the object exists | drops it before and creates it after, even if unchanged |
+  | `RebuildAround` | The object cannot stay as it is: the operation fails while it exists, or leaves it broken | drops it before and creates it after, even if unchanged |
 
 - **Measured (spike E, #20),** on PostgreSQL 16 and 18, which answer alike, and on SQL Server
   2022. Each cell ran the statements EF Core's own generator writes for the operation and then read
@@ -325,14 +325,14 @@ new core has one mechanism.
 
   What the table says beyond its cells:
 
-  - **Stale is a fifth outcome, and the union has four.** The operation succeeds, the trigger stays
-    in the catalog, and it fails when it next fires (`record "new" has no field "a"`, Msg 207):
-    every write to the table fails from then on. Neither server tracks a column named in a
-    function or trigger body. `Lost` would leave the broken trigger in place, so the only one of
-    the four answers that is safe is `Blocks`, whose action (drop before, create after) is the
-    right one although the operation does not fail. Either `Blocks` is documented as "must be
-    rebuilt around the operation" or it is renamed before the contract freezes; to decide with
-    the maintainer (#24).
+  - **`Blocks` and `Stale` in these tables are what was observed, and both are answered
+    `RebuildAround`.** Stale is an outcome the draft's four answers did not have: the operation
+    succeeds, the trigger stays in the catalog, and it fails when it next fires
+    (`record "new" has no field "a"`, Msg 207), so every write to the table fails from then on.
+    Neither server tracks a column named in a function or trigger body. `Lost` would leave the
+    broken trigger in place. The action that is right is the one for an operation that fails,
+    drop before and create after, so the answer was renamed from `Blocks` to `RebuildAround`
+    (decided 2026-11-12, #61): it names what SchemaKit does and covers both.
   - **PostgreSQL drops an index, and an exclusion constraint, with a column in silence,** also
     when the column is only in the index's predicate. An exclusion constraint with the column in
     its predicate only blocks the drop instead (2BP01). The same predicate, two answers.

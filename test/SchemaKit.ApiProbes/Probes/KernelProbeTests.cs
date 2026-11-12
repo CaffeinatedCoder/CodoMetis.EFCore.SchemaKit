@@ -114,7 +114,7 @@ public sealed class KernelProbeTests
             /*IMPACT*/protected override Impact ImpactOf(LtreeDescriptor d, BaseChange change) => change switch
             {
                 BaseChange.ColumnRenamed => new Impact.Follows(),
-                BaseChange.ColumnAltered => new Impact.Blocks(),
+                BaseChange.ColumnAltered => new Impact.RebuildAround(),
                 BaseChange.ColumnDropped => new Impact.Lost(),
                 BaseChange.TableRenamed => new Impact.Follows(),
                 BaseChange.TableMoved => new Impact.Follows(),
