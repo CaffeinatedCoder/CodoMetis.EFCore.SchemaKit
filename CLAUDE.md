@@ -213,7 +213,7 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 ## The lambda translator
 
 `src/CodoMetis.EFCore.SchemaKit/Translation` (`design/schemakit-core-plan.md`, section 3.9; #26 lists
-what is still missing: the parity sweep, `[SchemaFunction]`).
+what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
 
 - **It is 5.x's translator, ported with its rules unchanged.** Each comment in it that names a
   failure records one that happened. Do not simplify a rule because it looks redundant: a stored
@@ -227,6 +227,13 @@ what is still missing: the parity sweep, `[SchemaFunction]`).
 - **The accepted constructs are data** (`StringMethods`, `ValueMembers`, the operator sets,
   `LiteralTypes`). Add a construct to a table, not only to the dispatch: the sweep and the analyzer
   read the tables.
+- **The parity sweep is what says a template is right** (`test/…/TranslatorParity`, ported from
+  5.x). It reads the tables, crosses every construct with every operand shape, compiles the rows
+  with Roslyn and compares the translator and the resolver with EF Core's `ToQueryString()`, both
+  parsed with PostgreSQL's precedence. A disagreement is fixed or listed in `waivers.txt` with its
+  reason, and a waiver nothing needs any more fails. `TranslatorParityLiveTests` runs the same
+  rows on PostgreSQL 18. Members of a JSON document are left out behind
+  `ParityCatalogue.JsonMembers` until a provider renders them.
 - **A literal is written as it is.** 5.x doubled a brace inside a literal for a second template
   grammar it had; the resolver has one grammar and takes nothing inside quotes for a placeholder.
 - **Refused where the lambda is written:** an enum comparison, a `DateTime` or `Guid` literal, a
