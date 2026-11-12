@@ -165,23 +165,26 @@ public sealed class PgExclusionMigrationTests
     }
 
     /// <summary>
-    /// A column's type moves from one that needs the extension to one that does not. The constraint
-    /// is the same by name and definition, and PostgreSQL keeps it through the change: were the
-    /// need compared, this would drop and add it.
+    /// A column's type moves between one that needs the extension and one that does not. The
+    /// constraint is the same by name and definition and PostgreSQL keeps it through the change,
+    /// so it is neither dropped nor added: were the need compared, it would be. But PostgreSQL
+    /// rebuilds its index under the new type, so where the need begins the extension has to be
+    /// there before the column is altered (#81).
     /// </summary>
     [TestMethod]
-    public void A_type_change_that_ends_the_need_for_the_extension_leaves_the_constraint_alone()
+    public void A_type_change_leaves_the_constraint_alone_and_brings_the_extension_it_begins_to_need()
     {
         Assert.AreEqual(Extension, Create<Models.NoteAsText>()[0]);
         Assert.IsFalse(Create<Models.NoteAsLtree>().Contains(Extension));
 
         // Npgsql installs and removes ltree for the column by itself (AlterDatabaseOperation).
-        // Nothing of SchemaKit's stands beside EF Core's operations, in either direction.
-        foreach (var operations in new[] { Contexts.Diff<Models.NoteAsText, Models.NoteAsLtree>(), Contexts.Diff<Models.NoteAsLtree, Models.NoteAsText>() })
-        {
-            CollectionAssert.Contains(operations.Shape(), "AlterColumnOperation");
-            Assert.AreEqual(0, operations.Sql().Count, string.Join(" | ", operations.Shape()));
-        }
+        var ending = Contexts.Diff<Models.NoteAsText, Models.NoteAsLtree>();
+        CollectionAssert.Contains(ending.Shape(), "AlterColumnOperation");
+        Assert.AreEqual(0, ending.Sql().Count, string.Join(" | ", ending.Shape()));
+
+        var beginning = Contexts.Diff<Models.NoteAsLtree, Models.NoteAsText>();
+        CollectionAssert.AreEqual(new[] { Extension }, beginning.Sql());
+        Assert.AreEqual(Extension, beginning.Shape()[0], "Ahead of the column's alteration.");
     }
 
     /// <summary>
@@ -287,6 +290,24 @@ public sealed class PgExclusionMigrationTests
         => CollectionAssert.AreEqual(
             new[] { Extension, Drop, "DropColumnOperation", Add.Replace(" WHERE (\"RevokedOn\" IS NULL)", "") },
             Contexts.Diff<Models.Scheduling, Models.WithoutRevocation>().Shape());
+
+    /// <summary>
+    /// A column's computation changes, and Npgsql writes that as a drop and an add. For a column
+    /// that is an element PostgreSQL takes the constraint with it, so it is added again after: left
+    /// as an alteration, the migration applied and the constraint was gone for good (#80).
+    /// </summary>
+    [TestMethod]
+    public void An_element_column_that_becomes_computed_is_a_dropped_column_and_the_constraint_is_added_again()
+        => CollectionAssert.AreEqual(
+            new[] { Extension, "AlterColumnOperation", Add },
+            Contexts.Diff<Models.Scheduling, Models.SchedulingWithAComputedGrantee>().Shape());
+
+    /// <summary>The same for the column the condition reads: there PostgreSQL refuses the drop while the constraint exists.</summary>
+    [TestMethod]
+    public void A_condition_column_that_becomes_computed_needs_the_constraint_out_of_the_way()
+        => CollectionAssert.AreEqual(
+            new[] { Extension, Drop, "AlterColumnOperation", Add },
+            Contexts.Diff<Models.Scheduling, Models.SchedulingWithAComputedRevocation>().Shape());
 
     /// <summary>A constraint is named within its table, so it is the table that is qualified.</summary>
     [TestMethod]

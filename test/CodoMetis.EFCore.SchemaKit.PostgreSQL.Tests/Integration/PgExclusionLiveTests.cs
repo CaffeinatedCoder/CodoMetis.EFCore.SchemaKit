@@ -244,6 +244,27 @@ public sealed class PgExclusionLiveTests
         CollectionAssert.AreEqual(new[] { Scheduling }, database.Exclusions());
     }
 
+    /// <summary>
+    /// A column's type changes to one GiST has no operator class for. PostgreSQL rebuilds the
+    /// constraint's index under it, and without the extension that fails (42704), so the migration
+    /// brings it although it creates nothing (#81).
+    /// </summary>
+    /// <remarks>
+    /// The other direction is not SchemaKit's to make work: PostgreSQL casts no text to ltree by
+    /// itself (42804), so Npgsql's own statement for the column fails, with or without a constraint.
+    /// </remarks>
+    [TestMethod]
+    public void A_type_change_that_begins_the_need_for_the_extension_applies()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.NoteAsLtree>();
+        CollectionAssert.AreEqual(new[] { "ltree" }, Extensions(database));
+
+        database.Migrate<Models.NoteAsLtree, Models.NoteAsText>();
+        CollectionAssert.Contains(Extensions(database), "btree_gist");
+        Assert.AreEqual(1, database.Exclusions().Count);
+    }
+
     // ── Behaviour: what must fail does, what must pass does ──
 
     [TestMethod]
@@ -371,6 +392,23 @@ public sealed class PgExclusionLiveTests
     /// </summary>
     [TestMethod]
     public void Dropping_a_column_that_is_an_element() => AssertMigratesTo<Models.Scheduling, Models.WithoutRole>();
+
+    /// <summary>
+    /// Npgsql drops the column and adds it again, and PostgreSQL drops the constraint with it. The
+    /// constraint is there afterwards, as <c>EnsureCreated()</c> builds it: before #80 this
+    /// migration applied and left none, and no later diff saw it missing.
+    /// </summary>
+    [TestMethod]
+    public void Making_an_element_column_a_computed_one() => AssertMigratesTo<Models.Scheduling, Models.SchedulingWithAComputedGrantee>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+    [TestMethod]
+    public void Making_a_computed_element_column_a_plain_one() => AssertMigratesTo<Models.SchedulingWithAComputedGrantee, Models.Scheduling>(
+        (migrated, _) => CollectionAssert.AreEqual(new[] { Scheduling }, migrated.Exclusions()));
+
+    [TestMethod]
+    public void Making_the_conditions_column_a_computed_one() => AssertMigratesTo<Models.Scheduling, Models.SchedulingWithAComputedRevocation>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
 
     /// <summary>The column's drop fails while the constraint is there (2BP01), so the migration applies only with the constraint dropped first.</summary>
     [TestMethod]
