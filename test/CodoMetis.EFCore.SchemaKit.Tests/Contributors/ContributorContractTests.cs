@@ -230,7 +230,7 @@ public sealed class ContributorContractTests
         typed.ImpactOverride = _ => null!;
         var error = Assert.ThrowsExactly<InvalidOperationException>(() => contributor.ImpactOf(descriptor, new BaseChange.TableDropped(resolver.Table)));
 
-        StringAssert.Contains(error.Message, "ImpactOf returned null. Answer Unaffected, Follows, Lost or Blocks.");
+        StringAssert.Contains(error.Message, "ImpactOf returned null. Answer Unaffected, Follows, Lost or RebuildAround.");
         StringAssert.Contains(error.Message, nameof(TestGuardContributor));
     }
 
