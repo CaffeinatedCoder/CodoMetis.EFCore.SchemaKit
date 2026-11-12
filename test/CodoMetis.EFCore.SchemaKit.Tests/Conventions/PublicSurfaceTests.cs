@@ -74,6 +74,7 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SchemaPlacement",
         "CodoMetis.EFCore.SchemaKit.SchemaResolver",
         "CodoMetis.EFCore.SchemaKit.LegacyDeclarationReader`1",
+        "CodoMetis.EFCore.SchemaKit.SchemaModelObject",
         "CodoMetis.EFCore.SchemaKit.SchemaScope",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Database",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Schema",
@@ -100,12 +101,23 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.ValueList`1",
     ];
 
+    /// <summary>
+    /// What a consumer catches and reads when a model is refused for what it declares. Unmarked for
+    /// the same reason: nobody implements these.
+    /// </summary>
+    private static readonly string[] Diagnostics =
+    [
+        "CodoMetis.EFCore.SchemaKit.SchemaDiagnostic",
+        "CodoMetis.EFCore.SchemaKit.SchemaDiagnostic+NameCollision",
+        "CodoMetis.EFCore.SchemaKit.SchemaValidationException",
+    ];
+
     private static Type[] Exported => typeof(SchemaKitDbContextOptionsBuilderExtensions).Assembly.GetExportedTypes();
 
     [TestMethod]
     public void The_public_types_are_the_ones_meant_to_be()
         => CollectionAssert.AreEqual(
-            Registration.Concat(ReadModel).Concat(ContributorContract).Concat(DeclarationValues).Order(StringComparer.Ordinal).ToList(),
+            Registration.Concat(ReadModel).Concat(ContributorContract).Concat(DeclarationValues).Concat(Diagnostics).Order(StringComparer.Ordinal).ToList(),
             Exported.Select(t => t.FullName).Order(StringComparer.Ordinal).ToList(),
             "The public surface changed: " + string.Join(", ", Exported.Select(t => t.FullName)));
 
@@ -118,7 +130,7 @@ public sealed class PublicSurfaceTests
     public void Every_contract_type_is_marked_experimental()
     {
         var unmarked = Exported
-            .Where(t => !Registration.Contains(t.FullName) && !ReadModel.Contains(t.FullName) && !DeclarationValues.Contains(t.FullName))
+            .Where(t => !Registration.Contains(t.FullName) && !ReadModel.Contains(t.FullName) && !DeclarationValues.Contains(t.FullName) && !Diagnostics.Contains(t.FullName))
             .Where(t => (t.DeclaringType ?? t).GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId != "SK9001")
             .Select(t => t.FullName)
             .ToList();
@@ -145,10 +157,10 @@ public sealed class PublicSurfaceTests
 
     /// <summary>The other way round: a consumer who writes a declaration is asked for no opt-in.</summary>
     [TestMethod]
-    public void No_declaration_value_is_marked_experimental()
+    public void No_declaration_value_and_no_diagnostic_is_marked_experimental()
     {
         var marked = Exported
-            .Where(t => DeclarationValues.Contains(t.FullName))
+            .Where(t => DeclarationValues.Contains(t.FullName) || Diagnostics.Contains(t.FullName))
             .Where(t => (t.DeclaringType ?? t).GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>() is not null)
             .Select(t => t.FullName)
             .ToList();
