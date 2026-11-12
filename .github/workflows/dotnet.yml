@@ -18,10 +18,10 @@ permissions:
   contents: read
 
 jobs:
-  # The kernel and its tests. No database but SQLite: models are built and scripts generated, and
-  # EF Core's own design-time composition is driven in process. Built in Release with warnings as
-  # errors, which is also what holds EF1001 (no EF-internal API in the shipping project). The tests
-  # that need a server are the integration lane's.
+  # The kernel, the PostgreSQL package and their tests. No database but SQLite: models are built and
+  # scripts generated, and EF Core's own design-time composition is driven in process. Built in
+  # Release with warnings as errors, which is also what holds EF1001 (no EF-internal API in a
+  # shipping project). The tests that need a server are the integration lane's.
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -37,13 +37,23 @@ jobs:
       - name: Build
         run: dotnet build CodoMetis.EFCore.SchemaKit.slnx -c Release
 
+      # Each test project of the solution by name: the probes and the spikes have lanes of their own.
+      # A project that ran no test fails the step, so one added here cannot pass on nothing.
       - name: Test
-        run: >
-          dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
-          -c Release --no-build
-          --filter "TestCategory!=Integration"
-          --logger "trx;LogFileName=tests.trx"
-          --results-directory TestResults
+        run: |
+          for project in CodoMetis.EFCore.SchemaKit.Tests CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests; do
+            echo "::group::$project"
+            dotnet test "test/$project/$project.csproj" \
+              -c Release --no-build \
+              --filter "TestCategory!=Integration" \
+              --logger "trx;LogFileName=$project.trx" \
+              --results-directory TestResults | tee "$project.log"
+            echo "::endgroup::"
+            if ! grep -Eq 'Passed:[[:space:]]+[1-9]' "$project.log"; then
+              echo "::error::No test of $project ran."
+              exit 1
+            fi
+          done
 
   # Statements run on a live server and judged by its catalog. The image floats within its major on
   # purpose, as a consumer's server does; its digest goes to the summary, so a failure with no diff
@@ -85,19 +95,23 @@ jobs:
             echo "| \`postgres:18\` | \`$(docker image inspect postgres:18 --format '{{index .RepoDigests 0}}')\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # A filter that matches nothing passes. The count is read back, so a renamed category cannot
-      # retire the lane while it reports green.
+      # A filter that matches nothing passes. The count is read back per project, so a renamed
+      # category cannot retire a project's live tests while the lane reports green.
       - name: Integration tests
         run: |
-          dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj \
-            -c Release \
-            --filter "TestCategory=Integration" \
-            --logger "trx;LogFileName=integration.trx" \
-            --results-directory TestResults | tee integration.log
-          if ! grep -Eq 'Passed:[[:space:]]+[1-9]' integration.log; then
-            echo "::error::No integration test ran."
-            exit 1
-          fi
+          for project in CodoMetis.EFCore.SchemaKit.Tests CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests; do
+            echo "::group::$project"
+            dotnet test "test/$project/$project.csproj" \
+              -c Release \
+              --filter "TestCategory=Integration" \
+              --logger "trx;LogFileName=$project.integration.trx" \
+              --results-directory TestResults | tee "$project.integration.log"
+            echo "::endgroup::"
+            if ! grep -Eq 'Passed:[[:space:]]+[1-9]' "$project.integration.log"; then
+              echo "::error::No integration test of $project ran."
+              exit 1
+            fi
+          done
 
   # Compile probes for design/schemakit-api.md: each "does not compile" claim of the design,
   # compiled with Roslyn against the prototype and checked for its diagnostic, plus the prototype's

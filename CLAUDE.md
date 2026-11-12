@@ -9,15 +9,18 @@ a new package with a new API and an entirely new core, in its own repository. Th
 stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch with this one.
 
 **The kernel has its host, its SQL vocabulary, the contributor contract, the declaration store, the
-resolver, the planner and the lambda translator. A declaration is stored, resolved and turned into
-statements around EF Core's operations by a registered contributor, and a lambda becomes a
-template; no package with a real contributor exists yet** (what is left of the resolver is #43, of
-the planner #24, of the translator #26; the PostgreSQL package is #25). The repository holds:
+resolver, the planner and the lambda translator, and the PostgreSQL package has the first real
+contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
+every path, on PostgreSQL 16 and 18. Nothing is published** (what is left of the resolver is #43,
+of the planner #24, of the translator #26, of exclusion constraints #25: `btree_gist` injection,
+name claims, the 5.x reader, the read model without an opt-in). The repository holds:
 
 | Path | What |
 |---|---|
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
-| `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
+| `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` with its factory `PgSchema<T>` and `DeclarePostgres`, and its contributor. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
+| `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
+| `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
@@ -33,8 +36,9 @@ predicate translator without null compensation. Do not copy from it without read
 # Build everything that ships, and its tests
 dotnet build CodoMetis.EFCore.SchemaKit.slnx
 
-# The kernel's tests
+# The kernel's tests, and the PostgreSQL package's (the filters below work for both)
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
+dotnet test test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.csproj
 
 # Without the tests that need a server, and those alone (SCHEMAKIT_TEST_PG is an Npgsql connection string)
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "TestCategory!=Integration"
@@ -160,6 +164,10 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   true of one added later.
 - **A property nothing read, a property stored twice, an unknown `v`, a reader that loses the name
   or the epoch: each is refused.** They are all the same failure, a declaration that comes out of a snapshot as another one.
+- **`KeyTarget`, `Predicate` and `ValueList<T>` are what a declaration is made of, and carry no
+  experimental mark:** a consumer writes them and reads them back. `KeyTarget.Of` and
+  `Predicate.Of` are the translator's only public entry points. A lambda that is one property is a
+  `Column`, anything else a `Template`; the two are rendered and named differently.
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
 - **A contributor derives from `SchemaContributor<,>`.** The interface is what the kernel calls, not
@@ -262,6 +270,38 @@ what is still missing: JSON members, TPC).
   not.** Only the planner hands a resolver renames, for the source side of a diff.
 - **What a method returns for an input it accepted is epoch 1.** Changing it is a new epoch
   (`ResolutionEpoch`), and a declaration of an epoch the version does not know is refused.
+
+## The PostgreSQL package
+
+`src/CodoMetis.EFCore.SchemaKit.PostgreSQL` (`design/schemakit-api.md`, sections 5 and 14; #25 lists
+what is still missing).
+
+- **`o.UseSchemaKit()` inside `UseNpgsql` is the whole registration:** the kernel's, then an options
+  extension of its own that puts `NpgsqlSchemaDialect` in place of the kernel's dialect and adds the
+  contributor. The dialect is registered with `Replace`, since EF Core does not promise which of
+  the two extensions is applied first. `AddEntityFrameworkSchemaKitNpgsql()` is the same for a
+  caller-owned provider.
+- **The dialect counts an identifier's bytes.** PostgreSQL keeps 63 bytes and cuts the rest off
+  without an error. It still delimits through Npgsql's helper, which writes a lower-case name bare:
+  `ALTER TABLE role_grants`, not `"role_grants"`.
+- **`PgExclusion`'s stored form is a file format:** owner `Pg.Exclusion`, kinds `gist` and
+  `spgist`, an element's `column` or `sql` (exactly one) with its `op`, `where`, `deferral`.
+  `PgExclusionDeclarationTests` holds two keys and two values verbatim.
+- **The stage types are the first guard, the `init` accessors the second.** `pg.Equal(…)` is an
+  `ExclusionDraft<T>` that no factory takes; `with` and a snapshot go around the factory, so every
+  record checks in `init` what its constructor checks.
+- **A plain `ADD CONSTRAINT`, a drop without `IF EXISTS`.** A name that is taken fails (42P07, the
+  constraint's index) and replaces nothing; 5.x's `DROP CONSTRAINT IF EXISTS` in front is gone.
+- **A constraint is named within its table,** so its descriptor's name has no schema and its
+  statements qualify the table. It claims the name as a constraint and as a relation.
+- **`Plan` is a rename or a rebuild.** PostgreSQL alters nothing else about an exclusion constraint.
+- **`ImpactOf` is the measured table** (plan, section 3.7): renames follow, an altered column leaves
+  it alone, a dropped column that is an element takes the constraint with it (`Lost`), one the
+  condition alone reads has to have the constraint out of its way (`RebuildAround`).
+- **`=` on a scalar column needs `btree_gist`,** which a model declares itself for now
+  (`HasPostgresExtension("btree_gist")`).
+- **The live tests take a database each** (`LiveDatabase`) and compare what a migration leaves with
+  what `EnsureCreated()` builds for the target model, by the catalog's own text.
 
 Locally the integration tests go inconclusive without `SCHEMAKIT_TEST_PG`. When `CI` is set they
 fail instead: an unreachable server must not retire them while the build reports green.

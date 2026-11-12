@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <RootNamespace>CodoMetis.EFCore.SchemaKit.PostgreSQL</RootNamespace>
+        <PackageId>CodoMetis.EFCore.SchemaKit.PostgreSQL</PackageId>
+        <Description>Schema objects of PostgreSQL that EF Core 11 and Npgsql 11 have no API for, declared in the model and carried by migrations: exclusion constraints, typed by what PostgreSQL accepts.</Description>
+        <!-- CS1591 polices the public surface: the .xml in the package is what a consumer sees. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <!-- SK9001 marks the kernel's contributor contract as experimental. This package is written
+             against that contract and ships with the kernel at exactly its own version, so it takes
+             the opt-in for itself; what it makes public is not marked. -->
+        <NoWarn>$(NoWarn);SK9001</NoWarn>
+    </PropertyGroup>
+
+    <!--
+        EF1001 stays an error here as in the kernel, and nothing in this project disables it:
+        InternalApiConventionTests reads every project under src/.
+    -->
+
+    <ItemGroup>
+        <ProjectReference Include="../CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; the floor moves to 11.0.0 when Npgsql ships its own. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests" />
+    </ItemGroup>
+
+</Project>

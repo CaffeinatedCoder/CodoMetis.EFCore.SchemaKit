@@ -10,8 +10,11 @@ namespace CodoMetis.EFCore.SchemaKit;
 /// keeps the value equality its record gives it; with an array or a <see cref="List{T}" /> two equal
 /// descriptors would compare unequal and the differ would rebuild the object on every diff.
 /// </summary>
+/// <remarks>
+/// Not marked experimental, unlike the contributor contract around it: a declaration a consumer
+/// writes holds one, and a collection expression builds it.
+/// </remarks>
 /// <typeparam name="T">The element type. Its own equality decides the list's.</typeparam>
-[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 [CollectionBuilder(typeof(ValueList), nameof(ValueList.Create))]
 public sealed class ValueList<T> : IReadOnlyList<T>, IEquatable<ValueList<T>>
 {
@@ -52,7 +55,6 @@ public sealed class ValueList<T> : IReadOnlyList<T>, IEquatable<ValueList<T>>
 }
 
 /// <summary>Builds a <see cref="ValueList{T}" />; a collection expression calls it.</summary>
-[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 public static class ValueList
 {
     /// <summary>A list of the given elements, in their order.</summary>

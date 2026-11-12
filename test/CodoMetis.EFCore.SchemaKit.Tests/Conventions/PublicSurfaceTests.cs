@@ -75,6 +75,18 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SqlName",
         "CodoMetis.EFCore.SchemaKit.SqlOperator",
         "CodoMetis.EFCore.SchemaKit.TableRef",
+    ];
+
+    /// <summary>
+    /// What a declaration is made of: a consumer writes these and reads them back, so they carry no
+    /// experimental mark. A type added here is one a consumer depends on from the first preview.
+    /// </summary>
+    private static readonly string[] DeclarationValues =
+    [
+        "CodoMetis.EFCore.SchemaKit.KeyTarget",
+        "CodoMetis.EFCore.SchemaKit.KeyTarget+Column",
+        "CodoMetis.EFCore.SchemaKit.KeyTarget+Template",
+        "CodoMetis.EFCore.SchemaKit.Predicate",
         "CodoMetis.EFCore.SchemaKit.ValueList",
         "CodoMetis.EFCore.SchemaKit.ValueList`1",
     ];
@@ -84,25 +96,38 @@ public sealed class PublicSurfaceTests
     [TestMethod]
     public void The_public_types_are_the_ones_meant_to_be()
         => CollectionAssert.AreEqual(
-            Registration.Concat(ContributorContract).Order(StringComparer.Ordinal).ToList(),
+            Registration.Concat(ContributorContract).Concat(DeclarationValues).Order(StringComparer.Ordinal).ToList(),
             Exported.Select(t => t.FullName).Order(StringComparer.Ordinal).ToList(),
             "The public surface changed: " + string.Join(", ", Exported.Select(t => t.FullName)));
 
     /// <summary>
     /// Until rc.1 the contract may change, so using it takes a deliberate opt-in: every public type
-    /// outside the registration carries the experimental diagnostic, top-level or nested under one
-    /// that does.
+    /// outside the registration and the declaration values carries the experimental diagnostic,
+    /// top-level or nested under one that does.
     /// </summary>
     [TestMethod]
     public void Every_contract_type_is_marked_experimental()
     {
         var unmarked = Exported
-            .Where(t => !Registration.Contains(t.FullName))
+            .Where(t => !Registration.Contains(t.FullName) && !DeclarationValues.Contains(t.FullName))
             .Where(t => (t.DeclaringType ?? t).GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId != "SK9001")
             .Select(t => t.FullName)
             .ToList();
 
         Assert.AreEqual(0, unmarked.Count, "Public without [Experimental(\"SK9001\")]: " + string.Join(", ", unmarked));
+    }
+
+    /// <summary>The other way round: a consumer who writes a declaration is asked for no opt-in.</summary>
+    [TestMethod]
+    public void No_declaration_value_is_marked_experimental()
+    {
+        var marked = Exported
+            .Where(t => DeclarationValues.Contains(t.FullName))
+            .Where(t => (t.DeclaringType ?? t).GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>() is not null)
+            .Select(t => t.FullName)
+            .ToList();
+
+        Assert.AreEqual(0, marked.Count, "Marked experimental: " + string.Join(", ", marked));
     }
 
     [TestMethod]
