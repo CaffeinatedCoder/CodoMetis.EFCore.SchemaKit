@@ -199,6 +199,15 @@ internal static class SchemaKitStrings
     public static string ClaimsReturnedNull(Type contributor)
         => $"'{contributor.FullName}'.Claims returned null. Answer the names the object occupies, or an empty list for none.";
 
+    public static string NoContributorForOwner(string entity, string owner)
+        => $"{entity} carries a declaration of '{owner}', and no contributor with that owner is registered. The " +
+           "declaration would be left out of every migration without an error. Add the package that declares it to " +
+           "the context's options.";
+
+    public static string RebuildBeforeTables(Type contributor, QualifiedName name)
+        => $"'{contributor.FullName}'.Plan answered Rebuild for '{name}', and its placement is BeforeTables: tables are " +
+           "made of its objects, so one cannot be dropped and created again around them. Answer InPlace, or change the object under another name.";
+
     public static string PlanReturnedNull(Type contributor)
         => $"'{contributor.FullName}'.Plan returned null. Answer None, InPlace or Rebuild.";
 

@@ -88,7 +88,7 @@ public sealed class OperationOrderTests
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
     public void Without_a_planner_the_inner_list_is_returned_as_it_is(Provider provider)
     {
-        // No test kit here: the context has NoSchemaOperations, as an application with no
+        // No test kit here: the context declares nothing, as an application with no
         // contributor has.
         var options = new DbContextOptionsBuilder<Empty>();
         options.UseProvider(provider);

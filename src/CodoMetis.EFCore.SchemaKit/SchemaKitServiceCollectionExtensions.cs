@@ -80,7 +80,7 @@ public static class SchemaKitServiceCollectionExtensions
     /// <summary>What both registration paths add besides the two decorators.</summary>
     internal static void AddShared(IServiceCollection services)
     {
-        services.TryAddScoped<ISchemaOperationPlanner, NoSchemaOperations>();
+        services.TryAddScoped<ISchemaOperationPlanner, SchemaOperationPlanner>();
         services.TryAddScoped<SchemaContributorDependencies>();
         services.TryAddScoped<SchemaContributorRegistry>();
         services.TryAddScoped<SchemaResolverFactory>();

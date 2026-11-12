@@ -181,6 +181,9 @@ public closed record SchemaPlacement
     /// <param name="order">The place among the contributors that come after the tables; lower is created earlier and dropped later.</param>
     public static SchemaPlacement AfterTables(int order) => new AfterTablesCase(order);
 
+    /// <summary>Whether the contributor's objects are what tables are made of.</summary>
+    internal bool IsBeforeTables => this is BeforeTablesCase;
+
     /// <summary>The creation order across contributors; drops run in the reverse.</summary>
     internal long Rank => this switch
     {

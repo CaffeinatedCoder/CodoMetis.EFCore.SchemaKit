@@ -8,14 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 a new package with a new API and an entirely new core, in its own repository. The EF Core 10 line
 stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch with this one.
 
-**The kernel has its host, its SQL vocabulary, the contributor contract, the declaration store and
-the first slice of the resolver. A declaration can be stored, read back and resolved to columns and
-SQL; nothing turns one into DDL yet** (the rest of the resolver is #43, the planner #24). The repository holds:
+**The kernel has its host, its SQL vocabulary, the contributor contract, the declaration store, the
+first slice of the resolver and the first slice of the planner. A declaration is stored, resolved
+and turned into statements around EF Core's operations by a registered contributor; no package
+with a real contributor exists yet** (the rest of the resolver is #43, of the planner #24, the
+PostgreSQL package #25). The repository holds:
 
 | Path | What |
 |---|---|
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
-| `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` stands in for the planning layer that does not exist yet; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
+| `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
@@ -168,6 +170,28 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 - **`SchemaContributorRegistry` is a diff-time service.** A contributor may take the dialect, which
   reads the design-time model, so the registry must never be a constructor parameter of the differ
   or the generator.
+
+## The planner
+
+`src/CodoMetis.EFCore.SchemaKit/Migrations/Internal/SchemaOperationPlanner.cs`
+(`design/schemakit-core-plan.md`, sections 3.6 and 3.7; #24 lists what is still missing).
+
+- **Both models are read the same way,** each declaration through its contributor and the
+  kernel's resolver. Equal descriptors of one contributor are one object and produce nothing; that
+  is what makes a model against its own snapshot an empty diff. Nothing compares SQL text.
+- **Matching is exact, then by kind, scope and name, then by equality but for the name.** A pair
+  is the contributor's to plan; what is left is drops and creates.
+- **Order:** drops, EF Core's operations untouched, in-place statements, creates; contributors by
+  placement, and a `BeforeTables` contributor the other way round (created before, dropped after,
+  never rebuilt).
+- **A declaration whose owner has no contributor is refused,** on either side. #22 adds the
+  explicit way out.
+- **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
+  the dialect.
+- **It does not read EF Core's operations yet.** No `BaseChange`, no `ImpactOf`: a descriptor that
+  reads a renamed column or table is rebuilt, and an object the database loses while both models
+  declare it unchanged (SQLite's table rebuild) is not created again. Do not ship a contributor
+  for SQLite before that slice.
 
 ## The resolver
 

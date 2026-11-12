@@ -39,6 +39,16 @@ internal static class DeclarationCodec
 
     public static string KeyPrefix(string owner) => $"{Prefix}{owner}:";
 
+    /// <summary>The owner in a declaration's annotation key, or null when the annotation is not a declaration.</summary>
+    public static string? OwnerOf(string annotation)
+    {
+        if (!annotation.StartsWith(Prefix, StringComparison.Ordinal)) return null;
+
+        // CodoMetis:{Owner}:{hash}, and an owner holds no colon.
+        var parts = annotation.Split(':');
+        return parts.Length == 3 && parts[1].Length > 0 && parts[2].Length > 0 ? parts[1] : null;
+    }
+
     public static string Key(ISchemaObject declaration)
     {
         Validate(declaration);

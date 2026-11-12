@@ -160,10 +160,20 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
     };
 
     protected override void Create(TestGuardDescriptor descriptor, SchemaSql sql)
-        => sql.Statement($"CREATE UNIQUE INDEX {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})");
+    {
+        if (descriptor.IsTrigger)
+            sql.Statement($"CREATE TRIGGER {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})");
+        else
+            sql.Statement($"CREATE UNIQUE INDEX {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})");
+    }
 
     protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql)
-        => sql.Statement($"DROP INDEX {descriptor.Name}");
+    {
+        if (descriptor.IsTrigger)
+            sql.Statement($"DROP TRIGGER {descriptor.Name.Name} ON {descriptor.Table}");
+        else
+            sql.Statement($"DROP INDEX {descriptor.Name}");
+    }
 
     protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql)
     {
@@ -189,6 +199,85 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
         => descriptor.IsTrigger
             ? [new NameClaim.Trigger(descriptor.Table, descriptor.Name.Name)]
             : [new NameClaim.Relation(descriptor.Name.Schema, descriptor.Name.Name)];
+}
+
+/// <summary>A contributor placed before <see cref="TestGuardContributor" /> among those that come after the tables.</summary>
+public sealed class LooseGuardContributor(SchemaContributorDependencies dependencies)
+    : SchemaContributor<LooseGuard, TestGuardDescriptor>(dependencies)
+{
+    public override SchemaPlacement Placement => SchemaPlacement.AfterTables(order: 5);
+
+    protected override TestGuardDescriptor Resolve(LooseGuard declaration, SchemaResolver resolver) => new(
+        resolver.Table,
+        resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? $"lx_{declaration.Column}")),
+        [resolver.Dialect.Identifier(declaration.Column)],
+        IsTrigger: false,
+        new Operational<bool>(false));
+
+    protected override void Create(TestGuardDescriptor descriptor, SchemaSql sql)
+        => sql.Statement($"CREATE INDEX {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})");
+
+    protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql) => sql.Statement($"DROP INDEX {descriptor.Name}");
+
+    protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql) => new SchemaChange.Rebuild();
+
+    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => new Impact.Unaffected();
+
+    protected override IEnumerable<NameClaim> Claims(TestGuardDescriptor descriptor) => [new NameClaim.Relation(descriptor.Name.Schema, descriptor.Name.Name)];
+}
+
+/// <summary>A declaration of something tables are made of: it belongs to a schema, not to a table.</summary>
+public sealed record TestDomain(string Type) : ISchemaDeclaration<TestDomain>
+{
+    public static string OwnerId => "Test.Domain";
+
+    public string Owner => OwnerId;
+
+    public string Kind => "domain";
+
+    public string? Name { get; init; }
+
+    public int Epoch { get; init; } = 1;
+
+    public void Write(SchemaJsonWriter writer) => writer.String("type", Type);
+
+    public static TestDomain Read(SchemaDeclarationHeader header, SchemaJsonReader reader)
+        => new(reader.String("type")) { Name = header.Name, Epoch = header.Epoch };
+}
+
+public sealed record TestDomainDescriptor(QualifiedName Name, SqlName Type) : ISchemaDescriptor
+{
+    public SchemaScope Scope => new SchemaScope.Schema(Name.Schema);
+
+    public ValueList<Dependency> Dependencies => [];
+
+    public ISchemaDescriptor WithName(QualifiedName name) => this with { Name = name };
+}
+
+/// <summary>A contributor whose objects are created before the tables and dropped after them.</summary>
+public sealed class TestDomainContributor(SchemaContributorDependencies dependencies)
+    : SchemaContributor<TestDomain, TestDomainDescriptor>(dependencies)
+{
+    public override SchemaPlacement Placement => SchemaPlacement.BeforeTables;
+
+    protected override TestDomainDescriptor Resolve(TestDomain declaration, SchemaResolver resolver)
+        => new(resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? "dom")), resolver.Dialect.Name(declaration.Type));
+
+    protected override void Create(TestDomainDescriptor descriptor, SchemaSql sql) => sql.Statement($"CREATE DOMAIN {descriptor.Name} AS {descriptor.Type}");
+
+    protected override void Drop(TestDomainDescriptor descriptor, SchemaSql sql) => sql.Statement($"DROP DOMAIN {descriptor.Name}");
+
+    protected override SchemaChange Plan(TestDomainDescriptor from, TestDomainDescriptor to, SchemaSql sql)
+    {
+        if (!from.WithName(to.Name).Equals(to)) return new SchemaChange.Rebuild();
+
+        sql.Statement($"ALTER DOMAIN {from.Name} RENAME TO {to.Name.Name}");
+        return new SchemaChange.InPlace();
+    }
+
+    protected override Impact ImpactOf(TestDomainDescriptor descriptor, BaseChange change) => new Impact.Unaffected();
+
+    protected override IEnumerable<NameClaim> Claims(TestDomainDescriptor descriptor) => [];
 }
 
 /// <summary>A second contributor for the owner <see cref="TestGuardContributor" /> has.</summary>

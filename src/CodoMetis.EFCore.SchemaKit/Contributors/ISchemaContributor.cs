@@ -1,7 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
+using CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace CodoMetis.EFCore.SchemaKit;
 
@@ -113,7 +115,7 @@ public sealed record SchemaContributorDependencies;
 /// <typeparam name="TDeclaration">The contributor's declaration union.</typeparam>
 /// <typeparam name="TDescriptor">Its descriptor, a record: the differ compares descriptors by value.</typeparam>
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
-public abstract class SchemaContributor<TDeclaration, TDescriptor> : ISchemaContributor
+public abstract class SchemaContributor<TDeclaration, TDescriptor> : ISchemaContributor, IDeclarationSource
     where TDeclaration : class, ISchemaDeclaration<TDeclaration>
     where TDescriptor : class, ISchemaDescriptor
 {
@@ -208,6 +210,9 @@ public abstract class SchemaContributor<TDeclaration, TDescriptor> : ISchemaCont
     IEnumerable<NameClaim> ISchemaContributor.Claims(ISchemaDescriptor descriptor)
         => Claims(Own<TDescriptor>(descriptor))
            ?? throw new InvalidOperationException(SchemaKitStrings.ClaimsReturnedNull(GetType()));
+
+    IReadOnlyList<ISchemaObject> IDeclarationSource.Declarations(IReadOnlyEntityType entityType)
+        => entityType.GetDeclarations<TDeclaration>();
 
     private T Own<T>(object? value) where T : class
     {
