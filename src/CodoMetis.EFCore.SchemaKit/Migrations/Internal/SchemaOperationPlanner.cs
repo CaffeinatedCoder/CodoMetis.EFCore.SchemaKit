@@ -45,6 +45,10 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
     private ISchemaDialect Dialect => field ??= services.GetRequiredService<ISchemaDialect>();
 
+    // Readers of an earlier package's annotations. They are made without the dialect, so asking
+    // for them builds nothing a context without declarations must not build.
+    private IReadOnlyList<ILegacyDeclarationSource> Legacy => field ??= [.. services.GetServices<ILegacyDeclarationSource>()];
+
     private bool IsSqlite => services.GetRequiredService<IDatabaseProvider>().Name == "Microsoft.EntityFrameworkCore.Sqlite";
 
     /// <summary>A declaration as what the database will hold, with the contributor that renders it.</summary>
@@ -326,6 +330,25 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
                     resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
                 }
+            }
+
+            // What an earlier package wrote, where a migration starts: the snapshot of a project
+            // that moved here still describes its objects in that package's format, and they are
+            // in the database. Read into declarations, they are resolved like any other, so the
+            // model that declares the same objects differs from the snapshot in nothing.
+            foreach (var reader in Legacy)
+            {
+                if (entityType.FindAnnotation(reader.Annotation) is not { } annotation) continue;
+
+                // Nothing renders the old format from a model, and nothing writes it any more.
+                if (isTarget)
+                    throw new InvalidOperationException(SchemaKitStrings.LegacyAnnotationInTarget(entityType.ShortName(), reader.Annotation));
+
+                var contributor = Registry.Find(reader.Owner)
+                                  ?? throw new InvalidOperationException(SchemaKitStrings.NoContributorForOwner(entityType.ShortName(), reader.Owner));
+
+                foreach (var declaration in reader.Read(entityType, annotation.Value))
+                    resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
             }
         }
 

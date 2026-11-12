@@ -504,6 +504,19 @@ var report = await context.Database.VerifySchemaKitAsync(ct);
   draft reads temporal annotations "only for handover" and does not say what happens otherwise.
 - **Replay:** the generator decorators of [3.3](#33-the-seam) and [3.12](#312-other-providers-and-sqlite).
 
+**2026-11-12, from the exclusion reader (#92), not yet confirmed by the maintainer:** the reader
+does not resolve by 5.x's rules. It reads the annotation into the declaration that says the same
+object (`PgExclusion`, epoch 1), and the kernel resolves that like any other. 5.x's descriptor
+quotes every name and SchemaKit's writes a name as the provider does, so two descriptors of one
+constraint would never be equal as text; read into one declaration type they are. What makes that
+safe is measured, not argued: a snapshot scaffolded by the published 5.6.0 diffs to nothing
+against the same model declared with SchemaKit, and the database 5.x's migration builds has the
+catalog `EnsureCreated()` builds. Where the two sets of rules do not describe one object the
+reader refuses: a constraint on the root of a TPC hierarchy, an access method `PgExclusion` does
+not have, a constraint of equality elements only. A filter over a member of a JSON document, which
+5.x pinned to its first rendering, is refused by the resolver until #43; it will need 5.x's
+rendering there, in the `Legacy` namespace as this section says.
+
 ## 4. Verification
 
 | Oracle | Statement | Catches |

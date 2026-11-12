@@ -77,6 +77,31 @@ public static class SchemaKitServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Adds a reader for declarations a model snapshot holds in another format. A package that
+    /// takes over from an earlier one calls this where it adds its contributor.
+    /// </summary>
+    /// <remarks>Adding the same reader twice adds it once.</remarks>
+    /// <exception cref="InvalidOperationException">
+    /// <typeparamref name="TReader" /> does not derive from <see cref="LegacyDeclarationReader{TDeclaration}" />.
+    /// </exception>
+    /// <param name="services">The collection the context's services are built from.</param>
+    /// <typeparam name="TReader">The reader.</typeparam>
+    /// <returns>The same collection.</returns>
+    [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+    public static IServiceCollection AddLegacyDeclarationReader<TReader>(this IServiceCollection services)
+        where TReader : class
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        // As for a contributor: the base class cannot be named as a constraint without its argument.
+        if (!typeof(ILegacyDeclarationSource).IsAssignableFrom(typeof(TReader)))
+            throw new InvalidOperationException(SchemaKitStrings.LegacyReaderNotDerived(typeof(TReader)));
+
+        services.TryAddEnumerable(ServiceDescriptor.Scoped(typeof(ILegacyDeclarationSource), typeof(TReader)));
+        return services;
+    }
+
     /// <summary>What both registration paths add besides the two decorators.</summary>
     internal static void AddShared(IServiceCollection services)
     {

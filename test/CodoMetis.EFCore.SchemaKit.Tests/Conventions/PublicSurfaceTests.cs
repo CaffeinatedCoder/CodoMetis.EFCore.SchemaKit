@@ -73,6 +73,7 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SchemaNameComparison",
         "CodoMetis.EFCore.SchemaKit.SchemaPlacement",
         "CodoMetis.EFCore.SchemaKit.SchemaResolver",
+        "CodoMetis.EFCore.SchemaKit.LegacyDeclarationReader`1",
         "CodoMetis.EFCore.SchemaKit.SchemaScope",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Database",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Schema",
@@ -163,15 +164,17 @@ public sealed class PublicSurfaceTests
             .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
             .Select(m => m.Name).Order().ToList();
 
-        CollectionAssert.AreEqual(new[] { "AddEntityFrameworkSchemaKit", "AddSchemaContributor", "UseSchemaKit", "UseSchemaKit" }, methods);
+        CollectionAssert.AreEqual(new[] { "AddEntityFrameworkSchemaKit", "AddLegacyDeclarationReader", "AddSchemaContributor", "UseSchemaKit", "UseSchemaKit" }, methods);
     }
 
-    /// <summary>The one registration method that belongs to the contract carries its mark, on a type that does not.</summary>
+    /// <summary>The registration methods that belong to the contract carry its mark, on a type that does not.</summary>
     [TestMethod]
-    public void The_contributor_registration_is_marked_experimental()
+    [DataRow(nameof(SchemaKitServiceCollectionExtensions.AddSchemaContributor))]
+    [DataRow(nameof(SchemaKitServiceCollectionExtensions.AddLegacyDeclarationReader))]
+    public void The_registrations_of_the_contract_are_marked_experimental(string method)
         => Assert.AreEqual(
             "SK9001",
-            typeof(SchemaKitServiceCollectionExtensions).GetMethod(nameof(SchemaKitServiceCollectionExtensions.AddSchemaContributor))!
+            typeof(SchemaKitServiceCollectionExtensions).GetMethod(method)!
                 .GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId);
 
     /// <summary>

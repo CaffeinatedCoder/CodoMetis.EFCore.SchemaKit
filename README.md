@@ -6,8 +6,9 @@ contract other packages use to add their own (row guards, policies, ltree paths)
 
 > **Nothing is released yet.** This repository holds the design, the kernel, and the beginning of
 > the PostgreSQL package: an exclusion constraint can be declared and reaches the database on
-> PostgreSQL 16 and 18. Indexes cannot be declared yet, and no package is published. The first will
-> be `11.0.0-preview.1`.
+> PostgreSQL 16 and 18, and a project whose snapshot holds the exclusion constraints of
+> `EFCore.ComplexIndexes` 5.x moves over without a migration. Indexes cannot be declared yet, and
+> no package is published. The first will be `11.0.0-preview.1`.
 
 ```csharp
 public sealed class RoleGrantConfiguration : IEntityTypeConfiguration<RoleGrant>
