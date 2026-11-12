@@ -172,7 +172,8 @@ jobs:
       SPIKE_E_PG18: Host=localhost;Port=5432;Username=postgres;Password=spike;Database=postgres
       SPIKE_E_PG16: Host=localhost;Port=5433;Username=postgres;Password=spike;Database=postgres
       SPIKE_E_MSSQL: Server=localhost,1433;User Id=sa;Password=Spike-E-2022x;TrustServerCertificate=True
-      SPIKE_E_OUT: ${{ runner.temp }}/spike-e
+      # Not runner.temp: the runner context is not there yet where a job's env is read.
+      SPIKE_E_OUT: ${{ github.workspace }}/TestResults/spike-e
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
