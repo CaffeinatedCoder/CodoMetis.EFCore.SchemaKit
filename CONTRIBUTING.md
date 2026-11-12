@@ -12,10 +12,13 @@ You need the .NET SDK 11.0.100 or a later patch; `global.json` pins the feature 
 ```bash
 dotnet build CodoMetis.EFCore.SchemaKit.slnx
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
+dotnet test test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.csproj
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 ```
 
-The tests contact no database but SQLite.
+The tests contact no database but SQLite, unless `SCHEMAKIT_TEST_PG` holds an Npgsql connection
+string to a PostgreSQL server: then the tests of the category `Integration` run against it, and
+each of the PostgreSQL package's creates and drops a database of its own.
 
 ## Issues
 

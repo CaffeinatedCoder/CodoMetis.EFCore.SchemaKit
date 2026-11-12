@@ -4,9 +4,10 @@ Schema objects EF Core 11 has no API for, declared in your model and carried by 
 expression and JSON-member indexes, typed index filters, PostgreSQL exclusion constraints, and a
 contract other packages use to add their own (row guards, policies, ltree paths).
 
-> **Nothing is released yet.** This repository holds the design, a compiling prototype of the API,
-> and the beginning of the kernel: the host that puts SchemaKit into every migration path. Nothing
-> can be declared with it yet. The first package will be `11.0.0-preview.1`.
+> **Nothing is released yet.** This repository holds the design, the kernel, and the beginning of
+> the PostgreSQL package: an exclusion constraint can be declared and reaches the database on
+> PostgreSQL 16 and 18. Indexes cannot be declared yet, and no package is published. The first will
+> be `11.0.0-preview.1`.
 
 ```csharp
 public sealed class RoleGrantConfiguration : IEntityTypeConfiguration<RoleGrant>
