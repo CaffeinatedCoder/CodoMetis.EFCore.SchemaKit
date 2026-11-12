@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
+using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit;
 
@@ -220,7 +221,10 @@ public abstract class SchemaContributor<TDeclaration, TDescriptor> : ISchemaCont
 /// a statement builder for composing the descriptor's fragments. The kernel implements it, the same
 /// way for both sides of a diff.
 /// </summary>
-/// <remarks>Turning paths into columns and SQL is added with the resolver itself (issue 43).</remarks>
+/// <remarks>
+/// Every fragment it returns records what it reads (<see cref="SqlFragment.Dependencies" />), which
+/// is what a descriptor lists as its dependencies.
+/// </remarks>
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 public abstract class SchemaResolver
 {
@@ -238,4 +242,48 @@ public abstract class SchemaResolver
 
     /// <summary>For composing the descriptor's fragments. Statements written to it go nowhere.</summary>
     public SchemaSql Sql => field ??= new SchemaSql(Dialect);
+
+    /// <summary>
+    /// The column a property path has in <see cref="Table" />, delimited: <c>Name</c>,
+    /// <c>Address.City</c> through a complex property, or <c>Email.Value</c> where <c>Email</c> has
+    /// a converter that stores the type of <c>Value</c>.
+    /// </summary>
+    /// <param name="path">The property names from the entity type down, separated by dots.</param>
+    /// <exception cref="InvalidOperationException">The path names no property, or one with no column in the table.</exception>
+    public abstract SqlFragment Column(string path);
+
+    /// <summary>
+    /// SQL in which each <c>{Path}</c> is replaced by that path's column, delimited. A placeholder
+    /// is recognised outside single-quoted literals only, and only when its content is a property
+    /// path; any other text, braces included, stays as written.
+    /// </summary>
+    /// <remarks>
+    /// SQL with no placeholder is taken to read every column of the table: a column it names
+    /// directly cannot be seen, so nothing less would be safe to assume.
+    /// </remarks>
+    /// <param name="template">The SQL, as the declaration holds it.</param>
+    /// <exception cref="InvalidOperationException">A placeholder names no property, or one with no column in the table.</exception>
+    public abstract SqlFragment Template(string template);
+
+    /// <summary>
+    /// The declared name, or the default <c>{prefix}_{table}_{parts}</c>. Either is checked by the
+    /// dialect, so a name the database would shorten is refused here.
+    /// </summary>
+    /// <remarks>
+    /// A column contributes its name and a template its letters and digits, with a column's name in
+    /// place of each placeholder. The default name therefore does not change when the SQL of a part
+    /// is rendered differently.
+    /// </remarks>
+    /// <param name="declared">The explicit name, or null.</param>
+    /// <param name="prefix">What names of this kind begin with, such as <c>IX</c> or <c>EX</c>.</param>
+    /// <param name="parts">The fragments the object is made of, in their order.</param>
+    public Identifier Name(string? declared, string prefix, IEnumerable<SqlFragment> parts)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(prefix);
+        ArgumentNullException.ThrowIfNull(parts);
+        if (declared is not null) return Dialect.Identifier(declared);
+
+        var tokens = parts.Select(part => part.NameToken ?? NameTokens.Of(part.Text));
+        return Dialect.Identifier(string.Join("_", [prefix, Table.Name.Name, .. tokens]));
+    }
 }

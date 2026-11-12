@@ -3,6 +3,7 @@ using CodoMetis.EFCore.SchemaKit.Contributors.Internal;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using CodoMetis.EFCore.SchemaKit.Metadata.Internal;
 using CodoMetis.EFCore.SchemaKit.Migrations.Internal;
+using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
@@ -82,6 +83,7 @@ public static class SchemaKitServiceCollectionExtensions
         services.TryAddScoped<ISchemaOperationPlanner, NoSchemaOperations>();
         services.TryAddScoped<SchemaContributorDependencies>();
         services.TryAddScoped<SchemaContributorRegistry>();
+        services.TryAddScoped<SchemaResolverFactory>();
 
         // The dialect of a provider without a SchemaKit package; a provider package registers its
         // own before this. The identifier limit is the design-time model's, so this must not be

@@ -149,6 +149,37 @@ internal static class SchemaKitStrings
         => $"{declaration.Name}.Read built a declaration for the annotation '{key}' that is not the one that was stored. " +
            $"Stored: {stored}. What it read writes: {rewritten}. Read must keep every property it takes from the reader.";
 
+    // ---- resolution ------------------------------------------------------------------------------
+
+    public static string NotAPropertyPath(string entity, string path)
+        => $"'{path}' on {entity} is not a property path. A path is property names separated by dots, such as 'Address.City'.";
+
+    public static string PathNotFound(string entity, string path, string segment, string type)
+        => $"The path '{path}' on {entity} cannot be resolved: '{type}' has no property '{segment}'. A path goes through " +
+           "complex properties to a mapped property; a navigation is another table and cannot be part of one.";
+
+    public static string PathEndsOnComplexProperty(string entity, string path)
+        => $"The path '{path}' on {entity} ends on a complex property, which is several columns. Name one of its properties.";
+
+    public static string PathPastScalar(string entity, string path, string property, string member)
+        => $"The path '{path}' on {entity} goes past the property '{property}' to '{member}'. That resolves to the property's " +
+           $"column only when '{property}' has a value converter that stores the type of '{member}': otherwise the object " +
+           "would be built on the whole column while the declaration names a part of it.";
+
+    public static string PathIntoJson(string entity, string path, string segment)
+        => $"The path '{path}' on {entity} goes into '{segment}', which is stored as a JSON document. A member of a document " +
+           "has to be written as the provider's queries write it, which this version of SchemaKit does not do yet.";
+
+    public static string PathHasNoColumn(string entity, string path, TableRef table)
+        => $"The path '{path}' on {entity} has no column in the table '{table}'.";
+
+    public static string DeclaredOnUnmappedType(string entity, string declaration)
+        => $"{entity} declares {declaration}, but is not mapped to a table. The declaration would produce nothing, without an error.";
+
+    public static string UnknownEpoch(string entity, string declaration, int epoch, int known)
+        => $"{declaration} on {entity} was written under the resolution epoch {epoch}; this version of SchemaKit resolves " +
+           $"epoch {known}. Resolving it by other rules could describe another object than the database holds. Update the package.";
+
     // ---- contributors ---------------------------------------------------------------------------
 
     public static string DescriptorIsNotARecord(Type contributor, Type descriptor)
