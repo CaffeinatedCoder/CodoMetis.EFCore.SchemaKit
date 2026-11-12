@@ -188,10 +188,23 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   explicit way out.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
   the dialect.
-- **It does not read EF Core's operations yet.** No `BaseChange`, no `ImpactOf`: a descriptor that
-  reads a renamed column or table is rebuilt, and an object the database loses while both models
-  declare it unchanged (SQLite's table rebuild) is not created again. Do not ship a contributor
-  for SQLite before that slice.
+- **EF Core's operations are read, never changed.** `BaseChanges` maps every `MigrationOperation`
+  type of EF Core Relational and the three providers to a `BaseChange` or marks it harmless, and
+  `SchemaImpactTests` fails when an assembly has a type the table lacks. An operation of a type
+  outside it is refused when a model declares an object.
+- **`ImpactOf` is asked for each change that touches what an object depends on,** tables and
+  columns carried forward through EF Core's renames, and the answer that asks most decides:
+  `RebuildAround` drops before and creates after even when both sides are equal, `Lost` creates
+  again without a drop. Either decides before `Plan` is asked.
+- **`Follows` is taken as it stands.** The source side is not resolved again under a renamed table
+  or column yet, so an object on a renamed table is dropped and created.
+- **Which operations SQLite rebuilds a table for is the provider's rule,** and
+  `BaseChanges.RebuiltOnSqlite` is a copy of it, held against the provider's generator by a test.
+- **On SQLite a create after a rebuild does not work yet.** SQLite's generator moves the rebuild
+  to the end of the migration, so the planner's create runs first and fails on the object that is
+  still there: the migration fails to apply, where before it applied and lost the object. The
+  generator decorator has to place it (plan, section 3.12). Do not ship a contributor for SQLite
+  before that.
 
 ## The resolver
 

@@ -84,6 +84,81 @@ public static class PlanModels
             => Declare(modelBuilder, Name, new LooseGuard("Name") { Name = "lx_name" }, new TestDomain("integer") { Name = "dom" });
     }
 
+    /// <summary><see cref="Guarded" />, and EF Core alters the column the index is on.</summary>
+    public sealed class GuardedLonger : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).HasMaxLength(50);
+            Declare(modelBuilder, Name);
+        }
+    }
+
+    /// <summary><see cref="Guarded" />, and EF Core renames the column the index is on.</summary>
+    public sealed class GuardedTitle : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).HasColumnName("Title");
+            Declare(modelBuilder, Name);
+        }
+    }
+
+    /// <summary><see cref="Guarded" />, and EF Core renames the table.</summary>
+    public sealed class GuardedThings : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().ToTable("Things");
+            Declare(modelBuilder, Name);
+        }
+    }
+
+    /// <summary><see cref="Guarded" />, and EF Core renames the table and the column.</summary>
+    public sealed class ThingsTitle : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().ToTable("Things").Property(t => t.Name).HasColumnName("Title");
+            Declare(modelBuilder, Name);
+        }
+    }
+
+    /// <summary><see cref="Guarded" />, and EF Core renames the column and then alters it.</summary>
+    public sealed class GuardedTitleLonger : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).HasColumnName("Title").HasMaxLength(50);
+            Declare(modelBuilder, Name);
+        }
+    }
+
+    /// <summary><see cref="Guarded" />, and EF Core makes the column nullable: an AlterColumn on every provider.</summary>
+    public sealed class GuardedOptional : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).IsRequired(false);
+            Declare(modelBuilder, Name);
+        }
+    }
+
+    public sealed class OnId : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, Name with { Name = "ux_id", Keys = [new GuardKey("Id")] });
+    }
+
+    /// <summary><see cref="OnId" />, and EF Core alters a column the index does not read.</summary>
+    public sealed class OnIdLonger : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).HasMaxLength(50);
+            Declare(modelBuilder, Name with { Name = "ux_id", Keys = [new GuardKey("Id")] });
+        }
+    }
+
     public sealed class Domain : IPlanModel
     {
         public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestDomain("integer") { Name = "dom" });
@@ -92,6 +167,26 @@ public static class PlanModels
     public sealed class DomainOfAnotherType : IPlanModel
     {
         public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestDomain("bigint") { Name = "dom" });
+    }
+
+    /// <summary><see cref="Domain" />, and EF Core alters a column of the table it was declared on.</summary>
+    public sealed class DomainLonger : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().Property(t => t.Name).HasMaxLength(50);
+            Declare(modelBuilder, new TestDomain("integer") { Name = "dom" });
+        }
+    }
+
+    /// <summary><see cref="Domain" />, and EF Core renames the table it was declared on and a column of it.</summary>
+    public sealed class DomainThingsTitle : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().ToTable("Things").Property(t => t.Name).HasColumnName("Title");
+            Declare(modelBuilder, new TestDomain("integer") { Name = "dom" });
+        }
     }
 
     public sealed class DomainRenamed : IPlanModel
@@ -112,10 +207,10 @@ public sealed class SchemaOperationPlannerTests
     private const string CreateIndex = """CREATE UNIQUE INDEX ux_name ON "Thing" ("Name");""";
     private const string DropIndex = "DROP INDEX ux_name;";
 
-    private static Planned<TModel> Context<TModel>(Provider provider = Provider.Npgsql, Action<IServiceCollection>? more = null)
+    internal static Planned<TModel> Context<TModel>(Provider provider = Provider.Npgsql, Action<IServiceCollection>? more = null, string? connection = null)
         where TModel : IPlanModel
     {
-        var builder = new DbContextOptionsBuilder<Planned<TModel>>().UseProvider(provider);
+        var builder = new DbContextOptionsBuilder<Planned<TModel>>().UseProvider(provider, connection);
         ServicesExtension.Add(builder, more is null ? "guards" : $"guards+{more.Method.Name}", services =>
         {
             services.AddSchemaContributor<TestGuardContributor>().AddSchemaContributor<LooseGuardContributor>().AddSchemaContributor<TestDomainContributor>();
@@ -124,7 +219,7 @@ public sealed class SchemaOperationPlannerTests
         return new Planned<TModel>(builder.UseSchemaKit().Options);
     }
 
-    private static IRelationalModel Model(DbContext context) => context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
+    internal static IRelationalModel Model(DbContext context) => context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
 
     /// <summary>The model a later diff starts from: the generated snapshot, compiled, as <c>dotnet ef</c> prepares it.</summary>
     private static IRelationalModel Snapshot(DbContext context)
@@ -133,7 +228,7 @@ public sealed class SchemaOperationPlannerTests
             .GetRelationalModel();
 
     /// <summary>A statement as its SQL, an operation of EF Core's as its type.</summary>
-    private static List<string> Describe(IEnumerable<MigrationOperation> operations)
+    internal static List<string> Describe(IEnumerable<MigrationOperation> operations)
         => [.. operations.Select(o => o is SqlOperation sql ? sql.Sql : o.GetType().Name)];
 
     private static List<string> Diff<TFrom, TTo>(Action<TestGuardContributor>? arrange = null)
