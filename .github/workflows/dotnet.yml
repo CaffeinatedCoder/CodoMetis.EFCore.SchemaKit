@@ -142,8 +142,37 @@ jobs:
           --health-timeout 5s
           --health-retries 12
 
+      # Spike E measures on the oldest PostgreSQL SchemaKit supports as well, and on SQL Server.
+      postgres16:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: spike
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: Spike-E-2022x
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Spike-E-2022x -C -b -Q 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 24
+
     env:
       SPIKE_PG: Host=localhost;Port=5432;Username=postgres;Password=spike;Database=spike_b
+      SPIKE_E_PG18: Host=localhost;Port=5432;Username=postgres;Password=spike;Database=postgres
+      SPIKE_E_PG16: Host=localhost;Port=5433;Username=postgres;Password=spike;Database=postgres
+      SPIKE_E_MSSQL: Server=localhost,1433;User Id=sa;Password=Spike-E-2022x;TrustServerCertificate=True
+      SPIKE_E_OUT: ${{ runner.temp }}/spike-e
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -160,6 +189,17 @@ jobs:
             echo "::group::$project"
             dotnet test "$project" --logger "trx;LogFileName=$(basename "$project" .csproj).trx" --results-directory TestResults
             echo "::endgroup::"
+          done
+
+      # Spike E's result is a table per server. It goes to the job summary whether the cells passed
+      # or not: a cell that measured otherwise is exactly when the table is wanted.
+      - name: Spike E, the impact table
+        if: always()
+        run: |
+          shopt -s nullglob
+          for table in "$SPIKE_E_OUT"/*.md; do
+            cat "$table" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
       # A spike whose subject is delivery brings a script: it packs, restores into a project outside
