@@ -255,6 +255,28 @@ public sealed class SchemaResolverTests
         }
     }
 
+    /// <summary>
+    /// What the translator writes is what the resolver reads: a lambda becomes a template where it
+    /// is written, and the template becomes SQL for each side of a diff.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_translated_lambda_resolves_on_the_model_and_on_its_snapshot(Provider provider)
+    {
+        using var sides = Resolve(provider);
+        System.Linq.Expressions.Expression<Func<Person, bool>> lambda = p => p.Address.City.ToLower() != "{x}" && p.Email != null;
+
+        var template = CodoMetis.EFCore.SchemaKit.Translation.Internal.LambdaTranslator.Predicate(lambda);
+
+        Assert.AreEqual("(lower({Address.City}) <> '{x}' AND {Email} IS NOT NULL)", template);
+        foreach (var (side, resolver) in sides.Both)
+        {
+            var fragment = resolver.Template(template);
+
+            Assert.AreEqual($"(lower({sides.D("town")}) <> '{{x}}' AND {sides.D("Email")} IS NOT NULL)", fragment.ToString(), side);
+            CollectionAssert.AreEqual(new[] { sides.Column("town"), sides.Column("Email") }, fragment.Dependencies.ToList(), side);
+        }
+    }
+
     // ---- names -------------------------------------------------------------------------------------------
 
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]

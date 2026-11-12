@@ -180,6 +180,35 @@ internal static class SchemaKitStrings
         => $"{declaration} on {entity} was written under the resolution epoch {epoch}; this version of SchemaKit resolves " +
            $"epoch {known}. Resolving it by other rules could describe another object than the database holds. Update the package.";
 
+    // ---- translation -----------------------------------------------------------------------------
+
+    private const string WriteItAsSql = "Write that part of the declaration as SQL.";
+
+    public static string LambdaTakesOneParameter(System.Linq.Expressions.LambdaExpression lambda)
+        => $"The lambda '{lambda}' takes {lambda.Parameters.Count} parameters. A declaration's lambda takes one: the entity it is declared on.";
+
+    public static string ExpressionNotTranslated(System.Linq.Expressions.Expression node)
+        => $"The expression '{node}' has no translation in a declaration. Translated are property paths, ToLower, ToUpper, " +
+           "Trim, TrimStart and TrimEnd without arguments, Substring, Replace, string.Length, string concatenation (+), " +
+           $"null coalescing (??) and constants. {WriteItAsSql}";
+
+    public static string PredicateNotTranslated(System.Linq.Expressions.Expression node)
+        => $"The expression '{node}' has no translation in a declaration's predicate. Translated are comparisons (==, !=, <, " +
+           "<=, >, >=; == null and != null become IS NULL and IS NOT NULL), &&, ||, !, boolean properties, and on the " +
+           $"operands what an expression translates. {WriteItAsSql}";
+
+    public static string EnumNotTranslated(System.Linq.Expressions.Expression node)
+        => $"The expression '{node}' compares an enum. How an enum is stored depends on the property's value conversion, " +
+           $"which is not known where the lambda is written: the comparison could be against a number on a text column. {WriteItAsSql}";
+
+    public static string MemberOfScalarNotTranslated(System.Linq.Expressions.Expression member, string name, Type owner)
+        => $"The expression '{member}' reads {name} of a {owner.Name}, which is not a property the model maps and has no " +
+           $"translation. {WriteItAsSql}";
+
+    public static string LiteralNotTranslated(Type type)
+        => $"A value of type '{type.Name}' cannot be written as a SQL literal in a declaration: only strings, booleans and " +
+           $"numbers have a spelling that does not depend on the database's settings. {WriteItAsSql}";
+
     // ---- contributors ---------------------------------------------------------------------------
 
     public static string DescriptorIsNotARecord(Type contributor, Type descriptor)
