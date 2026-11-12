@@ -16,7 +16,7 @@ SQL; nothing turns one into DDL yet** (the rest of the resolver is #43, the plan
 |---|---|
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | Its tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` stands in for the planning layer that does not exist yet; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
-| `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer). B is the consumer smoke test until the real one replaces it |
+| `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
@@ -47,6 +47,9 @@ dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 
 # Spike B, the stand-in for the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
 spikes/B.DesignTime/run.sh
+
+# Spike E, the impact table; SPIKE_E_PG16, SPIKE_E_PG18 and SPIKE_E_MSSQL are connection strings (its README)
+dotnet test spikes/E.ImpactTable/E.ImpactTable.csproj
 ```
 
 `global.json` pins SDK `11.0.100` with `rollForward: latestPatch`. A machine with only a prerelease

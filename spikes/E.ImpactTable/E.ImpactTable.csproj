@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        Spike E (#20): what does each operation of EF Core's on a column or a table do to an index,
+        an exclusion constraint and a trigger that depend on it? Measured on live servers, since the
+        answers are the database's and not the documentation's.
+
+        Throwaway code. Each cell creates a table and one object, runs the SQL EF Core's own
+        migrations generator writes for the operation, and reads the catalog. The expected table in
+        Expected.cs is what the plan's section 3.7 is written from; a cell that measures otherwise
+        fails.
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>SchemaKit.Spikes.E</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Npgsql EF rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; the other provider follows it. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="MSTest" Version="4.5.2" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    </ItemGroup>
+
+</Project>
