@@ -366,6 +366,13 @@ public sealed class DeclarationCodecTests
     [DataRow("A:B", "k", null, 1, "has the owner 'A:B'")]
     [DataRow("A B", "k", null, 1, "has the owner 'A B'")]
     [DataRow("A", "", null, 1, "has no kind")]
+    [DataRow("A", "index\nx", "y", 1, "A kind holds no white space and no control character")]
+    [DataRow("A", "index\nx", null, 1, "A kind holds no white space and no control character")]
+    [DataRow("A", "a b", null, 1, "has the kind 'a b'")]
+    [DataRow("A", "a\tb", "n", 1, "A kind holds no white space")]
+    [DataRow("A", "a\u00A0b", null, 1, "A kind holds no white space")]
+    [DataRow("A", "a\u0001", null, 1, "A kind holds no white space and no control character")]
+    [DataRow("A", "a\u0085", null, 1, "A kind holds no white space and no control character")]
     [DataRow("A", "k", "", 1, "has an empty name")]
     [DataRow("A", "k", null, 0, "has the resolution epoch 0")]
     public void A_declaration_that_cannot_be_stored_is_refused(string owner, string kind, string? name, int epoch, string message)
@@ -374,6 +381,21 @@ public sealed class DeclarationCodecTests
 
         StringAssert.Contains(Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Key(declaration)).Message, message);
         StringAssert.Contains(Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Value(declaration)).Message, message);
+    }
+
+    /// <summary>
+    /// Why a kind is checked: a named declaration's key is over "name", the kind and the name, a
+    /// line break between them. With a line break in the kind, two declarations had one key, and
+    /// the store refused the second as declared twice.
+    /// </summary>
+    [TestMethod]
+    public void A_kind_cannot_borrow_part_of_another_declarations_name()
+    {
+        var honest = new Shaped("A", "index", "x\ny", 1);
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Key(new Shaped("A", "index\nx", "y", 1)));
+        StringAssert.StartsWith(DeclarationCodec.Key(honest), "CodoMetis:A:", "A name may hold a line break: it is the last part of the identity.");
+        Assert.AreNotEqual(DeclarationCodec.Key(honest), DeclarationCodec.Key(new Shaped("A", "index", "x", 1)));
     }
 
     /// <summary>A reader that drops the header's name or epoch would store another declaration the next time.</summary>

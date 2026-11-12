@@ -129,6 +129,12 @@ internal static class DeclarationCodec
             throw new InvalidOperationException(SchemaKitStrings.InvalidOwner(declaration.GetType(), owner));
         if (string.IsNullOrEmpty(declaration.Kind))
             throw new InvalidOperationException(SchemaKitStrings.DeclarationWithoutKind(declaration.GetType()));
+
+        // A named declaration's identity is its kind and its name with a line break between them.
+        // A kind that brings one would give two declarations one key: kind "index\nx" named "y",
+        // and kind "index" named "x\ny".
+        if (declaration.Kind.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
+            throw new InvalidOperationException(SchemaKitStrings.InvalidKind(declaration.GetType(), declaration.Kind));
         if (declaration.Name is { Length: 0 })
             throw new InvalidOperationException(SchemaKitStrings.EmptyDeclarationName(declaration.Owner, declaration.Kind));
         if (declaration.Epoch < 1)
