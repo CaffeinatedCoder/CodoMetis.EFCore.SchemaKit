@@ -237,6 +237,22 @@ internal static class SchemaKitStrings
     public static string ClaimsReturnedNull(Type contributor)
         => $"'{contributor.FullName}'.Claims returned null. Answer the names the object occupies, or an empty list for none.";
 
+    public static string LegacyReaderNotDerived(Type reader)
+        => $"'{reader.FullName}' does not derive from LegacyDeclarationReader<TDeclaration>. A reader of another format's " +
+           "annotation derives from it.";
+
+    public static string LegacyReaderReturnedNull(Type reader)
+        => $"'{reader.FullName}'.Read returned null, or a list that holds one. An annotation reads into its declarations, or Read throws.";
+
+    public static string LegacyAnnotationIsNotText(string entity, string annotation, Type? found)
+        => $"{entity} carries the annotation '{annotation}' with a value of type {found?.Name ?? "null"}, and it is read as text. " +
+           "Its objects would be left out of every migration, so it is not skipped.";
+
+    public static string LegacyAnnotationInTarget(string entity, string annotation)
+        => $"{entity} carries the annotation '{annotation}' in the model the migration leads to. It is the format of an earlier " +
+           "package, which this version reads from a model snapshot only: nothing renders it from the model, and beside a " +
+           "declaration of the same object it would be a second one. Remove the annotation and declare the object.";
+
     public static string NoContributorForOwner(string entity, string owner)
         => $"{entity} carries a declaration of '{owner}', and no contributor with that owner is registered. The " +
            "declaration would be left out of every migration without an error. Add the package that declares it to " +

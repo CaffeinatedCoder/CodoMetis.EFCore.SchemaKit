@@ -1,3 +1,4 @@
+using CodoMetis.EFCore.SchemaKit.PostgreSQL.Legacy.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -36,6 +37,9 @@ internal sealed class NpgsqlSchemaKitOptionsExtension : IDbContextOptionsExtensi
             provider.GetRequiredService<IDesignTimeModel>().Model.GetMaxIdentifierLength())));
 
         services.AddSchemaContributor<PgExclusionContributor>();
+
+        // What a project that comes from EFCore.ComplexIndexes 5.x has in its snapshot.
+        services.AddLegacyDeclarationReader<ComplexIndexes5xExclusionReader>();
     }
 
     private sealed class ExtensionInfo(IDbContextOptionsExtension extension) : DbContextOptionsExtensionInfo(extension)
