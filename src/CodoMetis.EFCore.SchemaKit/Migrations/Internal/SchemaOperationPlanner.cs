@@ -87,6 +87,13 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         var to   = Resolve(target, isTarget: true);
         if (from.Count == 0 && to.Count == 0) return SchemaOperationPlan.Empty;
 
+        // What the target declares has to be something the database can hold: a name taken twice
+        // fails at apply, in the middle of a migration. Only the target is held to it. A snapshot
+        // that holds a collision describes a database that exists, or one that never did, and
+        // either way the way off it is a diff.
+        if (to.Count > 0)
+            NameClaims.Require([.. to.Select(t => (t.Contributor, t.Descriptor, t.EntityType, t.Declaration))], target!, Dialect);
+
         // What an operation of a type nobody has looked at does to these objects is not known.
         var changes = BaseChanges.Of(inner, Dialect, IsSqlite);
         if (changes.Unknown.Count > 0)

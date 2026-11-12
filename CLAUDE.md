@@ -13,8 +13,8 @@ resolver, the planner and the lambda translator, and the PostgreSQL package has 
 contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
 every path, on PostgreSQL 16 and 18, and a snapshot scaffolded by 5.x with exclusion constraints
 moves to the same model declared here with no operations. Nothing is published** (what is left of
-the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25: name
-claims). The repository holds:
+the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
+`Sql.Raw<T>` in an element, a factory for SP-GiST, the compile probes). The repository holds:
 
 | Path | What |
 |---|---|
@@ -174,6 +174,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   project opts in and would not notice. **A mark on a static class does not reach its extension
   methods called as extensions:** the compiler reports a marked type where it is written, and
   `entity.Declare(…)` does not write the class. Mark the method.
+- **`SchemaDiagnostic` and `SchemaValidationException` carry no mark either:** a consumer catches
+  and reads them. A diagnostic's id is permanent once it ships; `SK1001` is a name collision. The
+  union holds text only, so it exposes nothing of the marked contract.
 - **`KeyTarget`, `Predicate` and `ValueList<T>` are what a declaration is made of, and carry no
   experimental mark:** a consumer writes them and reads them back. `KeyTarget.Of` and
   `Predicate.Of` are the translator's only public entry points. A lambda that is one property is a
@@ -233,6 +236,17 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   such a declaration describes an object that exists; moved to the base type it is the same object
   and the migration is empty. The cost for now: a column only the derived type has cannot be
   named from the base type, so nothing can be declared on it while the two share a table.
+- **A name the target takes twice is refused, every collision at once** (`NameClaims`, #96). Each
+  contributor says which namespaces its object's name is in (`Claims`), the dialect says it for
+  EF Core's own tables, indexes, keys, foreign keys, check constraints and sequences
+  (`ISchemaDialect.Claims`), and two equal claims are a `SchemaDiagnostic.NameCollision`
+  (`SK1001`) when at least one party is SchemaKit's. All of them arrive in one
+  `SchemaValidationException`. Only the target is held to it: a snapshot that holds a collision
+  stays diffable. Names compare ordinally unless either declaration's `NameComparison` says
+  otherwise. A table without a schema of its own carries the model's default schema in the
+  relational model already, so nothing here adds it. The kernel's default
+  scopes (an index within its table, a constraint within its table) are a guess for a provider
+  without a package; SQL Server's, where a constraint is an object of the schema, come with #29.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
   the dialect.
 - **EF Core's operations are read, never changed.** `BaseChanges` maps every `MigrationOperation`
@@ -341,6 +355,11 @@ what is still missing).
   constraint's index) and replaces nothing; 5.x's `DROP CONSTRAINT IF EXISTS` in front is gone.
 - **A constraint is named within its table,** so its descriptor's name has no schema and its
   statements qualify the table. It claims the name as a constraint and as a relation.
+- **The dialect's table of namespaces is held against the server** (`NameClaimLiveTests`): an
+  index is a relation of its schema, a primary key and a unique constraint take a constraint name
+  and a relation name, a foreign key and a check constraint a constraint name only. Each row of
+  `NameClaimTests` has its row there, refused with 42P07 or 42710 or taken. A change to
+  `NpgsqlSchemaDialect.Claims` needs the server's word first.
 - **`Plan` is a rename or a rebuild.** PostgreSQL alters nothing else about an exclusion constraint.
 - **`ImpactOf` is the measured table** (plan, section 3.7): renames follow, an altered column leaves
   it alone, a dropped column that is an element takes the constraint with it (`Lost`), one the

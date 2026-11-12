@@ -44,4 +44,21 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
         // none of them would be wrong.
         sql.Statement($"CREATE EXTENSION IF NOT EXISTS {extension}");
     }
+
+    // An index is a relation: its name is taken in the schema, among tables, sequences and views.
+    // A primary key and a unique constraint are named within their table and are built on an index
+    // of the same name, so they take both. A foreign key and a check constraint have no index.
+    public override IEnumerable<NameClaim> Claims(SchemaModelObject kind, TableRef table, Identifier name)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        ArgumentNullException.ThrowIfNull(name);
+
+        return kind switch
+        {
+            SchemaModelObject.Index => [new NameClaim.Relation(table.Schema, name)],
+            SchemaModelObject.PrimaryKey or SchemaModelObject.UniqueConstraint =>
+                [new NameClaim.Constraint(table, name), new NameClaim.Relation(table.Schema, name)],
+            _ => base.Claims(kind, table, name),
+        };
+    }
 }

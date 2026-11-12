@@ -50,6 +50,41 @@ public interface ISchemaDialect
     /// <param name="model">The model the migration leads to.</param>
     /// <param name="sql">Where the statement goes, if there is one.</param>
     void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql);
+
+    /// <summary>
+    /// The namespaces the name of one of EF Core's own objects occupies in this database. A declared
+    /// object that claims the same name in one of them collides with it.
+    /// </summary>
+    /// <param name="kind">What the object is.</param>
+    /// <param name="table">The table it belongs to; for a table or a sequence, the object itself.</param>
+    /// <param name="name">Its name.</param>
+    IEnumerable<NameClaim> Claims(SchemaModelObject kind, TableRef table, Identifier name);
+}
+
+/// <summary>The objects of a model that EF Core creates itself and that take a name.</summary>
+[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+public enum SchemaModelObject
+{
+    /// <summary>A table.</summary>
+    Table,
+
+    /// <summary>An index declared with <c>HasIndex</c>.</summary>
+    Index,
+
+    /// <summary>A primary key.</summary>
+    PrimaryKey,
+
+    /// <summary>A unique constraint: an alternate key.</summary>
+    UniqueConstraint,
+
+    /// <summary>A foreign key.</summary>
+    ForeignKey,
+
+    /// <summary>A check constraint.</summary>
+    CheckConstraint,
+
+    /// <summary>A sequence.</summary>
+    Sequence,
 }
 
 /// <summary>What <see cref="SchemaDialect" /> is built from. A record, so adding a member breaks no derived dialect.</summary>
@@ -150,6 +185,24 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
     {
         ArgumentNullException.ThrowIfNull(extension);
         throw new InvalidOperationException(SchemaKitStrings.NoExtensions(extension.Name));
+    }
+
+    /// <summary>
+    /// The scopes most databases share: a table and a sequence are named within their schema, an
+    /// index within its table, a constraint within its table. A provider whose rule differs
+    /// overrides this; PostgreSQL's index is a relation of the schema.
+    /// </summary>
+    public virtual IEnumerable<NameClaim> Claims(SchemaModelObject kind, TableRef table, Identifier name)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        ArgumentNullException.ThrowIfNull(name);
+
+        return kind switch
+        {
+            SchemaModelObject.Table or SchemaModelObject.Sequence => [new NameClaim.Relation(table.Schema, name)],
+            SchemaModelObject.Index                               => [new NameClaim.TableIndex(table, name)],
+            _                                                     => [new NameClaim.Constraint(table, name)],
+        };
     }
 
     [GeneratedRegex("^[a-z_][a-z0-9_$]*$")]
