@@ -304,6 +304,52 @@ new core has one mechanism.
   | `Lost` | The database drops it without saying so | requires the target not to declare it, or re-creates it after |
   | `Blocks` | The operation fails while the object exists | drops it before and creates it after, even if unchanged |
 
+- **Measured (spike E, #20),** on PostgreSQL 16 and 18, which answer alike, and on SQL Server
+  2022. Each cell ran the statements EF Core's own generator writes for the operation and then read
+  the catalog; `spikes/E.ImpactTable` holds a live test per cell.
+
+  | PostgreSQL 16 and 18 | Rename column | Alter column, type | Alter column, nullability | Drop column | Rename table | Schema move | Drop table |
+  |---|---|---|---|---|---|---|---|
+  | Index on the column, on an expression of it, with it in `INCLUDE`, or in its predicate | Follows | Unaffected | Unaffected | **Lost** | Follows | Follows | Lost |
+  | Exclusion constraint with the column as an element | Follows | Unaffected | Unaffected | **Lost** | Follows | Follows | Lost |
+  | Exclusion constraint with the column in its predicate only | Follows | Unaffected | Unaffected | Blocks | Follows | Follows | Lost |
+  | Trigger `UPDATE OF` the column, or with it in `WHEN` | Follows | Blocks | Blocks | Blocks | Follows | Follows | Lost |
+  | Trigger whose function body reads the column | **Stale** | Unaffected | Unaffected | **Stale** | Follows | Follows | Lost |
+
+  | SQL Server 2022 | Rename column | Alter column, type | Alter column, nullability | Drop column | Rename table | Schema move | Drop table |
+  |---|---|---|---|---|---|---|---|
+  | Index on the column, or with it in `INCLUDE` | Follows | Blocks | Unaffected | Blocks | Follows | Follows | Lost |
+  | Filtered index whose predicate reads the column | Blocks | Blocks | Blocks | Blocks | Follows | Follows | Lost |
+  | Trigger whose body does not name the column | Unaffected | Unaffected | Unaffected | Unaffected | Follows | Follows | Lost |
+  | Trigger whose body reads the column, `IF UPDATE` included | **Stale** | Unaffected | Unaffected | **Stale** | Follows | Follows | Lost |
+
+  What the table says beyond its cells:
+
+  - **Stale is a fifth outcome, and the union has four.** The operation succeeds, the trigger stays
+    in the catalog, and it fails when it next fires (`record "new" has no field "a"`, Msg 207):
+    every write to the table fails from then on. Neither server tracks a column named in a
+    function or trigger body. `Lost` would leave the broken trigger in place, so the only one of
+    the four answers that is safe is `Blocks`, whose action (drop before, create after) is the
+    right one although the operation does not fail. Either `Blocks` is documented as "must be
+    rebuilt around the operation" or it is renamed before the contract freezes; to decide with
+    the maintainer (#24).
+  - **PostgreSQL drops an index, and an exclusion constraint, with a column in silence,** also
+    when the column is only in the index's predicate. An exclusion constraint with the column in
+    its predicate only blocks the drop instead (2BP01). The same predicate, two answers.
+  - **On PostgreSQL an `AlterColumn` that changes only nullability blocks under a trigger,**
+    because Npgsql's generator writes `ALTER COLUMN … TYPE` for every `AlterColumnOperation`, and
+    PostgreSQL refuses to alter the type of a column a trigger definition uses (0A000). The answer
+    is for EF Core's statement, not for `DROP NOT NULL` alone.
+  - **PostgreSQL rebuilds an index and an exclusion constraint under a new OID on a type change.**
+    The object is the same by name and definition; a catalog check must not compare OIDs.
+  - **SQL Server refuses a type change under any index that reads the column (Msg 5074), but not a
+    change of nullability,** unless the index is filtered on the column. 5.x recorded the refusal
+    for `ALTER COLUMN` as a whole (its issues 84 and 141).
+  - **SQL Server refuses `sp_rename` of a column under a filtered index** (Msg 5074), as 5.x found
+    (its issue 182); a plain index follows the rename.
+  - Not measured: a change from nullable to not null, a clustered index, a computed column, and
+    SQLite, whose table rebuild is `TableRebuilt` and has no statement to run here.
+
 - **Fail closed.** A convention test holds a table of every `MigrationOperation` type in EF Core
   Relational and the two providers, each mapped to a `BaseChange` or marked harmless. An operation
   type outside the table that touches a table with SchemaKit objects is an error naming the type,

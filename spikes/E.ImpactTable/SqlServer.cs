@@ -60,11 +60,13 @@ public sealed class SqlServer : Server
     protected override (string Definition, string Identity)? Definition(object handle, ObjectKind kind)
     {
         var table = (long)handle;
+        // An index's definition is its table, its columns and its filter. The columns' types are
+        // left out: the index is the same index when a column under it becomes nullable.
         var row = Rows(kind.IsTrigger
             ? $"SELECT CONCAT(OBJECT_SCHEMA_NAME(object_id), '.', name, ' ON ', OBJECT_SCHEMA_NAME(parent_id), '.', OBJECT_NAME(parent_id), ' ', OBJECT_DEFINITION(object_id)), " +
               $"CAST(object_id AS nvarchar(20)) FROM sys.triggers WHERE parent_id = {table} AND name = 'o'"
             : $"SELECT CONCAT(OBJECT_SCHEMA_NAME(i.object_id), '.', OBJECT_NAME(i.object_id), ' (', " +
-              $"(SELECT STRING_AGG(CONCAT(c.name, ' ', TYPE_NAME(c.system_type_id), CASE WHEN c.is_nullable = 1 THEN ' null' ELSE '' END, CASE WHEN ic.is_included_column = 1 THEN ' include' ELSE '' END), ', ') WITHIN GROUP (ORDER BY ic.index_column_id) " +
+              $"(SELECT STRING_AGG(CONCAT(c.name, CASE WHEN ic.is_included_column = 1 THEN ' include' ELSE '' END), ', ') WITHIN GROUP (ORDER BY ic.index_column_id) " +
               $"FROM sys.index_columns ic JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id " +
               $"WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id), ') ', i.filter_definition), CAST(i.index_id AS nvarchar(20)) " +
               $"FROM sys.indexes i WHERE i.object_id = {table} AND i.name = 'o'");

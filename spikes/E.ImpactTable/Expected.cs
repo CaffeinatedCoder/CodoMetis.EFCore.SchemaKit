@@ -26,12 +26,11 @@ public static class Expected
         ("trigger, function reads NEW.a",          "Stale   Unaffected Unaffected Stale  Follows Follows Lost"),
     ];
 
-    // Not measured yet: what 5.x recorded (its issues 84, 141, 182, 186) and what the documentation
-    // says, to be replaced by the first run on a server.
+    // Measured in CI only: the image is amd64 and does not start under emulation on an ARM machine.
     private static readonly (string Object, string Outcomes)[] SqlServer =
     [
-        ("index (a)",                            "Follows Blocks     Blocks     Blocks Follows Follows Lost"),
-        ("index (id) INCLUDE (a)",               "Follows Blocks     Blocks     Blocks Follows Follows Lost"),
+        ("index (a)",                            "Follows Blocks     Unaffected Blocks Follows Follows Lost"),
+        ("index (id) INCLUDE (a)",               "Follows Blocks     Unaffected Blocks Follows Follows Lost"),
         ("index (id) WHERE a > 0",               "Blocks  Blocks     Blocks     Blocks Follows Follows Lost"),
         ("unique index (a) WHERE a IS NOT NULL", "Blocks  Blocks     Blocks     Blocks Follows Follows Lost"),
         ("trigger, no column",                   "Unaffected Unaffected Unaffected Unaffected Follows Follows Lost"),
