@@ -146,19 +146,73 @@ public sealed class SchemaImpactTests
             asked);
     }
 
+    // ---- renames: an object that follows is compared under the new names ---------------------------------
+
     /// <summary>
-    /// Until the source side is resolved under a renamed table (issue 24), an object attached to
-    /// one is another object on the target side: it is dropped under the old table and created
-    /// under the new one, and no contributor is asked.
+    /// The database renames the column under an index and moves the index with its table. The
+    /// object the snapshot describes is, after EF Core's operations, the one the model declares:
+    /// there is nothing to do, and rebuilding it would be a lock on the table for nothing.
     /// </summary>
     [TestMethod]
-    public void An_object_on_a_renamed_table_is_dropped_and_created()
+    public void An_object_that_follows_a_rename_is_not_touched()
     {
-        var (operations, asked) = Diff<PlanModels.Guarded, PlanModels.GuardedThings>(impact: _ => throw new InvalidOperationException("ImpactOf was asked."), planIsNotAsked: true);
+        var dialect = Dialect();
 
-        Assert.AreEqual(0, asked.Count);
-        Assert.AreEqual(DropIndex, operations[0]);
-        Assert.AreEqual("""CREATE UNIQUE INDEX ux_name ON "Things" ("Name");""", operations[^1]);
+        var (column, _) = Diff<PlanModels.Guarded, PlanModels.GuardedTitle>(planIsNotAsked: true);
+        var (table, asked) = Diff<PlanModels.Guarded, PlanModels.GuardedThings>(planIsNotAsked: true);
+        var (both, _) = Diff<PlanModels.Guarded, PlanModels.ThingsTitle>(planIsNotAsked: true);
+
+        CollectionAssert.AreEqual(new[] { nameof(RenameColumnOperation) }, column);
+        CollectionAssert.AreEqual(new[] { nameof(DropPrimaryKeyOperation), nameof(RenameTableOperation), nameof(AddPrimaryKeyOperation) }, table);
+        CollectionAssert.AreEqual(new BaseChange[] { new BaseChange.TableRenamed(Table(dialect, "Thing"), Table(dialect, "Things")) }, asked);
+        Assert.IsFalse(both.Any(o => o.Contains("INDEX", StringComparison.Ordinal)), string.Join(" | ", both));
+        CollectionAssert.Contains(both, nameof(RenameTableOperation));
+        CollectionAssert.Contains(both, nameof(RenameColumnOperation));
+    }
+
+    /// <summary>
+    /// A default name is built from the source's own table and column. After the rename the object
+    /// differs from the target's in its name alone, which is a rename of the object: one statement,
+    /// after EF Core's operations, as EF Core renames its own indexes.
+    /// </summary>
+    [TestMethod]
+    public void An_object_with_a_default_name_is_renamed_after_what_it_was_named_for()
+    {
+        using var from = SchemaOperationPlannerTests.Context<PlanModels.Unnamed>();
+        using var to = SchemaOperationPlannerTests.Context<PlanModels.ThingsTitleUnnamed>();
+
+        var operations = SchemaOperationPlannerTests.Describe(
+            to.GetService<IMigrationsModelDiffer>().GetDifferences(SchemaOperationPlannerTests.Model(from), SchemaOperationPlannerTests.Model(to)));
+
+        Assert.AreEqual("""ALTER INDEX "lx_Thing_Name" RENAME TO "lx_Things_Title";""", operations[^1]);
+        Assert.AreEqual(1, operations.Count(o => o.EndsWith(';')), string.Join(" | ", operations));
+    }
+
+    /// <summary>
+    /// An answer other than Follows says the object stays as it was. It is then compared as it
+    /// was, differs from the target's, and is the contributor's to plan, here a rebuild.
+    /// </summary>
+    [TestMethod]
+    public void An_object_that_does_not_follow_a_rename_is_compared_as_it_was()
+    {
+        var (operations, _) = Diff<PlanModels.Guarded, PlanModels.GuardedTitle>(impact: _ => new Impact.Unaffected());
+
+        CollectionAssert.AreEqual(
+            new[] { DropIndex, nameof(RenameColumnOperation), """CREATE UNIQUE INDEX ux_name ON "Thing" ("Title");""" },
+            operations);
+    }
+
+    /// <summary>
+    /// A drop runs before EF Core's operations, so it names the object as it is then: under the
+    /// table's old name, although the object was compared under the new one.
+    /// </summary>
+    [TestMethod]
+    public void A_drop_names_the_object_as_it_is_before_ef_cores_operations()
+    {
+        var (operations, _) = Diff<PlanModels.Triggered, PlanModels.ThingsTriggeredOnId>();
+
+        Assert.AreEqual("""DROP TRIGGER tr ON "Thing";""", operations[0]);
+        Assert.AreEqual("""CREATE TRIGGER tr ON "Things" ("Id");""", operations[^1]);
         CollectionAssert.Contains(operations, nameof(RenameTableOperation));
     }
 
@@ -197,7 +251,7 @@ public sealed class SchemaImpactTests
 
         CollectionAssert.AreEqual(new[] { DropIndex, nameof(RenameColumnOperation), CreateOnTitle }, rebuilt);
         CollectionAssert.AreEqual(new[] { nameof(RenameColumnOperation), CreateOnTitle }, lost);
-        CollectionAssert.AreEqual(new[] { DropIndex, nameof(RenameColumnOperation), CreateOnTitle }, follows, "Follows is taken as it stands: the pair differs, and the sample plans a rebuild.");
+        CollectionAssert.AreEqual(new[] { nameof(RenameColumnOperation) }, follows, "The sample's own answer is Follows: nothing is done.");
     }
 
     /// <summary>Of several answers the one that asks most decides.</summary>

@@ -31,9 +31,10 @@ namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 /// run while it exists.
 /// </para>
 /// <para>
-/// <see cref="Impact.Follows" /> is taken as it stands for now (issue 24): the source side is not
-/// resolved again under a renamed column or table, so a descriptor that reads one differs from its
-/// source and is the contributor's to plan.
+/// An object that follows EF Core's renames is compared as it will be after them: its declaration
+/// is resolved again under the names the target gives the table and its columns. That is what
+/// keeps a rename of a table or a column from rebuilding what reads it. A drop is written for the
+/// object as it is before EF Core's operations, since drops run before them.
 /// </para>
 /// </remarks>
 internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchemaOperationPlanner
@@ -47,8 +48,18 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
     private bool IsSqlite => services.GetRequiredService<IDatabaseProvider>().Name == "Microsoft.EntityFrameworkCore.Sqlite";
 
     /// <summary>A declaration as what the database will hold, with the contributor that renders it.</summary>
-    private sealed record Resolved(ISchemaContributor Contributor, ISchemaDescriptor Descriptor)
+    /// <param name="Contributor">The contributor of the declaration's owner.</param>
+    /// <param name="Descriptor">What is compared: for the source side, the object as it is after EF Core's operations.</param>
+    /// <param name="EntityType">The entity type the declaration is on.</param>
+    /// <param name="Declaration">The declaration.</param>
+    private sealed record Resolved(ISchemaContributor Contributor, ISchemaDescriptor Descriptor, IReadOnlyEntityType EntityType, ISchemaObject Declaration)
     {
+        /// <summary>The object as the database has it before EF Core's operations, which is what a drop names.</summary>
+        public ISchemaDescriptor Before { get; init; } = Descriptor;
+
+        /// <summary>What EF Core's operations do to the object: of the contributor's answers, the one that asks most.</summary>
+        public Impact Impact { get; init; } = new Impact.Unaffected();
+
         /// <summary>
         /// Equal descriptors of one contributor. Two contributors may share a descriptor type, and
         /// an equal descriptor of another's is another object: it is rendered by other statements.
@@ -72,15 +83,18 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         var to   = Resolve(target);
         if (from.Count == 0 && to.Count == 0) return SchemaOperationPlan.Empty;
 
-        // The order statements are written in is the order of the models, whatever the matching
-        // below takes out of the two lists.
-        List<Resolved> sourceOrder = [.. from];
-        List<Resolved> targetOrder = [.. to];
-
         // What an operation of a type nobody has looked at does to these objects is not known.
         var changes = BaseChanges.Of(inner, Dialect, IsSqlite);
         if (changes.Unknown.Count > 0)
             throw new InvalidOperationException(SchemaKitStrings.UnknownOperation(changes.Unknown[0]));
+
+        // The source side as EF Core's operations leave it, which is what the target is compared with.
+        from = [.. from.Select(source => AfterOperations(source, changes))];
+
+        // The order statements are written in is the order of the models, whatever the matching
+        // below takes out of the two lists.
+        List<Resolved> sourceOrder = [.. from];
+        List<Resolved> targetOrder = [.. to];
 
         // Equal descriptors are the same object: nothing to do, unless an operation of EF Core's does something to it.
         var same = Pair(from, to, (s, t) => s.EqualTo(t));
@@ -96,7 +110,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
         foreach (var (was, becomes) in same)
         {
-            switch (ImpactOn(was, changes))
+            switch (Decided(was))
             {
                 case Impact.RebuildAround:
                     dropped.Add(was);
@@ -116,7 +130,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
             // An operation that takes the object away, or cannot run while it is there, decides
             // before the contributor is asked how to get from the one to the other: statements
             // in place would be written for an object that is gone by the time they run.
-            switch (ImpactOn(was, changes))
+            switch (Decided(was))
             {
                 case Impact.RebuildAround:
                     dropped.Add(was);
@@ -155,7 +169,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         // Before EF Core's operations: what is attached to tables goes first, the latest placement
         // first, then what tables are made of is created.
         foreach (var drop in AttachedToTables(drops).OrderByDescending(d => d.Contributor.Placement.Rank).ThenByDescending(drops.IndexOf))
-            drop.Contributor.Drop(drop.Descriptor, before);
+            drop.Contributor.Drop(drop.Before, before);
         foreach (var create in MadeBeforeTables(creates))
             create.Contributor.Create(create.Descriptor, before);
 
@@ -169,24 +183,36 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
     }
 
     /// <summary>
-    /// What EF Core's operations do to an object of the source side: the contributor's answer for
-    /// each change that touches what the object depends on, and of those the one that asks most.
+    /// An object of the source side as EF Core's operations leave it. The contributor is asked
+    /// about each change that touches what the object depends on, with the object as it is now;
+    /// the answer that asks most is kept. When the object follows every rename that touches it,
+    /// its declaration is resolved again under the new names.
     /// </summary>
-    private static Impact ImpactOn(Resolved source, BaseChanges changes)
+    private Resolved AfterOperations(Resolved source, BaseChanges changes)
     {
         Impact worst = new Impact.Unaffected();
+        var renamed = false;
+        var follows = true;
+
         foreach (var change in changes.Touching(source.Descriptor))
         {
             var impact = source.Contributor.ImpactOf(source.Descriptor, change);
             if (Weight(impact) > Weight(worst)) worst = impact;
+
+            if (change is BaseChange.ColumnRenamed or BaseChange.TableRenamed or BaseChange.TableMoved)
+            {
+                renamed = true;
+                follows &= impact is Impact.Follows;
+            }
         }
 
-        // What tables are made of is created before them and dropped after them, so it cannot be
-        // taken out of the way of an operation on one.
-        if (worst is Impact.RebuildAround && source.Contributor.Placement.IsBeforeTables)
-            throw new InvalidOperationException(SchemaKitStrings.RebuildAroundBeforeTables(source.Contributor.GetType(), source.Descriptor.Name));
+        // An answer other than Follows to a rename says the object stays as it was, under the old
+        // names: then it is compared as it was, and the difference is the contributor's to plan.
+        if (!renamed || !follows)
+            return source with { Impact = worst };
 
-        return worst;
+        var resolver = Resolvers.Create(source.EntityType, source.Declaration, changes);
+        return source with { Descriptor = source.Contributor.Resolve(source.Declaration, resolver), Before = source.Descriptor, Impact = worst };
 
         static int Weight(Impact impact) => impact switch
         {
@@ -195,6 +221,17 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
             Impact.Lost          => 2,
             Impact.RebuildAround => 3,
         };
+    }
+
+    /// <summary>The impact that decides the fate of an object that is on both sides.</summary>
+    private static Impact Decided(Resolved source)
+    {
+        // What tables are made of is created before them and dropped after them, so it cannot be
+        // taken out of the way of an operation on one.
+        if (source.Impact is Impact.RebuildAround && source.Contributor.Placement.IsBeforeTables)
+            throw new InvalidOperationException(SchemaKitStrings.RebuildAroundBeforeTables(source.Contributor.GetType(), source.Descriptor.Name));
+
+        return source.Impact;
     }
 
     private static IEnumerable<Resolved> AttachedToTables(IEnumerable<Resolved> objects) => objects.Where(o => !o.Contributor.Placement.IsBeforeTables);
@@ -242,7 +279,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                                   ?? throw new InvalidOperationException(SchemaKitStrings.NoContributorForOwner(entityType.ShortName(), owner));
 
                 foreach (var declaration in ((IDeclarationSource)contributor).Declarations(entityType))
-                    resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration))));
+                    resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
             }
         }
 

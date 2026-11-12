@@ -223,9 +223,10 @@ public sealed class LooseGuardContributor(SchemaContributorDependencies dependen
 {
     public override SchemaPlacement Placement => SchemaPlacement.AfterTables(order: 5);
 
+    /// <summary>Without a name it takes the kernel's default, built from the table and the column.</summary>
     protected override TestGuardDescriptor Resolve(LooseGuard declaration, SchemaResolver resolver) => new(
         resolver.Table,
-        resolver.Table.Qualify(resolver.Dialect.Identifier(declaration.Name ?? $"lx_{declaration.Column}")),
+        resolver.Table.Qualify(resolver.Name(declaration.Name, "lx", [resolver.Column(declaration.Column)])),
         [SampleColumns.Of(resolver, declaration.Column)],
         IsTrigger: false,
         new Operational<bool>(false));
@@ -235,9 +236,17 @@ public sealed class LooseGuardContributor(SchemaContributorDependencies dependen
 
     protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql) => sql.Statement($"DROP INDEX {descriptor.Name}");
 
-    protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql) => new SchemaChange.Rebuild();
+    protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql)
+    {
+        if (!from.WithName(to.Name).Equals(to)) return new SchemaChange.Rebuild();
 
-    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => new Impact.Unaffected();
+        sql.Statement($"ALTER INDEX {from.Name} RENAME TO {to.Name.Name}");
+        return new SchemaChange.InPlace();
+    }
+
+    /// <summary>As PostgreSQL treats an index: it follows a rename and is otherwise left as it is.</summary>
+    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change)
+        => change is BaseChange.ColumnRenamed or BaseChange.TableRenamed or BaseChange.TableMoved ? new Impact.Follows() : new Impact.Unaffected();
 
     protected override IEnumerable<NameClaim> Claims(TestGuardDescriptor descriptor) => [new NameClaim.Relation(descriptor.Name.Schema, descriptor.Name.Name)];
 }

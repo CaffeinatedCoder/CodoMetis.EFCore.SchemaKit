@@ -1,3 +1,4 @@
+using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
 namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
@@ -20,7 +21,7 @@ namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 /// (<see cref="Forward(TableRef)" />) before they are compared.
 /// </para>
 /// </remarks>
-internal sealed class BaseChanges
+internal sealed class BaseChanges : ISchemaRenames
 {
     /// <summary>The operation types that change nothing a schema object attached to a table depends on.</summary>
     private static readonly HashSet<string> Harmless = new(StringComparer.Ordinal)
@@ -94,7 +95,7 @@ internal sealed class BaseChanges
     public TableRef Forward(TableRef table) => _renamed.GetValueOrDefault(table, table);
 
     /// <summary>A column of a table, the table as the target names it, as the target model names the column.</summary>
-    private Identifier Forward(TableRef table, Identifier column) => _renamedColumns.GetValueOrDefault((table, column), column);
+    public Identifier Forward(TableRef table, Identifier column) => _renamedColumns.GetValueOrDefault((table, column), column);
 
     public static BaseChanges Of(IReadOnlyList<MigrationOperation> operations, ISchemaDialect dialect, bool sqlite)
     {

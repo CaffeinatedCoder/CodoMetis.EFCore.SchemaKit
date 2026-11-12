@@ -325,6 +325,49 @@ public sealed class SchemaResolverTests
         Assert.AreNotEqual(column, resolver.Column("Id"));
     }
 
+    // ---- under EF Core's renames ---------------------------------------------------------------------------
+
+    private sealed class Renames(ISchemaDialect dialect) : ISchemaRenames
+    {
+        public TableRef Forward(TableRef table)
+            => table.Name.Name == "people" ? new TableRef(dialect.Identifier("crm"), dialect.Identifier("persons")) : table;
+
+        public Identifier Forward(TableRef table, Identifier column)
+            => table.Name.Name == "persons" && column.Name == "full_name" ? dialect.Identifier("display_name") : column;
+    }
+
+    /// <summary>
+    /// The source side of a diff, for an object that follows EF Core's renames: its SQL and what it
+    /// reads take the names the target has, and its default name does not. So the object differs
+    /// from the target's in the name alone, which is a rename of the object.
+    /// </summary>
+    [TestMethod]
+    public void Under_renames_the_sql_takes_the_new_names_and_a_default_name_the_old_ones()
+    {
+        using var sides = Resolve(Provider.Npgsql);
+        var dialect = sides.Dialect;
+        var renamed = sides.Context.GetService<SchemaResolverFactory>().Create(sides.SnapshotEntity, Declaration, new Renames(dialect));
+        var persons = new TableRef(dialect.Identifier("crm"), dialect.Identifier("persons"));
+
+        var column = renamed.Column("Name");
+        var template = renamed.Template("lower({Name}) <> {Address.City}");
+
+        Assert.AreEqual(persons, renamed.Table);
+        Assert.AreEqual("display_name", column.ToString());
+        Assert.AreEqual("lower(display_name) <> town", template.ToString());
+        CollectionAssert.AreEqual(new Dependency[] { new Dependency.Column(persons, dialect.Identifier("display_name")) }, column.Dependencies.ToList());
+        CollectionAssert.AreEqual(
+            new Dependency[] { new Dependency.Column(persons, dialect.Identifier("display_name")), new Dependency.Column(persons, dialect.Identifier("town")) },
+            template.Dependencies.ToList());
+        CollectionAssert.AreEqual(new Dependency[] { new Dependency.WholeTable(persons) }, renamed.Template("1 = 1").Dependencies.ToList());
+
+        Assert.AreEqual("EX_people_full_name_lowerfullnametown", renamed.Name(null, "EX", [column, template]).Name);
+        Assert.AreEqual(
+            sides.Snapshot.Name(null, "EX", [sides.Snapshot.Column("Name"), sides.Snapshot.Template("lower({Name}) <> {Address.City}")]),
+            renamed.Name(null, "EX", [column, template]),
+            "The default name is the one the model has without the renames.");
+    }
+
     // ---- the factory -------------------------------------------------------------------------------------
 
     /// <summary>

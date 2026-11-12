@@ -144,6 +144,38 @@ public static class PlanModels
         }
     }
 
+    /// <summary>A trigger, whose drop names its table.</summary>
+    public sealed class Triggered : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new TestGuard.Trigger("Name") { Name = "tr" });
+    }
+
+    /// <summary><see cref="Triggered" /> on another column, and EF Core renames the table.</summary>
+    public sealed class ThingsTriggeredOnId : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().ToTable("Things");
+            Declare(modelBuilder, new TestGuard.Trigger("Id") { Name = "tr" });
+        }
+    }
+
+    /// <summary>An index with no name of its own: the kernel's default, from the table and the column.</summary>
+    public sealed class Unnamed : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, new LooseGuard("Name"));
+    }
+
+    /// <summary><see cref="Unnamed" />, and EF Core renames the table and the column.</summary>
+    public sealed class ThingsTitleUnnamed : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Thing>().ToTable("Things").Property(t => t.Name).HasColumnName("Title");
+            Declare(modelBuilder, new LooseGuard("Name"));
+        }
+    }
+
     public sealed class OnId : IPlanModel
     {
         public static void Build(ModelBuilder modelBuilder) => Declare(modelBuilder, Name with { Name = "ux_id", Keys = [new GuardKey("Id")] });
