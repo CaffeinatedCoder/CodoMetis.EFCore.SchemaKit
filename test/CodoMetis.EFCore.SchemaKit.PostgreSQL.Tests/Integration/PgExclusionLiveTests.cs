@@ -373,6 +373,37 @@ public sealed class PgExclusionLiveTests
     [TestMethod]
     public void Changing_the_deferral() => AssertMigratesTo<Models.Scheduling, Models.Immediate>();
 
+    [TestMethod]
+    public void Changing_the_condition() => AssertMigratesTo<Models.Scheduling, Models.SchedulingWithAnotherCondition>(
+        (migrated, _) => StringAssert.Contains(migrated.Exclusions().Single(), "\"Note\" IS NOT NULL"));
+
+    [TestMethod]
+    public void Changing_an_operator() => AssertMigratesTo<Models.Scheduling, Models.SchedulingAdjacent>(
+        (migrated, _) => StringAssert.Contains(migrated.Exclusions().Single(), "WITH -|-"));
+
+    [TestMethod]
+    public void Changing_the_access_method() => AssertMigratesTo<Models.RangeOnly, Models.RangeOnlySpGist>(
+        (migrated, _) => StringAssert.Contains(migrated.Exclusions().Single(), "USING spgist"));
+
+    /// <summary>The constraint moves with its table; the catalog has it in the new schema, under its name.</summary>
+    [TestMethod]
+    public void Moving_the_table_to_another_schema() => AssertMigratesTo<Models.Scheduling, Models.SchedulingMoved>(
+        (migrated, _) => StringAssert.StartsWith(migrated.Exclusions().Single(), "grants.role_grants | ex_role_grant_active_period"));
+
+    [TestMethod]
+    public void Moving_the_table_of_a_default_named_constraint() => AssertMigratesTo<Models.Unnamed, Models.UnnamedMoved>();
+
+    /// <summary>The scalar stands after the range, and the constraint is created: the extension was installed for it.</summary>
+    [TestMethod]
+    public void A_scalar_after_the_range_gets_the_extension()
+    {
+        using var database = new LiveDatabase();
+
+        database.Create<Models.ScalarSecond>();
+
+        CollectionAssert.AreEqual(new[] { "btree_gist" }, Extensions(database));
+    }
+
     /// <summary>The constraint follows EF Core's renames of its table and its columns by itself; a statement of SchemaKit's would have nothing left to do, or fail.</summary>
     [TestMethod]
     public void Renaming_the_table_and_columns_under_a_constraint() => AssertMigratesTo<Models.Scheduling, Models.SchedulingRenamedAround>();

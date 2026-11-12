@@ -139,6 +139,19 @@ public sealed class PgExclusionDeclarationTests
             annotation.Value);
     }
 
+    /// <summary>
+    /// The condition is part of what an unnamed constraint is. Two that differ in it alone are two
+    /// declarations under two keys; were it left out of the key, the second would be refused as
+    /// the first declared again, or one would replace the other in a snapshot.
+    /// </summary>
+    [TestMethod]
+    public void The_condition_is_in_an_unnamed_constraints_key()
+    {
+        var stored = Stored(Entity<Models.TwoUnnamedThatDifferInTheCondition>()).Select(a => a.Name).Order(StringComparer.Ordinal).ToList();
+
+        CollectionAssert.AreEqual(new[] { "CodoMetis:Pg.Exclusion:a689767db5f37c5e", "CodoMetis:Pg.Exclusion:fe399bda900e9b95" }, stored);
+    }
+
     private sealed class EveryCase : ITestModel
     {
         public static readonly PgExclusion[] Declared =
