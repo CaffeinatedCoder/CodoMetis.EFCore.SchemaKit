@@ -109,15 +109,45 @@ public sealed record Predicate(string Template)
     }
 
     /// <summary>
-    /// Both conditions. Adding one that is already the whole condition, or its last conjunct,
-    /// changes nothing, so a convention may run twice.
+    /// Both conditions. Adding one that is already the whole condition, or the last one this
+    /// method added, changes nothing, so a convention may run twice.
     /// </summary>
     /// <param name="other">The condition to add.</param>
     public Predicate And(Predicate other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return Template == other.Template || Template.EndsWith($" AND ({other.Template})", StringComparison.Ordinal)
+        return Template == other.Template || EndsWithConjunct(other.Template)
             ? this
             : new Predicate($"({Template}) AND ({other.Template})");
+    }
+
+    // Only what this method writes counts: "(…) AND (other)", where the first parenthesis closes
+    // right before the AND. 5.x took any text that ends in " AND (other)" for it, and so does
+    // "{A} OR {B} AND ({C})", which is A OR (B AND C): adding C to it changed nothing, and the
+    // condition stayed wider than the one asked for (#83).
+    private bool EndsWithConjunct(string other)
+    {
+        var ending = $" AND ({other})";
+        return Template.EndsWith(ending, StringComparison.Ordinal) && IsOneGroup(Template.AsSpan(0, Template.Length - ending.Length));
+    }
+
+    /// <summary>Whether the text is one parenthesised group: its first parenthesis closes at its last character, quoted text aside.</summary>
+    private static bool IsOneGroup(ReadOnlySpan<char> text)
+    {
+        if (text.Length < 2 || text[0] != '(' || text[^1] != ')') return false;
+
+        var depth = 0;
+        var inLiteral = false;
+        for (var i = 0; i < text.Length; i++)
+        {
+            // A doubled quote inside a literal toggles twice, which leaves the state where it was.
+            if (text[i] == '\'') inLiteral = !inLiteral;
+            if (inLiteral) continue;
+
+            if (text[i] == '(') depth++;
+            else if (text[i] == ')' && --depth == 0) return i == text.Length - 1;
+        }
+
+        return false;
     }
 }
