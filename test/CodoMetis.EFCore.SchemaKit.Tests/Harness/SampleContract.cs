@@ -238,6 +238,41 @@ public sealed class ReferenceDescriptorContributor(SchemaContributorDependencies
     protected override IEnumerable<NameClaim> Claims(ReferenceDescriptor descriptor) => [];
 }
 
+/// <summary>
+/// A contributor that implements the interface itself, so none of the base class's checks stands
+/// between its answers and the kernel: an InPlace with no statement, and nulls.
+/// </summary>
+public sealed class DirectContributor : ISchemaContributor
+{
+    public string Owner => "Test.Direct";
+    public SchemaPlacement Placement => SchemaPlacement.BeforeTables;
+    public ISchemaDescriptor Resolve(ISchemaObject declaration, SchemaResolver resolver) => null!;
+    public void Create(ISchemaDescriptor descriptor, SchemaSql sql) { }
+    public void Drop(ISchemaDescriptor descriptor, SchemaSql sql) { }
+    public SchemaChange Plan(ISchemaDescriptor from, ISchemaDescriptor to, SchemaSql sql) => new SchemaChange.InPlace();
+    public Impact ImpactOf(ISchemaDescriptor descriptor, BaseChange change) => null!;
+    public IEnumerable<NameClaim> Claims(ISchemaDescriptor descriptor) => null!;
+}
+
+/// <summary>A base of a package's own between its contributors and the kernel's base class.</summary>
+public abstract class PackageContributor<TDeclaration>(SchemaContributorDependencies dependencies)
+    : SchemaContributor<TDeclaration, TestGuardDescriptor>(dependencies)
+    where TDeclaration : class, ISchemaDeclaration<TDeclaration>
+{
+    public override SchemaPlacement Placement => SchemaPlacement.BeforeTables;
+}
+
+/// <summary>A contributor two classes away from the kernel's base class, which answers null where the others throw.</summary>
+public sealed class DerivedTwiceContributor(SchemaContributorDependencies dependencies) : PackageContributor<LooseGuard>(dependencies)
+{
+    protected override TestGuardDescriptor Resolve(LooseGuard declaration, SchemaResolver resolver) => null!;
+    protected override void Create(TestGuardDescriptor descriptor, SchemaSql sql) => throw new NotSupportedException();
+    protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql) => throw new NotSupportedException();
+    protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql) => throw new NotSupportedException();
+    protected override Impact ImpactOf(TestGuardDescriptor descriptor, BaseChange change) => throw new NotSupportedException();
+    protected override IEnumerable<NameClaim> Claims(TestGuardDescriptor descriptor) => null!;
+}
+
 /// <summary>The resolver a test hands a contributor; the kernel's own arrives with issue 43.</summary>
 internal sealed class TestResolver(TableRef table, ISchemaDialect dialect) : SchemaResolver
 {

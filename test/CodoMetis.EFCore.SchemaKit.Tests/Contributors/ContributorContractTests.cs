@@ -49,6 +49,16 @@ public sealed class ContributorContractTests
         protected override IEnumerable<NameClaim> Claims(TestGuardDescriptor descriptor) => throw new NotSupportedException();
     }
 
+    private sealed class Direct(DbContextOptions<Direct> options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.Entity<Thing>();
+    }
+
+    private sealed class Layered(DbContextOptions<Layered> options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.Entity<Thing>();
+    }
+
     private static Plain Context(Provider provider = Provider.Npgsql)
         => new(new DbContextOptionsBuilder<Plain>().UseProvider(provider).UseSchemaKit().Options);
 
@@ -159,6 +169,22 @@ public sealed class ContributorContractTests
         StringAssert.Contains(
             Assert.ThrowsExactly<InvalidOperationException>(() => contributor.Plan(from, to, new SchemaSql(dialect))).Message,
             "Plan returned null");
+    }
+
+    /// <summary>A descriptor and a list of claims are answers too: the kernel compares the one and checks the other.</summary>
+    [TestMethod]
+    public void A_resolution_or_a_list_of_claims_that_is_null_is_refused()
+    {
+        using var context = Context();
+        var (guard, _, resolver, _) = Kit(context);
+        ISchemaContributor contributor = new DerivedTwiceContributor(new SchemaContributorDependencies());
+
+        StringAssert.Contains(
+            Assert.ThrowsExactly<InvalidOperationException>(() => contributor.Resolve(new LooseGuard("A"), resolver)).Message,
+            "DerivedTwiceContributor'.Resolve returned null");
+        StringAssert.Contains(
+            Assert.ThrowsExactly<InvalidOperationException>(() => contributor.Claims(guard.Resolve(Email, resolver))).Message,
+            "DerivedTwiceContributor'.Claims returned null");
     }
 
     /// <summary>Statements an earlier plan left in the builder are not this plan's.</summary>
@@ -292,6 +318,42 @@ public sealed class ContributorContractTests
 
         StringAssert.Contains(error.Message, "has no placement. Answer SchemaPlacement.BeforeTables or SchemaPlacement.AfterTables(order).");
         StringAssert.Contains(error.Message, nameof(UnplacedContributor));
+    }
+
+    /// <summary>
+    /// The refusals of an answer are in the base class. A class that implements the interface itself
+    /// has none of them, so it is refused where it is added.
+    /// </summary>
+    [TestMethod]
+    public void A_contributor_that_implements_the_interface_itself_is_refused_where_it_is_added()
+    {
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => new ServiceCollection().AddSchemaContributor<DirectContributor>());
+
+        StringAssert.Contains(error.Message, "DirectContributor' implements ISchemaContributor without deriving from SchemaContributor<TDeclaration, TDescriptor>");
+    }
+
+    /// <summary>Nothing makes a package call AddSchemaContributor: the collection takes the service as it takes any other.</summary>
+    [TestMethod]
+    public void A_contributor_that_implements_the_interface_itself_is_refused_by_the_registry_however_it_was_added()
+    {
+        var builder = new DbContextOptionsBuilder<Direct>().UseProvider(Provider.Sqlite);
+        ServicesExtension.Add(builder, "direct", services => services.AddScoped<ISchemaContributor, DirectContributor>());
+        using var context = new Direct(builder.UseSchemaKit().Options);
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<SchemaContributorRegistry>());
+
+        StringAssert.Contains(error.Message, "DirectContributor' implements ISchemaContributor without deriving from SchemaContributor<TDeclaration, TDescriptor>");
+    }
+
+    /// <summary>The allowed twin: a package may put a base class of its own in between.</summary>
+    [TestMethod]
+    public void A_contributor_that_derives_through_a_base_class_of_its_package_is_taken()
+    {
+        var builder = new DbContextOptionsBuilder<Layered>().UseProvider(Provider.Sqlite);
+        ServicesExtension.Add(builder, "layered", services => services.AddSchemaContributor<DerivedTwiceContributor>());
+        using var context = new Layered(builder.UseSchemaKit().Options);
+
+        Assert.IsInstanceOfType<DerivedTwiceContributor>(context.GetService<SchemaContributorRegistry>().Find("Test.Loose"));
     }
 
     [TestMethod]

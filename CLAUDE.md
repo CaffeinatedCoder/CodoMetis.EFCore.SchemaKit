@@ -157,6 +157,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   or the epoch: each is refused.** They are all the same failure, a declaration that comes out of a snapshot as another one.
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
+- **A contributor derives from `SchemaContributor<,>`.** The interface is what the kernel calls, not
+  what a package implements: `AddSchemaContributor` and the registry both refuse a class that
+  implements it directly, since the base class is where an answer is checked.
 - **The unions are closed for the major.** `ContractValueTests` lists every case; adding one is a
   decision to take with the maintainer, since it breaks every exhaustive switch of a contributor.
 - **`SchemaContributorRegistry` is a diff-time service.** A contributor may take the dialect, which
