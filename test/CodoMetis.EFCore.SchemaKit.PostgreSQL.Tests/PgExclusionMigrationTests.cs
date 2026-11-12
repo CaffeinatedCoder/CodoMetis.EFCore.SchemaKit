@@ -62,6 +62,30 @@ public sealed class PgExclusionMigrationTests
             Contexts.Diff<Models.Scheduling, Models.Immediate>().Shape());
 
     /// <summary>
+    /// PostgreSQL changes nothing about an exclusion constraint but its name. So whatever else
+    /// differs under one name takes a drop and an add: the condition, an operator, the access method.
+    /// </summary>
+    [TestMethod]
+    public void Another_condition_operator_or_access_method_is_a_rebuild()
+    {
+        CollectionAssert.AreEqual(
+            new[] { Extension, Drop, Add.Replace("""WHERE ("RevokedOn" IS NULL)""", """WHERE (("RevokedOn" IS NULL) AND ("Note" IS NOT NULL))""") },
+            Contexts.Diff<Models.Scheduling, Models.SchedulingWithAnotherCondition>().Shape());
+
+        CollectionAssert.AreEqual(
+            new[] { Extension, Drop, Add.Replace("""WITH &&""", """WITH -|-""") },
+            Contexts.Diff<Models.Scheduling, Models.SchedulingAdjacent>().Shape());
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "ALTER TABLE role_grants DROP CONSTRAINT ex_range;",
+                """ALTER TABLE role_grants ADD CONSTRAINT ex_range EXCLUDE USING spgist ("Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.RangeOnly, Models.RangeOnlySpGist>().Shape());
+    }
+
+    /// <summary>
     /// The default name of 5.x: <c>EX</c>, the table, then a column's name and an expression's
     /// letters and digits. An expression is written in parentheses.
     /// </summary>
@@ -115,6 +139,20 @@ public sealed class PgExclusionMigrationTests
     }
 
     /// <summary>
+    /// The extension is decided for the model the migration leads to. The source here says
+    /// nothing about extensions; the target suppresses the injection, or declares the extension
+    /// itself.
+    /// </summary>
+    [TestMethod]
+    public void Whether_the_extension_is_installed_is_the_target_models_to_say()
+    {
+        Assert.IsFalse(Contexts.Diff<Models.Bare, Models.SchedulingSuppressed>().Shape().Contains(Extension));
+        Assert.IsFalse(Contexts.Diff<Models.Bare, Models.SchedulingWithTheExtensionDeclared>().Shape().Contains(Extension));
+        // And the other way round: from a model that suppresses to one that does not.
+        CollectionAssert.Contains(Contexts.Diff<Models.SchedulingSuppressed, Models.Immediate>().Shape(), Extension);
+    }
+
+    /// <summary>
     /// What needs it, by 5.x's rule: a column whose type GiST has no operator class for, and an
     /// expression compared by an operator B-tree has. A range needs nothing, and SP-GiST is not GiST.
     /// </summary>
@@ -126,6 +164,10 @@ public sealed class PgExclusionMigrationTests
         // A text column needs it under GiST (NoteAsText), and not here: btree_gist is GiST's.
         Assert.IsFalse(Create<Models.TextSpGist>().Any(o => o.Contains("EXTENSION", StringComparison.Ordinal)));
         Assert.AreEqual(Extension, Create<Models.ExpressionCompared>()[0]);
+        // Every element counts, wherever it stands, and every operator B-tree has, not "=" alone.
+        Assert.AreEqual(Extension, Create<Models.ScalarSecond>()[0]);
+        Assert.AreEqual(Extension, Create<Models.ExpressionNotEqual>()[0]);
+        Assert.IsFalse(Create<Models.ExpressionOverlapping>().Any(o => o.Contains("EXTENSION", StringComparison.Ordinal)));
         Assert.AreEqual(Extension, Create<Models.Scheduling>()[0]);
     }
 
@@ -255,6 +297,20 @@ public sealed class PgExclusionMigrationTests
     [TestMethod]
     public void A_renamed_column_of_the_condition_alone_leaves_the_constraint_alone()
         => CollectionAssert.AreEqual(new[] { "RenameColumnOperation" }, Contexts.Diff<Models.Scheduling, Models.SchedulingRevokedRenamed>().Shape());
+
+    /// <summary>
+    /// A table moved to another schema takes its constraints along, and a constraint's name has no
+    /// schema in it: nothing of SchemaKit's is in the migration, named or not.
+    /// </summary>
+    [TestMethod]
+    public void A_table_moved_to_another_schema_leaves_its_constraint_alone()
+    {
+        foreach (var operations in new[] { Contexts.Diff<Models.Scheduling, Models.SchedulingMoved>(), Contexts.Diff<Models.Unnamed, Models.UnnamedMoved>() })
+        {
+            CollectionAssert.Contains(operations.Shape(), "RenameTableOperation");
+            Assert.AreEqual(0, operations.Sql().Count, string.Join(" | ", operations.Shape()));
+        }
+    }
 
     /// <summary>The default name is built from the columns, so a renamed column is a renamed constraint, in place and after EF Core's rename.</summary>
     [TestMethod]

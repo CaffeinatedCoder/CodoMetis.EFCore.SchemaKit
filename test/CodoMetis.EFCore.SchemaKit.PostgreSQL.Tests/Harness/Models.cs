@@ -311,6 +311,63 @@ public static class Models
         }
     }
 
+    /// <summary>The scalar after the range: every element counts for the extension, not the first.</summary>
+    public sealed class ScalarSecond : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Overlaps(x => x.Period).Equal(x => x.GranteeId), name: "ex_second")]);
+    }
+
+    /// <summary>An expression compared by an operator B-tree has that is not <c>=</c>.</summary>
+    public sealed class ExpressionNotEqual : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Overlaps(x => x.Period).WithUncheckedOperator(x => x.Note!.ToLower(), "<>"), name: "ex_note")]);
+    }
+
+    /// <summary>An expression compared by an operator B-tree does not have: nothing says it is a scalar.</summary>
+    public sealed class ExpressionOverlapping : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Overlaps(x => x.Period).WithUncheckedOperator(x => x.Note!.ToLower(), "&&"), name: "ex_note")]);
+    }
+
+    /// <summary><see cref="Scheduling" /> under its name with one more condition.</summary>
+    public sealed class SchedulingWithAnotherCondition : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod.AndWhere(new Predicate("{Note} IS NOT NULL"))]);
+    }
+
+    /// <summary><see cref="Scheduling" /> under its name with another operator on the period: adjacent, not overlapping.</summary>
+    public sealed class SchedulingAdjacent : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ =>
+            [ActivePeriod with { Elements = [.. ActivePeriod.Elements.Take(2), new ExclusionElement(new KeyTarget.Column("Period"), new ExclusionOperator("-|-"))] }]);
+    }
+
+    /// <summary><see cref="Scheduling" />, and EF Core moves the table to another schema.</summary>
+    public sealed class SchedulingMoved : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "grants").DeclarePostgres(_ => [ActivePeriod]);
+    }
+
+    /// <summary><see cref="Unnamed" />, and EF Core moves the table to another schema: the default name has no schema in it.</summary>
+    public sealed class UnnamedMoved : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "grants").DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Equal(x => x.GranteeId).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period))]);
+    }
+
+    /// <summary>Two constraints without a name that differ in their condition alone.</summary>
+    public sealed class TwoUnnamedThatDifferInTheCondition : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+        [
+            pg.Exclusion(pg.Equal(x => x.GranteeId).Overlaps(x => x.Period)),
+            pg.Exclusion(pg.Equal(x => x.GranteeId).Overlaps(x => x.Period), where: x => x.RevokedOn == null),
+        ]);
+    }
+
     /// <summary>One constraint name on two tables in two schemas.</summary>
     public sealed class TwoSchemas : ITestModel
     {
