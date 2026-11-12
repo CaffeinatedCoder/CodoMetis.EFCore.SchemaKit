@@ -55,6 +55,9 @@ public static class SchemaKitServiceCollectionExtensions
     /// Adding the same contributor twice adds it once. Two different contributors with one owner
     /// are refused at the first diff.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// <typeparamref name="TContributor" /> does not derive from <see cref="SchemaContributor{TDeclaration, TDescriptor}" />.
+    /// </exception>
     /// <param name="services">The collection the context's services are built from.</param>
     /// <typeparam name="TContributor">The contributor.</typeparam>
     /// <returns>The same collection.</returns>
@@ -63,6 +66,12 @@ public static class SchemaKitServiceCollectionExtensions
         where TContributor : class, ISchemaContributor
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // C# cannot constrain a type argument to "derives from SchemaContributor<,>" without naming
+        // its two arguments, so it is said here, where the contributor is added.
+        if (!SchemaContributorRegistry.DerivesFromTheBaseClass(typeof(TContributor)))
+            throw new InvalidOperationException(SchemaKitStrings.ContributorNotDerived(typeof(TContributor)));
+
         services.TryAddEnumerable(ServiceDescriptor.Scoped<ISchemaContributor, TContributor>());
         return services;
     }

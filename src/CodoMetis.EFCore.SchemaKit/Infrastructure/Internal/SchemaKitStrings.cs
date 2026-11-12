@@ -158,6 +158,16 @@ internal static class SchemaKitStrings
     public static string RoutedToTheWrongContributor(Type value, string owner, Type expected)
         => $"A '{value.FullName}' was handed to the {owner} contributor, which takes '{expected.FullName}'.";
 
+    public static string ContributorNotDerived(Type contributor)
+        => $"'{contributor.FullName}' implements ISchemaContributor without deriving from SchemaContributor<TDeclaration, " +
+           "TDescriptor>. The base class checks a contributor's answers before SchemaKit acts on them; derive from it.";
+
+    public static string ResolveReturnedNull(Type contributor)
+        => $"'{contributor.FullName}'.Resolve returned null. A declaration resolves to a descriptor, or Resolve throws.";
+
+    public static string ClaimsReturnedNull(Type contributor)
+        => $"'{contributor.FullName}'.Claims returned null. Answer the names the object occupies, or an empty list for none.";
+
     public static string PlanReturnedNull(Type contributor)
         => $"'{contributor.FullName}'.Plan returned null. Answer None, InPlace or Rebuild.";
 

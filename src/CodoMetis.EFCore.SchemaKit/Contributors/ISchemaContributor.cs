@@ -54,7 +54,9 @@ public interface ISchemaDescriptor
 /// </summary>
 /// <remarks>
 /// Derive from <see cref="SchemaContributor{TDeclaration, TDescriptor}" />, which is this interface
-/// typed over one declaration union and one descriptor. Every member is mandatory on purpose: an
+/// typed over one declaration union and one descriptor. A class that implements the interface
+/// itself is refused when it is registered: the base class is where an answer is checked before
+/// the kernel acts on it. Every member is mandatory on purpose: an
 /// optional hook is one a contributor compiled against an older contract does not have, and the
 /// kernel would take its absence for "nothing to do".
 /// </remarks>
@@ -159,7 +161,8 @@ public abstract class SchemaContributor<TDeclaration, TDescriptor> : ISchemaCont
     ISchemaDescriptor ISchemaContributor.Resolve(ISchemaObject declaration, SchemaResolver resolver)
     {
         ArgumentNullException.ThrowIfNull(resolver);
-        return Resolve(Own<TDeclaration>(declaration), resolver);
+        return Resolve(Own<TDeclaration>(declaration), resolver)
+               ?? throw new InvalidOperationException(SchemaKitStrings.ResolveReturnedNull(GetType()));
     }
 
     void ISchemaContributor.Create(ISchemaDescriptor descriptor, SchemaSql sql)
@@ -201,7 +204,9 @@ public abstract class SchemaContributor<TDeclaration, TDescriptor> : ISchemaCont
                ?? throw new InvalidOperationException(SchemaKitStrings.ImpactReturnedNull(GetType()));
     }
 
-    IEnumerable<NameClaim> ISchemaContributor.Claims(ISchemaDescriptor descriptor) => Claims(Own<TDescriptor>(descriptor));
+    IEnumerable<NameClaim> ISchemaContributor.Claims(ISchemaDescriptor descriptor)
+        => Claims(Own<TDescriptor>(descriptor))
+           ?? throw new InvalidOperationException(SchemaKitStrings.ClaimsReturnedNull(GetType()));
 
     private T Own<T>(object? value) where T : class
     {
