@@ -62,6 +62,9 @@ namespace Legacy5x
 
     /// <summary>What the scaffolded files' <c>[DbContext]</c> names. Nothing is made of it.</summary>
     public abstract class LegacyContext : DbContext;
+
+    /// <summary>The same for the snapshot of the kinds nothing reads yet.</summary>
+    public abstract class OtherKindsContext : DbContext;
 }
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
@@ -204,9 +207,20 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
     /// </summary>
     internal static class LegacyFixture
     {
-        private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> Compiled = new(Compile);
+        private static readonly string Fixtures = Path.Combine(FindRoot(), "test", "Fixtures", "ComplexIndexes5x");
 
-        public static string Folder { get; } = Path.Combine(FindRoot(), "test", "Fixtures", "ComplexIndexes5x", "Scaffolded");
+        /// <summary>The model with exclusion constraints, which the package reads.</summary>
+        public static string Folder { get; } = Path.Combine(Fixtures, "Scaffolded");
+
+        /// <summary>The model with what 5.x stores besides: indexes and a temporal constraint.</summary>
+        public static string OtherKindsFolder { get; } = Path.Combine(Fixtures, "ScaffoldedOtherKinds");
+
+        private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> Compiled = new(() => Compile(Folder));
+
+        private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> CompiledOtherKinds = new(() => Compile(OtherKindsFolder));
+
+        /// <summary>The snapshot of the kinds nothing reads yet, as 5.x wrote it.</summary>
+        public static IModel OtherKinds => CompiledOtherKinds.Value.Snapshot.Model;
 
         public static Moved<TModel> Context<TModel>(string? connection = null)
             where TModel : ITestModel
@@ -246,7 +260,7 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             return context.GetService<IMigrationsModelDiffer>().GetDifferences(Prepare(context, builder.FinalizeModel()), context.Relational());
         }
 
-        private static (ModelSnapshot, Migration) Compile()
+        private static (ModelSnapshot, Migration) Compile(string folder)
         {
             var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
                 .Concat(AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic && a.Location.Length > 0).Select(a => a.Location))
@@ -254,10 +268,10 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
                 .Distinct()
                 .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path));
 
-            // The three files and nothing else: LegacyContext, which they name, is this assembly's.
+            // The three files and nothing else: the context they name is this assembly's.
             var compilation = CSharpCompilation.Create(
                 $"Legacy5x_{Guid.NewGuid():N}",
-                Directory.GetFiles(Folder, "*.cs").Order(StringComparer.Ordinal).Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)),
+                Directory.GetFiles(folder, "*.cs").Order(StringComparer.Ordinal).Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)),
                 references,
                 new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 

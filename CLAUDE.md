@@ -21,7 +21,7 @@ claims). The repository holds:
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
 | `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` with its factory `PgSchema<T>` and `DeclarePostgres`, and its contributor. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
 | `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
-| `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded for a model with exclusion constraints, on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is its snapshot and migration, checked in and never edited. The tests compile those files as they are |
+| `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedOtherKinds/` of one with the kinds nothing reads yet (indexes, a temporal constraint). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
@@ -216,8 +216,11 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   what it returns like any declaration; that is how a 5.x snapshot and the model that declares
   the same objects differ in nothing. In the target the annotation is an error: nothing renders
   it from a model, and beside a declaration of the same object it would be a second one. An
-  annotation of 5.x that has no reader yet (its indexes, its temporal constraints) is still
-  passed over in silence (#93).
+  annotation of 5.x that declares an object and has no reader (its indexes, its temporal
+  constraints, and its exclusion constraints on a context without the PostgreSQL package) is
+  refused there too (`LegacyFormats`, #93): passed over, its objects would be created a second
+  time or never dropped. This applies to a context that declares nothing as well, since the
+  snapshot alone says the objects exist. A reader leaves the guard by being registered.
 - **An extension a created object depends on is ensured once and first.** The planner collects
   `Dependency.Extension` over what it creates and asks `ISchemaDialect.EnsureExtension` for each,
   with the target model, ahead of every other statement. The kernel's own dialect refuses: an

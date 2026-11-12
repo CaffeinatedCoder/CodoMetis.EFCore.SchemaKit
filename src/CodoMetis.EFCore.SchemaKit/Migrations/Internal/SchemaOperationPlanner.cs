@@ -307,6 +307,9 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
         foreach (var entityType in model.Model.GetEntityTypes())
         {
+            // Where a migration starts, what 5.x declared and nothing here reads is not passed over.
+            if (!isTarget) LegacyFormats.RequireRead(entityType, Legacy);
+
             var owners = entityType.GetAnnotations()
                 .Select(annotation => DeclarationCodec.OwnerOf(annotation.Name))
                 .OfType<string>()

@@ -253,6 +253,11 @@ internal static class SchemaKitStrings
            "package, which this version reads from a model snapshot only: nothing renders it from the model, and beside a " +
            "declaration of the same object it would be a second one. Remove the annotation and declare the object.";
 
+    public static string UnreadLegacyAnnotation(string entity, string what, string annotation, string advice)
+        => $"The model snapshot holds {what} of {entity} as EFCore.ComplexIndexes 5.x stored them ('{annotation}'), and nothing " +
+           "registered with this context reads that. They are in the database: passed over, the next migration would create " +
+           $"them a second time or never drop them, without an error. {advice}";
+
     public static string NoContributorForOwner(string entity, string owner)
         => $"{entity} carries a declaration of '{owner}', and no contributor with that owner is registered. The " +
            "declaration would be left out of every migration without an error. Add the package that declares it to " +

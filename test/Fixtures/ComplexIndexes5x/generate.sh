@@ -9,7 +9,7 @@
 # being a 5.x consumer. Packages come from nuget.org into a private folder, so nothing built here
 # can stand in for a published one.
 #
-# The result replaces ../Scaffolded. It is checked in and never edited by hand: the tests compile
+# The result replaces ../Scaffolded and ../ScaffoldedOtherKinds. It is checked in and never edited by hand: the tests compile
 # these files as they are. EF Core stamps a migration with the time it was added; the name is fixed
 # here so that a second run changes nothing else.
 set -euo pipefail
@@ -41,23 +41,35 @@ dotnet tool install dotnet-ef --version 10.0.15 --tool-path "$work/tools" > "$wo
 
 dotnet build "$work/Generator/Legacy5x.csproj" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
 
-"$work/tools/dotnet-ef" migrations add Initial --no-build \
-  --project "$work/Generator/Legacy5x.csproj" \
-  --output-dir Migrations
+# scaffold <context> <folder under this directory> <namespace>
+scaffold() {
+  "$work/tools/dotnet-ef" migrations add Initial --no-build \
+    --project "$work/Generator/Legacy5x.csproj" \
+    --context "$1" \
+    --namespace "$3" \
+    --output-dir "Migrations/$2"
 
-# The design-time reference is what puts 5.x's differ in front. Without it the migration would be
-# EF Core's alone and hold no constraint, and the fixture would prove nothing.
-grep -q "EXCLUDE USING" "$work"/Generator/Migrations/*_Initial.cs \
+  rm -rf "$here/$2"
+  mkdir -p "$here/$2"
+  cp "$work/Generator/Migrations/$2"/*_Initial.cs "$here/$2/Initial.cs"
+  cp "$work/Generator/Migrations/$2"/*_Initial.Designer.cs "$here/$2/Initial.Designer.cs"
+  # With a namespace given, EF Core puts the snapshot in a folder named after it, not beside the migration.
+  cp "$(find "$work/Generator" -name "$1ModelSnapshot.cs" -not -path '*/obj/*')" "$here/$2/$1ModelSnapshot.cs"
+
+  # The one thing that differs between two runs: the migration's id carries the time.
+  sed -i.bak -E 's/\[Migration\("[0-9]{14}_Initial"\)\]/[Migration("20260101000000_Initial")]/' "$here/$2/Initial.Designer.cs"
+  rm "$here/$2/Initial.Designer.cs.bak"
+}
+
+# The exclusion constraints, which SchemaKit reads (#92), and the kinds it does not read yet (#93).
+scaffold LegacyContext Scaffolded Legacy5x.Migrations
+scaffold OtherKindsContext ScaffoldedOtherKinds Legacy5x.Migrations.OtherKinds
+
+# The design-time reference is what puts 5.x's differ in front. Without it a migration would be
+# EF Core's alone and hold nothing of 5.x's, and the fixture would prove nothing.
+grep -q "EXCLUDE USING" "$here/Scaffolded/Initial.cs" \
   || { echo "The migration holds no exclusion constraint: 5.x did not take part." >&2; exit 1; }
-
-rm -rf "$here/Scaffolded"
-mkdir -p "$here/Scaffolded"
-cp "$work"/Generator/Migrations/*_Initial.cs "$here/Scaffolded/Initial.cs"
-cp "$work"/Generator/Migrations/*_Initial.Designer.cs "$here/Scaffolded/Initial.Designer.cs"
-cp "$work"/Generator/Migrations/LegacyContextModelSnapshot.cs "$here/Scaffolded/LegacyContextModelSnapshot.cs"
-
-# The one thing that differs between two runs: the migration's id carries the time.
-sed -i.bak -E 's/\[Migration\("[0-9]{14}_Initial"\)\]/[Migration("20260101000000_Initial")]/' "$here/Scaffolded/Initial.Designer.cs"
-rm "$here/Scaffolded/Initial.Designer.cs.bak"
+grep -q "WITHOUT OVERLAPS" "$here/ScaffoldedOtherKinds/Initial.cs" \
+  || { echo "The migration holds no temporal constraint: 5.x did not take part." >&2; exit 1; }
 
 echo "Scaffolded into $here/Scaffolded"
