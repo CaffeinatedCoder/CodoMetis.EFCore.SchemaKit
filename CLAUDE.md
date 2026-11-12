@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 a new package with a new API and an entirely new core, in its own repository. The EF Core 10 line
 stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch with this one.
 
-**The kernel has its host, its SQL vocabulary, the contributor contract and the declaration store.
-A declaration can be stored and read back; nothing turns one into DDL yet** (the resolver is #43,
-the planner #24). The repository holds:
+**The kernel has its host, its SQL vocabulary, the contributor contract, the declaration store and
+the first slice of the resolver. A declaration can be stored, read back and resolved to columns and
+SQL; nothing turns one into DDL yet** (the rest of the resolver is #43, the planner #24). The repository holds:
 
 | Path | What |
 |---|---|
@@ -165,6 +165,28 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 - **`SchemaContributorRegistry` is a diff-time service.** A contributor may take the dialect, which
   reads the design-time model, so the registry must never be a constructor parameter of the differ
   or the generator.
+
+## The resolver
+
+`src/CodoMetis.EFCore.SchemaKit/Resolution` (`design/schemakit-core-plan.md`, section 3.5; #43 lists
+what is still missing: JSON members, renames, TPC).
+
+- **It reads metadata only,** which is what a configured model and a snapshot have in common. Every
+  rule is tested on both (`SchemaResolverTests`, through `Harness/Snapshots.cs`): an answer that
+  differs between them is a migration nobody asked for, or one that is missing.
+- **A snapshot is a property bag without converters.** `Email.Value` resolves to the column on a
+  model only when a converter stores the member's type; on a snapshot the member is taken as it is.
+  Refusing it there lets the first `migrations add` pass and fails every diff after it.
+- **The column is asked of the declared property** (`GetColumnName(storeObject)`), never looked up
+  by name in the table.
+- **A placeholder is `{Path}` outside single-quoted literals, and only when the content is a
+  property path.** Everything else stays as written, array literals included.
+- **A fragment records what it reads,** and composition keeps it. SQL without a placeholder depends
+  on the whole table. `SqlFragment` still compares by its text alone.
+- **A default name is built from tokens, not from SQL:** a column's name, a template's letters and
+  digits. Rendering a part differently must not rename the object.
+- **What a method returns for an input it accepted is epoch 1.** Changing it is a new epoch
+  (`ResolutionEpoch`), and a declaration of an epoch the version does not know is refused.
 
 Locally the integration tests go inconclusive without `SCHEMAKIT_TEST_PG`. When `CI` is set they
 fail instead: an unreachable server must not retire them while the build reports green.

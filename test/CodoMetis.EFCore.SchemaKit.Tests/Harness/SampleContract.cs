@@ -279,6 +279,10 @@ internal sealed class TestResolver(TableRef table, ISchemaDialect dialect) : Sch
     public override TableRef Table => table;
 
     public override ISchemaDialect Dialect => dialect;
+
+    public override SqlFragment Column(string path) => throw new NotSupportedException();
+
+    public override SqlFragment Template(string template) => throw new NotSupportedException();
 }
 
 /// <summary>A package's options extension that adds services, which is how a contributor is registered.</summary>

@@ -61,13 +61,18 @@ public sealed partial class SchemaSql
     }
 
     /// <summary>Composes a piece of SQL from the same kinds of value a statement takes.</summary>
-    public SqlFragment Fragment([InterpolatedStringHandlerArgument("")] ref SqlHandler sql) => new(sql.ToStringAndClear());
+    public SqlFragment Fragment([InterpolatedStringHandlerArgument("")] ref SqlHandler sql)
+        => new(sql.ToStringAndClear(), sql.Dependencies(), nameToken: null);
 
     /// <summary>The fragments, separated by commas.</summary>
     public SqlFragment List(IEnumerable<SqlFragment> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        return new SqlFragment(string.Join(", ", items.Select(i => i.Text)));
+        var list = items.ToList();
+        return new SqlFragment(
+            string.Join(", ", list.Select(i => i.Text)),
+            [.. list.SelectMany(i => i.Dependencies).Distinct()],
+            nameToken: null);
     }
 
     /// <summary>The identifiers, delimited and separated by commas.</summary>
@@ -98,6 +103,7 @@ public ref struct SqlHandler
 {
     private readonly StringBuilder _text;
     private readonly ISchemaDialect _dialect;
+    private readonly List<Dependency> _dependencies;
 
     /// <summary>Called by the compiler.</summary>
     public SqlHandler(int literalLength, int formattedCount, SchemaSql sql)
@@ -105,6 +111,7 @@ public ref struct SqlHandler
         ArgumentNullException.ThrowIfNull(sql);
         _dialect = sql.Dialect;
         _text = new StringBuilder(literalLength + formattedCount * 16);
+        _dependencies = [];
     }
 
     /// <summary>The contributor's own text.</summary>
@@ -142,6 +149,13 @@ public ref struct SqlHandler
     {
         ArgumentNullException.ThrowIfNull(fragment);
         _text.Append(fragment.Text);
+
+        // What the parts read, the whole reads: a dependency lost in composition is an operation of
+        // EF Core's that can break the object unnoticed.
+        foreach (var dependency in fragment.Dependencies)
+        {
+            if (!_dependencies.Contains(dependency)) _dependencies.Add(dependency);
+        }
     }
 
     /// <summary>A whole number, in the invariant culture.</summary>
@@ -149,6 +163,8 @@ public ref struct SqlHandler
 
     /// <inheritdoc cref="AppendFormatted(int)" />
     public readonly void AppendFormatted(long value) => _text.Append(value.ToString(CultureInfo.InvariantCulture));
+
+    internal readonly ValueList<Dependency> Dependencies() => [.. _dependencies];
 
     internal readonly string ToStringAndClear()
     {

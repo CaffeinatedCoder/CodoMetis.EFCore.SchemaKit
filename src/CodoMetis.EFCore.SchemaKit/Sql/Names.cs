@@ -94,13 +94,46 @@ public sealed record SqlOperator
 /// literal, or what a contributor composed through <see cref="SchemaSql.Fragment" />. There is no
 /// public constructor and no conversion from <see cref="string" />.
 /// </summary>
-/// <remarks>Fragments compare by their text, which is what makes a descriptor's equality its diff identity.</remarks>
+/// <remarks>
+/// Fragments compare by their text alone, which is what makes a descriptor's equality its diff
+/// identity. What a fragment reads and the token a default name takes from it follow from where the
+/// text came from and are not compared.
+/// </remarks>
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 public sealed record SqlFragment
 {
-    internal SqlFragment(string text) => Text = text;
+    internal SqlFragment(string text) : this(text, ValueList<Dependency>.Empty, null)
+    {
+    }
+
+    internal SqlFragment(string text, ValueList<Dependency> dependencies, string? nameToken)
+    {
+        Text = text;
+        Dependencies = dependencies;
+        NameToken = nameToken;
+    }
 
     internal string Text { get; }
+
+    /// <summary>
+    /// What the SQL reads: the column of each placeholder the resolver replaced, or the whole table
+    /// for SQL it was given without one. A fragment composed of others reads what they read. A
+    /// descriptor lists these among its <see cref="ISchemaDescriptor.Dependencies" />.
+    /// </summary>
+    public ValueList<Dependency> Dependencies { get; }
+
+    /// <summary>
+    /// What a default name takes from this fragment, when it is not the SQL itself: a column's name
+    /// without its delimiters. Kept apart from the text so that a change of rendering does not
+    /// rename the object.
+    /// </summary>
+    internal string? NameToken { get; }
+
+    /// <summary>Whether both are the same SQL text.</summary>
+    public bool Equals(SqlFragment? other) => other is not null && string.Equals(Text, other.Text, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Text);
 
     /// <summary>A fragment with no text, for an optional clause that is absent.</summary>
     public static SqlFragment Empty { get; } = new("");
