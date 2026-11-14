@@ -101,12 +101,6 @@ Known defects of this preview, each with what it costs:
   class for arrays ([#104](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/104)).
 - A table moved back to the default schema stays in its old schema on Npgsql, with its constraints
   ([#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105)).
-- A constraint renamed in place frees its name after EF Core's operations, so an index created
-  under that name in the same migration fails with `42P07`
-  ([#99](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/99)).
-- Two objects of one name, one on a table without a schema and one on a table in `public`, are
-  not refused as a collision, and the migration fails at apply with `42P07`
-  ([#100](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/100)).
 
 ## Which package for which EF Core
 
