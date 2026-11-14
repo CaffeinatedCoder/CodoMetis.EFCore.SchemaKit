@@ -256,6 +256,12 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   declaration describes an object that exists; moved to the base type it is the same object and
   the migration is empty, Up and Down. The cost for now: a column only the derived type has cannot be
   named from the base type, so nothing can be declared on it while the two share a table.
+- **A declaration on a type of a TPC hierarchy whose derived types have tables is refused, in the
+  context's own model only** (#101). It is the same rule the other way round: a declaration is
+  resolved against one table, so the derived types' tables got nothing, where EF Core gives an
+  index declared there to every table. A root without a table is refused the same way. A type
+  without derived types has one table, its own, and is declared on as any other, on the columns
+  it inherits too. Carrying a declaration to every table is #118; this refusal goes with it.
 - **A name the model takes twice is refused, every collision at once** (`NameClaims`, #96). Each
   contributor says which namespaces its object's name is in (`Claims`), the dialect says it for
   EF Core's own tables, indexes, keys, foreign keys, check constraints and sequences
