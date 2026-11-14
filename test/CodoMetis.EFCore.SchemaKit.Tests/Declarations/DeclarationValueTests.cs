@@ -28,7 +28,9 @@ public sealed class DeclarationValueTests
         public DateOnly? RevokedOn { get; set; }
     }
 
-    private static KeyTarget Key<T>(Expression<Func<Person, T>> key) => KeyTarget.Of(key);
+    private static KeyTarget Key<T>(Expression<Func<Person, T>> key) => KeyTarget.Of(key, SqlSpelling.PostgreSql);
+
+    private static Predicate Where<T>(Expression<Func<T, bool>> condition) => Predicate.Of(condition, SqlSpelling.PostgreSql);
 
     [TestMethod]
     public void A_lambda_that_names_a_property_is_a_column()
@@ -57,7 +59,7 @@ public sealed class DeclarationValueTests
     public void A_lambda_the_translator_refuses_is_refused_where_it_is_written()
     {
         Assert.ThrowsExactly<NotSupportedException>(() => Key(x => x.Name.Normalize()));
-        Assert.ThrowsExactly<NotSupportedException>(() => Predicate.Of<Person>(x => x.Name.Normalize() == "a"));
+        Assert.ThrowsExactly<NotSupportedException>(() => Where<Person>(x => x.Name.Normalize() == "a"));
     }
 
     [TestMethod]
@@ -78,14 +80,32 @@ public sealed class DeclarationValueTests
     [TestMethod]
     public void A_predicate_is_translated_as_EF_Core_writes_it()
     {
-        Assert.AreEqual("{RevokedOn} IS NULL", Predicate.Of<Person>(x => x.RevokedOn == null).Template);
-        Assert.AreEqual("({Tag} <> 'blocked' OR {Tag} IS NULL)", Predicate.Of<Person>(x => x.Tag != "blocked").Template);
+        Assert.AreEqual("{RevokedOn} IS NULL", Where<Person>(x => x.RevokedOn == null).Template);
+        Assert.AreEqual("({Tag} <> 'blocked' OR {Tag} IS NULL)", Where<Person>(x => x.Tag != "blocked").Template);
     }
 
     /// <summary>A predicate over an interface, for a convention: its paths are the interface's member names.</summary>
     [TestMethod]
     public void A_predicate_may_be_written_over_an_interface()
-        => Assert.AreEqual(new Predicate("{RevokedOn} IS NULL"), Predicate.Of<IWithdrawable>(x => x.RevokedOn == null));
+        => Assert.AreEqual(new Predicate("{RevokedOn} IS NULL"), Where<IWithdrawable>(x => x.RevokedOn == null));
+
+    /// <summary>
+    /// A lambda is translated for one provider (#132): both factories ask for its spelling, and a
+    /// package that has none to pass cannot have a lambda spelled as another provider's by default.
+    /// </summary>
+    [TestMethod]
+    public void Both_factories_ask_for_the_providers_spelling()
+    {
+        Assert.ThrowsExactly<ArgumentNullException>(() => KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name), null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => Predicate.Of<Person>(x => x.RevokedOn == null, null!));
+
+        foreach (var factory in new[] { typeof(KeyTarget).GetMethod(nameof(KeyTarget.Of))!, typeof(Predicate).GetMethod(nameof(Predicate.Of))! })
+        {
+            Assert.IsTrue(factory.GetParameters().Any(p => p.ParameterType == typeof(SqlSpelling)), factory.Name);
+            Assert.AreEqual("SK9001", factory.GetCustomAttributes(typeof(System.Diagnostics.CodeAnalysis.ExperimentalAttribute), false)
+                .Cast<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>().Single().DiagnosticId);
+        }
+    }
 
     /// <summary>5.x's rule, so that a convention may run twice: what is already the whole condition, or its last conjunct, is not added again.</summary>
     [TestMethod]

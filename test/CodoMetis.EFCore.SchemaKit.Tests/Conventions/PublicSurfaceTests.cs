@@ -84,6 +84,7 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SqlHandler",
         "CodoMetis.EFCore.SchemaKit.SqlName",
         "CodoMetis.EFCore.SchemaKit.SqlOperator",
+        "CodoMetis.EFCore.SchemaKit.SqlSpelling",
         "CodoMetis.EFCore.SchemaKit.TableRef",
     ];
 
@@ -120,6 +121,29 @@ public sealed class PublicSurfaceTests
             Registration.Concat(ReadModel).Concat(ContributorContract).Concat(DeclarationValues).Concat(Diagnostics).Order(StringComparer.Ordinal).ToList(),
             Exported.Select(t => t.FullName).Order(StringComparer.Ordinal).ToList(),
             "The public surface changed: " + string.Join(", ", Exported.Select(t => t.FullName)));
+
+    /// <summary>
+    /// A lambda becomes one provider's SQL, so whatever in the kernel takes one is handed that
+    /// provider's spelling and is the contract's, not a consumer's (#132). A public method that
+    /// took a lambda and no spelling would spell it as some provider's for every caller, which is
+    /// how PostgreSQL's text would reach a declaration for another database.
+    /// </summary>
+    [TestMethod]
+    public void Whatever_takes_a_lambda_takes_the_providers_spelling_and_is_marked()
+    {
+        var takingALambda = Exported
+            .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            .Where(m => m.GetParameters().Any(p => typeof(System.Linq.Expressions.LambdaExpression).IsAssignableFrom(p.ParameterType)))
+            .ToList();
+
+        CollectionAssert.AreEquivalent(new[] { "KeyTarget.Of", "Predicate.Of" }, takingALambda.Select(m => $"{m.DeclaringType!.Name}.{m.Name}").ToList());
+
+        foreach (var method in takingALambda)
+        {
+            Assert.IsTrue(method.GetParameters().Any(p => p.ParameterType == typeof(SqlSpelling)), $"{method.DeclaringType!.Name}.{method.Name} takes no spelling");
+            Assert.AreEqual("SK9001", method.GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId, $"{method.DeclaringType!.Name}.{method.Name} is not marked");
+        }
+    }
 
     /// <summary>
     /// Until rc.1 the contract may change, so using it takes a deliberate opt-in: every public type
