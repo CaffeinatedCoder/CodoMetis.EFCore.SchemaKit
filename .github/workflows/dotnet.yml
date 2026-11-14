@@ -13,6 +13,8 @@ on:
     branches: [ "main", "release/**" ]
   pull_request:
     branches: [ "main", "release/**" ]
+  # release.yml calls this file, so that a tagged commit passes every lane before it is packed.
+  workflow_call:
 
 permissions:
   contents: read
@@ -55,17 +57,26 @@ jobs:
             fi
           done
 
-  # Statements run on a live server and judged by its catalog. The image floats within its major on
-  # purpose, as a consumer's server does; its digest goes to the summary, so a failure with no diff
-  # can be compared with the last green run. CI is set on every runner, which makes a missing
-  # server fail these tests instead of leaving them inconclusive.
+  # Statements run on a live server and judged by its catalog, on the oldest PostgreSQL SchemaKit
+  # supports (16, the default compatibility target of Npgsql 11) and on the newest. Each image
+  # floats within its major on purpose, as a consumer's server does; its digest goes to the
+  # summary, so a failure with no diff can be compared with the last green run. CI is set on every
+  # runner, which makes a missing server fail these tests instead of leaving them inconclusive.
+  #
+  # One job with a matrix: the gate reads the job's one result, which is `success` only when both
+  # servers passed. fail-fast is off, so that a failure on one server still shows what the other says.
   integration:
-    name: Integration (PostgreSQL 18)
+    name: Integration (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [ 16, 18 ]
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: schemakit
         ports:
@@ -87,13 +98,23 @@ jobs:
         with:
           global-json-file: global.json
 
+      # The server's own word for its version beside the digest: a lane that reached the other
+      # major's server would be green and measure nothing new.
       - name: Image digest
+        env:
+          IMAGE: postgres:${{ matrix.postgres }}
+          MAJOR: ${{ matrix.postgres }}
         run: |
+          version="$(docker exec "${{ job.services.postgres.id }}" psql -U postgres -At -c 'SHOW server_version')"
           {
-            echo "| Image | Digest |"
-            echo "|---|---|"
-            echo "| \`postgres:18\` | \`$(docker image inspect postgres:18 --format '{{index .RepoDigests 0}}')\` |"
+            echo "| Image | Digest | server_version |"
+            echo "|---|---|---|"
+            echo "| \`$IMAGE\` | \`$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')\` | $version |"
           } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${version%%.*}" != "$MAJOR" ]]; then
+            echo "::error::The service answers as PostgreSQL $version, and this lane is for $MAJOR."
+            exit 1
+          fi
 
       # A filter that matches nothing passes. The count is read back per project, so a renamed
       # category cannot retire a project's live tests while the lane reports green.

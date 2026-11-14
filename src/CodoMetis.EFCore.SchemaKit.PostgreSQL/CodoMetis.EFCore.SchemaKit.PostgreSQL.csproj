@@ -4,6 +4,7 @@
         <TargetFramework>net11.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>CodoMetis.EFCore.SchemaKit.PostgreSQL</RootNamespace>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageId>CodoMetis.EFCore.SchemaKit.PostgreSQL</PackageId>
         <Description>Schema objects of PostgreSQL that EF Core 11 and Npgsql 11 have no API for, declared in the model and carried by migrations: exclusion constraints, typed by what PostgreSQL accepts.</Description>
         <!-- CS1591 polices the public surface: the .xml in the package is what a consumer sees. -->
@@ -23,11 +24,45 @@
         <ProjectReference Include="../CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" />
     </ItemGroup>
 
+    <!--
+        The kernel is a dependency at exactly this package's version, `[11.0.0-preview.1]`.
+
+        Pack writes a project reference as a lower bound. This package is written against a
+        contract that is experimental until rc.1 and may change in any preview, so with a lower
+        bound a consumer who takes a newer kernel restores and builds without a warning and fails
+        at the first context with a MissingMethodException. With the bracket the pair fails at
+        restore (NU1107/NU1608), where it can be read.
+
+        _GetProjectReferenceVersions is NuGet's pack target that reads each referenced project's
+        version; the item it fills is what the nuspec's dependencies are written from. Both names
+        are NuGet's own and not a contract, which is why PackagingConventionTests opens the packed
+        .nuspec: a rename there would bring the lower bound back without a word.
+    -->
+    <Target Name="ExactKernelVersion" AfterTargets="_GetProjectReferenceVersions">
+        <ItemGroup>
+            <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)"
+                                            ProjectVersion="[%(_ProjectReferencesWithVersions.ProjectVersion)]" />
+        </ItemGroup>
+    </Target>
+
     <ItemGroup>
         <!-- rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; the floor moves to 11.0.0 when Npgsql ships its own. -->
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
     </ItemGroup>
 
+    <!-- The package's own README, which is what nuget.org shows. Its links are absolute: nuget.org
+         resolves none against the repository. -->
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <!--
+        The test assembly sees the internals in the Release build too, and so in the package. The
+        build CI tests is the build that is packed; a condition on the configuration would either
+        stop the Release tests from compiling or ship a binary no test ran against. The assembly
+        is unsigned, so the grant keeps nobody out, and neither would its absence: reflection
+        reads the same internals. Nothing internal is a promise.
+    -->
     <ItemGroup>
         <InternalsVisibleTo Include="CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests" />
     </ItemGroup>

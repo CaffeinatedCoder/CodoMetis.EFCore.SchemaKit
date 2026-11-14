@@ -48,6 +48,9 @@ label, a bug with no severity, or no closing reference.
 - **The EF Core 10 line is `EFCore.ComplexIndexes` 5.x,** another package in
   [its own repository](https://github.com/CaffeinatedCoder/EFCore.ComplexIndexes). Nothing is
   cherry-picked between the two. A defect both have is two issues, one in each.
+- **A release is a tag `v` + the version in `Directory.Build.props`,** pushed by the maintainer.
+  `release.yml` runs every lane of CI on it, packs, and publishes after the `nuget` environment's
+  approval. The version's changelog section has to exist first.
 - **Previews** are `11.0.0-preview.N`. They may change any API, the contributor contract and the
   annotation format. From `11.0.0` the usual promise holds.
 - **A silent fix,** one that changes what an existing model scaffolds, ships as a minor, never as a
@@ -67,7 +70,9 @@ line.
 
 ## What is not here yet
 
-The convention tests that enforce most of the above in `EFCore.ComplexIndexes` (changelog form,
-packaging, documentation links, workflow gate, release wiring) are not ported yet. Two conventions
-are held by tests already: no EF-internal API in a shipping project, and the kernel's public
-surface. The rest of this page is held by review until the port.
+Most of the convention tests that enforce the above in `EFCore.ComplexIndexes` (changelog form,
+documentation links, workflow gate, release wiring) are not ported yet. Three conventions are held
+by tests already: no EF-internal API in a shipping project, the kernel's public surface, and what
+a packed package carries (`PackagingConventionTests`). The release workflow checks the tag against
+the version and the changelog's section itself. The rest of this page is held by review until the
+port (#35).
