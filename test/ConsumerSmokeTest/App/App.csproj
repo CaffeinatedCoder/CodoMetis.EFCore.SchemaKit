@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        The consumer of the smoke test. run.sh copies test/ConsumerSmokeTest to a directory OUTSIDE
+        the repository, where none of its Directory.Build.props, global.json or project references
+        apply, and writes a Directory.Build.props of its own with the versions: SchemaKit's from the
+        packages under test, EF Core's and Npgsql's from those packages' own dependencies. It is never
+        built in place.
+    -->
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="../Shared/Wiring.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CodoMetis.EFCore.SchemaKit.PostgreSQL" Version="$(SchemaKitVersion)" />
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(NpgsqlEfVersion)" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EfVersion)" PrivateAssets="all" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="$(EfVersion)" />
+    </ItemGroup>
+
+</Project>

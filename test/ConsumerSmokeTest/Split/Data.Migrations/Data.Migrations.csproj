@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        The migrations assembly, apart from the context's, and the startup project of `dotnet ef`: it
+        holds the IDesignTimeDbContextFactory, which names this assembly with MigrationsAssembly().
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="../../Shared/Wiring.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="../Data/Data.csproj" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EfVersion)" PrivateAssets="all" />
+    </ItemGroup>
+
+</Project>
