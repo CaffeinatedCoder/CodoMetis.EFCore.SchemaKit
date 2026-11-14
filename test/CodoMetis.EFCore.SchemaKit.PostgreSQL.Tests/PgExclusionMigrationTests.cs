@@ -347,6 +347,72 @@ public sealed class PgExclusionMigrationTests
             new[] { Extension, Drop, "DropColumnOperation", Add.Replace(" WHERE (\"RevokedOn\" IS NULL)", "") },
             Contexts.Diff<Models.Scheduling, Models.WithoutRevocation>().Shape());
 
+    private const string DropOverNotes = "ALTER TABLE role_grants DROP CONSTRAINT ex_role_grant_note;";
+
+    private const string NoteElement = """(lower("Note")) WITH =, """;
+
+    private const string AddOverNotes =
+        """ALTER TABLE role_grants ADD CONSTRAINT ex_role_grant_note EXCLUDE USING gist ("GranteeId" WITH =, (lower("Note")) WITH =, "Period" WITH &&);""";
+
+    /// <summary>
+    /// A column an element's expression reads is not an element: PostgreSQL does not take the
+    /// constraint with it, it refuses to drop the column while the constraint is there (2BP01), as
+    /// for a column of the condition. So the constraint goes first (#102).
+    /// </summary>
+    [TestMethod]
+    public void A_dropped_column_that_an_elements_expression_reads_needs_the_constraint_out_of_the_way_first()
+        => CollectionAssert.AreEqual(
+            new[] { Extension, DropOverNotes, "DropColumnOperation", AddOverNotes.Replace(NoteElement, "") },
+            Contexts.Diff<Models.WithAnExpressionOverTheNote, Models.WithoutTheNote>().Shape());
+
+    /// <summary>The same when Npgsql writes an alteration as a drop and an add (#80): the declaration stays, and the constraint is rebuilt around the column.</summary>
+    [TestMethod]
+    public void A_column_of_an_expression_that_becomes_computed_needs_the_constraint_out_of_the_way()
+        => CollectionAssert.AreEqual(
+            new[] { Extension, DropOverNotes, "AlterColumnOperation", AddOverNotes },
+            Contexts.Diff<Models.WithAnExpressionOverTheNote, Models.WithAnExpressionOverAComputedNote>().Shape());
+
+    /// <summary>
+    /// A column that is an element by itself takes the constraint with it whatever else reads it:
+    /// another element's expression, the condition, or SQL that names no column through a
+    /// placeholder and so may read any. That is the server's rule, held against it by
+    /// <c>PgExclusionLiveTests</c>. So there is no drop to write, as for any element's column.
+    /// </summary>
+    [TestMethod]
+    public void A_dropped_column_that_is_an_element_takes_the_constraint_with_it_whatever_else_reads_it()
+    {
+        var periodAlone = """ALTER TABLE role_grants ADD CONSTRAINT ex_role_grant_note EXCLUDE USING gist ("Period" WITH &&);""";
+
+        CollectionAssert.AreEqual(new[] { "DropColumnOperation", periodAlone }, Contexts.Diff<Models.WithTheNoteBothWays, Models.WithoutTheNoteAtAll>().Shape());
+        CollectionAssert.AreEqual(new[] { "DropColumnOperation", periodAlone }, Contexts.Diff<Models.WithTheGranteeInTheConditionToo, Models.WithoutTheGrantee>().Shape());
+    }
+
+    /// <summary>
+    /// Beside an element written as SQL that names no column through a placeholder, a column that
+    /// is an element still takes the constraint with it; the column that SQL does read, which
+    /// nothing here can know, is held by the server, so every other column is rebuilt around.
+    /// </summary>
+    [TestMethod]
+    public void Beside_SQL_that_names_no_column_an_elements_column_goes_and_any_other_is_rebuilt_around()
+    {
+        var periodAlone = """ALTER TABLE role_grants ADD CONSTRAINT ex_role_grant_note EXCLUDE USING gist ("Period" WITH &&);""";
+
+        CollectionAssert.AreEqual(
+            new[] { "DropColumnOperation", periodAlone },
+            Contexts.Diff<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheGrantee>().Shape());
+        CollectionAssert.AreEqual(
+            new[] { Extension, DropOverNotes, "DropColumnOperation", AddOverNotes.Replace(NoteElement, "") },
+            Contexts.Diff<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheNote>().Shape());
+    }
+
+    /// <summary>A rename and a type change of a column an expression reads leave the constraint alone, as they leave one on the column itself.</summary>
+    [TestMethod]
+    public void A_renamed_or_altered_column_of_an_expression_leaves_the_constraint_alone()
+    {
+        CollectionAssert.AreEqual(new[] { "RenameColumnOperation" }, Contexts.Diff<Models.WithAnExpressionOverTheNote, Models.WithAnExpressionOverARenamedNote>().Shape());
+        CollectionAssert.AreEqual(new[] { "AlterColumnOperation" }, Contexts.Diff<Models.WithAnExpressionOverTheNote, Models.WithAnExpressionOverAShortNote>().Shape());
+    }
+
     /// <summary>
     /// A column's computation changes, and Npgsql writes that as a drop and an add. For a column
     /// that is an element PostgreSQL takes the constraint with it, so it is added again after: left

@@ -11,6 +11,11 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 /// The extension the constraint cannot be created without, or null. Not compared: it says how the
 /// constraint comes to be, and a constraint that is there needs nothing done for it.
 /// </param>
+/// <param name="KeyColumns">
+/// The columns that are elements by themselves. Not compared: the elements say it already. They
+/// are kept apart because PostgreSQL treats such a column unlike one an expression reads when the
+/// column goes.
+/// </param>
 internal sealed record PgExclusionDescriptor(
     TableRef Table,
     QualifiedName Name,
@@ -18,7 +23,8 @@ internal sealed record PgExclusionDescriptor(
     ValueList<SqlFragment> Elements,
     SqlFragment Where,
     Deferral Deferral,
-    Operational<SqlName?> Extension) : ISchemaDescriptor
+    Operational<SqlName?> Extension,
+    Operational<ValueList<Dependency>> KeyColumns) : ISchemaDescriptor
 {
     public SchemaScope Scope => new SchemaScope.Table(Table);
 
@@ -28,8 +34,16 @@ internal sealed record PgExclusionDescriptor(
         .. Extension.Value is { } extension ? new Dependency[] { new Dependency.Extension(extension) } : [],
     ];
 
-    /// <summary>What the elements read, apart from the condition: PostgreSQL treats the two differently when a column goes.</summary>
+    /// <summary>What the elements read, apart from the condition.</summary>
     public IEnumerable<Dependency> ElementReads => Elements.SelectMany(element => element.Dependencies);
+
+    /// <summary>
+    /// Whether PostgreSQL drops the constraint with the column, in silence. It does when the column
+    /// is an element by itself, whatever else of the constraint reads it too. A column that only
+    /// an element's expression reads, or only the condition, is one the server holds: the drop is
+    /// refused while the constraint is there (2BP01). Measured on 16 and 18 (#102).
+    /// </summary>
+    public bool GoesWith(Dependency.Column column) => KeyColumns.Value.Contains(column);
 
     public ISchemaDescriptor WithName(QualifiedName name) => this with { Name = name };
 }
@@ -73,7 +87,12 @@ internal sealed class PgExclusionContributor(SchemaContributorDependencies depen
             })],
             declaration.Where is { } where ? resolver.Template(where.Template) : SqlFragment.Empty,
             declaration.Deferral,
-            new Operational<SqlName?>(NeedsBtreeGist(declaration, resolver) ? resolver.Dialect.Name(BtreeGist) : null));
+            new Operational<SqlName?>(NeedsBtreeGist(declaration, resolver) ? resolver.Dialect.Name(BtreeGist) : null),
+            new Operational<ValueList<Dependency>>(
+                [.. elements.Select((element, index) => (element, index))
+                    .Where(key => key.element.Target is KeyTarget.Column)
+                    .SelectMany(key => keys[key.index].Dependencies)
+                    .Distinct()]));
     }
 
     internal const string BtreeGist = "btree_gist";
@@ -151,11 +170,12 @@ internal sealed class PgExclusionContributor(SchemaContributorDependencies depen
         // A type change rebuilds the index under a new OID; by name and definition it is the same.
         BaseChange.ColumnAltered => new Impact.Unaffected(),
 
-        // With the column as an element the constraint goes with it, in silence. With the column in
-        // the condition only, the drop is refused (2BP01). SQL that names no column through a
+        // With the column as an element by itself the constraint goes with it, in silence,
+        // whatever else reads the column. With the column in an element's expression or in the
+        // condition only, the drop is refused (2BP01). SQL that names no column through a
         // placeholder may read this one or not, and nothing here can tell: dropping the constraint
         // before and creating it after is right in both cases.
-        BaseChange.ColumnDropped dropped => descriptor.ElementReads.Contains(new Dependency.Column(dropped.Table, dropped.Column))
+        BaseChange.ColumnDropped dropped => descriptor.GoesWith(new Dependency.Column(dropped.Table, dropped.Column))
             ? new Impact.Lost()
             : new Impact.RebuildAround(),
 
