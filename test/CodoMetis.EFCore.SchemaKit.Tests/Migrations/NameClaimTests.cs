@@ -108,6 +108,32 @@ public sealed class NameClaimTests
         Assert.AreEqual("Test.Guard unique 'ux_shared' on Animal", collision.Second);
     }
 
+    /// <summary>
+    /// Only the context's own model is held to its names. A snapshot that holds a collision is
+    /// read on either side of a diff: where one starts, and where EF Core's Down ends (#98).
+    /// </summary>
+    [TestMethod]
+    public void A_snapshot_that_holds_a_collision_is_read_on_either_side_of_a_diff()
+    {
+        using var colliding = SchemaOperationPlannerTests.Context<ClaimModels.OneNameOnTwoTables>();
+        using var bare = SchemaOperationPlannerTests.Context<PlanModels.Bare>();
+        var differ = bare.GetService<IMigrationsModelDiffer>();
+        var snapshot = SchemaOperationPlannerTests.Model(colliding);
+
+        CollectionAssert.Contains(SchemaOperationPlannerTests.Describe(differ.GetDifferences(snapshot, SchemaOperationPlannerTests.Model(bare))), "DROP INDEX ux_shared;");
+        Assert.AreEqual(2, SchemaOperationPlannerTests.Describe(differ.GetDifferences(SchemaOperationPlannerTests.Model(bare), snapshot)).Count(statement => statement.Contains("ux_shared")));
+    }
+
+    /// <summary>The context's own model is held to its names where it stands first as well: Down of a first migration starts from it.</summary>
+    [TestMethod]
+    public void The_contexts_own_model_is_held_to_its_names_where_a_diff_starts_too()
+    {
+        using var colliding = SchemaOperationPlannerTests.Context<ClaimModels.OneNameOnTwoTables>();
+
+        Assert.ThrowsExactly<SchemaValidationException>(() => colliding.GetService<IMigrationsModelDiffer>()
+            .GetDifferences(SchemaOperationPlannerTests.Model(colliding), null));
+    }
+
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
     public void An_object_named_like_a_table_of_EF_Cores_is_refused(Provider provider)
         => Assert.AreEqual("the table 'Thing'", TheCollision<ClaimModels.LikeATable>(provider).Second);

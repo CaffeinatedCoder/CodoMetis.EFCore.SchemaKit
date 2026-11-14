@@ -86,8 +86,8 @@ public static class LegacyModels
 }
 
 /// <summary>
-/// The seam a package reads an earlier package's annotations through (#92): asked where a
-/// migration starts, refused where it leads, and never an object left out.
+/// The seam a package reads an earlier package's annotations through (#92): asked of every model
+/// that is not the context's own, refused in that one, and never an object left out.
 /// </summary>
 [TestClass]
 public sealed class LegacyDeclarationReaderTests
@@ -130,11 +130,39 @@ public sealed class LegacyDeclarationReaderTests
     }
 
     [TestMethod]
-    public void The_old_format_where_the_migration_leads_is_refused()
+    public void The_old_format_in_the_contexts_own_model_is_refused()
     {
         var refused = Assert.ThrowsExactly<InvalidOperationException>(() => Diff<LegacyModels.Undeclared, LegacyModels.InTheOldFormat>(WithTheReader));
 
-        StringAssert.Contains(refused.Message, "Animal carries the annotation 'Old:Guard' in the model the migration leads to");
+        StringAssert.Contains(refused.Message, "Animal carries the annotation 'Old:Guard' in the context's own model");
+    }
+
+    /// <summary>
+    /// Where a model stands in a diff does not say whose it is. EF Core asks for Down as the diff
+    /// from the model to the snapshot whenever Up holds anything, and <c>migrations remove</c>
+    /// compares two snapshots (#98). The old format where a diff ends is then a snapshot's, and is
+    /// read like the one a diff starts from.
+    /// </summary>
+    [TestMethod]
+    public void The_old_format_in_a_snapshot_is_read_wherever_the_snapshot_stands()
+    {
+        using var snapshot = SchemaOperationPlannerTests.Context<LegacyModels.InTheOldFormat>(more: WithTheReader);
+        using var declared = SchemaOperationPlannerTests.Context<LegacyModels.Declared>(more: WithTheReader);
+        using var undeclared = SchemaOperationPlannerTests.Context<LegacyModels.Undeclared>(more: WithTheReader);
+        var old = SchemaOperationPlannerTests.Model(snapshot);
+
+        // Down of the move itself: the model declares what the snapshot holds.
+        var differ = declared.GetService<IMigrationsModelDiffer>();
+        Assert.AreEqual(0, differ.GetDifferences(SchemaOperationPlannerTests.Model(declared), old).Count);
+
+        // Down of a migration that dropped the object: it is created again, from the old format.
+        var down = SchemaOperationPlannerTests.Describe(
+            undeclared.GetService<IMigrationsModelDiffer>().GetDifferences(SchemaOperationPlannerTests.Model(undeclared), old));
+        Assert.HasCount(1, down);
+        StringAssert.Contains(down[0], "CREATE UNIQUE INDEX ux_animal");
+
+        // migrations remove: neither model is the context's.
+        Assert.IsFalse(differ.HasDifferences(old, old));
     }
 
     [TestMethod]

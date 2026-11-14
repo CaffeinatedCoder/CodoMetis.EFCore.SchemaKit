@@ -28,6 +28,13 @@ public sealed class IndexesReader : LegacyDeclarationReader<TestGuard>
         => [new TestGuard.Unique([new GuardKey("Name")]) { Name = "ux_animal" }];
 }
 
+/// <summary>A consumer's model that still carries what 5.x declared: an annotation set by hand, since 5.x itself is refused.</summary>
+public sealed class StillInThe5xFormat : IPlanModel
+{
+    public static void Build(ModelBuilder modelBuilder)
+        => modelBuilder.Entity<Animal>().HasAnnotation("CustomIndex:CompositeIndexes", """[{"paths":["Name"],"unique":true}]""");
+}
+
 /// <summary>
 /// A snapshot that holds what <c>EFCore.ComplexIndexes</c> 5.x declared and nothing here reads
 /// (#93). The target declares nothing in every test: the snapshot alone says the objects exist.
@@ -90,6 +97,39 @@ public sealed class UnreadLegacyAnnotationTests
     [DataRow("CustomTemporal:Constraints", " [] ")]
     public void An_annotation_that_holds_nothing_is_no_declaration(string annotation, string value)
         => CollectionAssert.AreEqual(Array.Empty<string>(), DiffFrom(source => source.Entity<Animal>().HasAnnotation(annotation, value)));
+
+    /// <summary>
+    /// In the context's own model nothing renders what 5.x declared, with a reader for it or
+    /// without one. Passed over there, the model would say an index exists that no migration makes.
+    /// </summary>
+    [TestMethod]
+    public void What_5x_declared_in_the_contexts_own_model_is_refused_with_a_reader_or_without()
+    {
+        foreach (var more in new Action<IServiceCollection>?[] { null, WithTheIndexesReader })
+        {
+            using var context = SchemaOperationPlannerTests.Context<StillInThe5xFormat>(more: more);
+            var differ = context.GetService<IMigrationsModelDiffer>();
+
+            var refused = Assert.ThrowsExactly<InvalidOperationException>(() => differ.GetDifferences(null, SchemaOperationPlannerTests.Model(context)));
+            StringAssert.Contains(refused.Message, "Animal carries the annotation 'CustomIndex:CompositeIndexes' in the context's own model");
+            Assert.ThrowsExactly<InvalidOperationException>(() => differ.HasDifferences(null, SchemaOperationPlannerTests.Model(context)));
+        }
+    }
+
+    /// <summary>
+    /// A snapshot that holds what nothing reads is refused where a diff ends as where it starts:
+    /// Down would otherwise lead back to objects no statement creates (#98).
+    /// </summary>
+    [TestMethod]
+    public void What_nothing_reads_is_refused_where_a_diff_ends_too()
+    {
+        using var snapshot = SchemaOperationPlannerTests.Context<StillInThe5xFormat>();
+        using var context = SchemaOperationPlannerTests.Context<LegacyModels.Undeclared>();
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>()
+            .GetDifferences(SchemaOperationPlannerTests.Model(context), SchemaOperationPlannerTests.Model(snapshot)));
+        StringAssert.Contains(refused.Message, "The model snapshot holds indexes of Animal");
+    }
 
     [TestMethod]
     public void A_property_marked_as_not_indexed_is_no_declaration()

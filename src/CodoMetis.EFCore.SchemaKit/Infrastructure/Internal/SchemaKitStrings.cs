@@ -248,8 +248,8 @@ internal static class SchemaKitStrings
         => $"{entity} carries the annotation '{annotation}' with a value of type {found?.Name ?? "null"}, and it is read as text. " +
            "Its objects would be left out of every migration, so it is not skipped.";
 
-    public static string LegacyAnnotationInTarget(string entity, string annotation)
-        => $"{entity} carries the annotation '{annotation}' in the model the migration leads to. It is the format of an earlier " +
+    public static string LegacyAnnotationInTheModel(string entity, string annotation)
+        => $"{entity} carries the annotation '{annotation}' in the context's own model. It is the format of an earlier " +
            "package, which this version reads from a model snapshot only: nothing renders it from the model, and beside a " +
            "declaration of the same object it would be a second one. Remove the annotation and declare the object.";
 
