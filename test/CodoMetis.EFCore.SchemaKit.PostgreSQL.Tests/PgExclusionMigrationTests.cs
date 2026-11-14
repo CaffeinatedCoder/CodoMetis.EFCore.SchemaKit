@@ -455,4 +455,151 @@ public sealed class PgExclusionMigrationTests
         => CollectionAssert.AreEqual(
             new[] { """ALTER TABLE grants.role_grants DROP CONSTRAINT ex_no_overlap;""" },
             Contexts.Diff<Models.TwoSchemas, Models.TwoSchemasOneConstraint>().Shape());
+
+    // ── A name a rename frees or takes in the same migration (#99) ──
+
+    private const string AddRenamed =
+        """ALTER TABLE role_grants ADD CONSTRAINT ex_renamed EXCLUDE USING gist ("GranteeId" WITH =, "RoleId" WITH =, "Period" WITH &&) WHERE ("RevokedOn" IS NULL) DEFERRABLE INITIALLY DEFERRED;""";
+
+    /// <summary>
+    /// EF Core creates an index under the name the constraint gives up. A rename runs after
+    /// EF Core's operations, where the name is still the constraint's; a drop runs before them and
+    /// an add after. The add brings its extension like any other.
+    /// </summary>
+    [TestMethod]
+    public void A_rename_whose_old_name_an_index_takes_is_a_rebuild()
+        => CollectionAssert.AreEqual(
+            new[] { Extension, Drop, "CreateIndexOperation", AddRenamed },
+            Contexts.Diff<Models.Scheduling, Models.RenamedAndItsOldNameReused>().Shape());
+
+    /// <summary>The same with a default name that a column rename changes.</summary>
+    [TestMethod]
+    public void A_default_name_a_column_rename_gives_up_to_an_index_is_a_rebuild()
+        => CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension,
+                """ALTER TABLE role_grants DROP CONSTRAINT "EX_role_grants_GranteeId_lowerNote_Period";""",
+                "RenameColumnOperation",
+                "CreateIndexOperation",
+                """ALTER TABLE role_grants ADD CONSTRAINT "EX_role_grants_grantee_lowerNote_Period" EXCLUDE USING gist (grantee WITH =, (lower("Note")) WITH =, "Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.Unnamed, Models.UnnamedRenamedAroundAndItsOldNameReused>().Shape());
+
+    /// <summary>
+    /// The other way round: the constraint takes the name of an index EF Core drops or renames.
+    /// EF Core's operation runs first, so the name is free and the rename stays one statement.
+    /// </summary>
+    [TestMethod]
+    public void A_rename_into_a_name_an_index_gives_up_stays_a_rename()
+    {
+        CollectionAssert.AreEqual(
+            new[] { "DropIndexOperation", $"ALTER TABLE role_grants RENAME CONSTRAINT ex_renamed TO {Models.Name};" },
+            Contexts.Diff<Models.RenamedAndItsOldNameReused, Models.Scheduling>().Shape());
+        CollectionAssert.AreEqual(
+            new[] { "DropIndexOperation", "RenameColumnOperation", """ALTER TABLE role_grants RENAME CONSTRAINT "EX_role_grants_grantee_lowerNote_Period" TO "EX_role_grants_GranteeId_lowerNote_Period";""" },
+            Contexts.Diff<Models.UnnamedRenamedAroundAndItsOldNameReused, Models.Unnamed>().Shape());
+        CollectionAssert.AreEqual(
+            new[] { "RenameIndexOperation", $"ALTER TABLE role_grants RENAME CONSTRAINT {Models.Name} TO ex_renamed;" },
+            Contexts.Diff<Models.SchedulingBesideAnIndexNamedLikeItsNextName, Models.RenamedIntoTheNameAnIndexGaveUp>().Shape());
+    }
+
+    /// <summary>EF Core renames an index into the name the constraint gives up: as a create would, it needs the name free.</summary>
+    [TestMethod]
+    public void A_rename_whose_old_name_an_index_is_renamed_into_is_a_rebuild()
+        => CollectionAssert.AreEqual(
+            new[] { Extension, "ALTER TABLE role_grants DROP CONSTRAINT ex_renamed;", "RenameIndexOperation", Add },
+            Contexts.Diff<Models.RenamedIntoTheNameAnIndexGaveUp, Models.SchedulingBesideAnIndexNamedLikeItsNextName>().Shape());
+
+    /// <summary>Compared as EF Core's table rename leaves them, the index on the renamed table and the constraint's old name collide.</summary>
+    [TestMethod]
+    public void A_table_rename_does_not_hide_a_collision()
+        => CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension, Drop, "DropPrimaryKeyOperation", "RenameTableOperation", "AddPrimaryKeyOperation", "CreateIndexOperation",
+                AddRenamed.Replace("ALTER TABLE role_grants", "ALTER TABLE grants"),
+            },
+            Contexts.Diff<Models.Scheduling, Models.RenamedOnARenamedTableAndItsOldNameReused>().Shape());
+
+    /// <summary>
+    /// The table moves to another schema and its constraint's index with it, before EF Core creates
+    /// an index under the old name: where the table was, the name is free; where it goes, it is not.
+    /// </summary>
+    [TestMethod]
+    public void A_move_to_another_schema_is_compared_where_the_table_is_by_then()
+    {
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "EnsureSchemaOperation", "RenameTableOperation", "CreateTableOperation", "CreateIndexOperation",
+                $"ALTER TABLE ops.role_grants RENAME CONSTRAINT {Models.Name} TO ex_renamed;",
+            },
+            Contexts.Diff<Models.Scheduling, Models.RenamedOnAMovedTableAndItsOldNameReusedWhereItWas>().Shape());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension, Drop, "EnsureSchemaOperation", "RenameTableOperation", "CreateTableOperation", "CreateIndexOperation",
+                AddRenamed.Replace("ALTER TABLE role_grants", "ALTER TABLE ops.role_grants"),
+            },
+            Contexts.Diff<Models.Scheduling, Models.RenamedOnAMovedTableAndItsOldNameReusedWhereItGoes>().Shape());
+    }
+
+    /// <summary>
+    /// Two constraints on two tables of a schema swap names. Renamed in turn, the first would take
+    /// a name the second still holds; so the second is rebuilt around the first's rename.
+    /// </summary>
+    [TestMethod]
+    public void Constraints_on_two_tables_that_swap_names_are_renamed_once_and_rebuilt_once()
+        => CollectionAssert.AreEqual(
+            new[]
+            {
+                "ALTER TABLE bookings DROP CONSTRAINT ex_b;",
+                "ALTER TABLE role_grants RENAME CONSTRAINT ex_a TO ex_b;",
+                """ALTER TABLE bookings ADD CONSTRAINT ex_a EXCLUDE USING gist ("Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.TwoTables<Models.AB>, Models.TwoTables<Models.BA>>().Shape());
+
+    /// <summary>A rename chain whose renames run in an order that frees each name first stays renames; the other order rebuilds the one that would wait.</summary>
+    [TestMethod]
+    public void A_rename_chain_over_two_tables_is_renamed_where_the_order_allows()
+    {
+        CollectionAssert.AreEqual(
+            new[] { "ALTER TABLE bookings RENAME CONSTRAINT ex_b TO ex_c;", "ALTER TABLE role_grants RENAME CONSTRAINT ex_a TO ex_b;" },
+            Contexts.Diff<Models.TwoTables<Models.AB>, Models.TwoTables<Models.BC>>().Shape());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "ALTER TABLE bookings DROP CONSTRAINT ex_c;",
+                "ALTER TABLE role_grants RENAME CONSTRAINT ex_b TO ex_a;",
+                """ALTER TABLE bookings ADD CONSTRAINT ex_b EXCLUDE USING gist ("Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.TwoTables<Models.BC>, Models.TwoTables<Models.AB>>().Shape());
+    }
+
+    /// <summary>On one table a name is matched before a rename is: a swap and a chain are rebuilds already, as before #99.</summary>
+    [TestMethod]
+    public void Constraints_on_one_table_that_swap_names_or_pass_one_on_are_rebuilt_as_before()
+    {
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension,
+                "ALTER TABLE role_grants DROP CONSTRAINT ex_a;",
+                "ALTER TABLE role_grants DROP CONSTRAINT ex_b;",
+                """ALTER TABLE role_grants ADD CONSTRAINT ex_b EXCLUDE USING gist ("Period" WITH &&);""",
+                """ALTER TABLE role_grants ADD CONSTRAINT ex_a EXCLUDE USING gist ("RoleId" WITH =, "Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.OneTable<Models.AB>, Models.OneTable<Models.BA>>().Shape());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension,
+                "ALTER TABLE role_grants DROP CONSTRAINT ex_a;",
+                "ALTER TABLE role_grants DROP CONSTRAINT ex_b;",
+                """ALTER TABLE role_grants ADD CONSTRAINT ex_b EXCLUDE USING gist ("Period" WITH &&);""",
+                """ALTER TABLE role_grants ADD CONSTRAINT ex_c EXCLUDE USING gist ("RoleId" WITH =, "Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.OneTable<Models.AB>, Models.OneTable<Models.BC>>().Shape());
+    }
 }

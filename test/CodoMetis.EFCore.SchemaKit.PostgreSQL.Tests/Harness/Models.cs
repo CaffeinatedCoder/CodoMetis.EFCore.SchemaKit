@@ -530,4 +530,144 @@ public static class Models
                 .DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: TwoSchemas.Shared)]);
         }
     }
+
+    // ── A name a rename frees or takes in the migration that renames (#99) ──
+
+    /// <summary>The default name <see cref="Unnamed" /> has, before <see cref="UnnamedRenamedAround" /> renames a column it is built from.</summary>
+    public const string UnnamedName = "EX_role_grants_GranteeId_lowerNote_Period";
+
+    /// <summary><see cref="Renamed" />, and EF Core creates an index under the name the constraint gives up.</summary>
+    public sealed class RenamedAndItsOldNameReused : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.HasIndex(x => x.RoleId).HasDatabaseName(Name);
+            grants.DeclarePostgres(_ => [ActivePeriod with { Name = "ex_renamed" }]);
+        }
+    }
+
+    /// <summary><see cref="UnnamedRenamedAround" />, and EF Core creates an index under the default name the constraint gives up.</summary>
+    public sealed class UnnamedRenamedAroundAndItsOldNameReused : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.GranteeId).HasColumnName("grantee");
+            grants.HasIndex(x => x.RoleId).HasDatabaseName(UnnamedName);
+            grants.DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.GranteeId).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period))]);
+        }
+    }
+
+    /// <summary><see cref="Scheduling" /> beside an index of EF Core's that has the name <see cref="Renamed" /> gives the constraint.</summary>
+    public sealed class SchedulingBesideAnIndexNamedLikeItsNextName : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.HasIndex(x => x.RoleId).HasDatabaseName("ex_renamed");
+            grants.DeclarePostgres(_ => [ActivePeriod]);
+        }
+    }
+
+    /// <summary>The constraint takes the name EF Core's index gives up, which EF Core renames.</summary>
+    public sealed class RenamedIntoTheNameAnIndexGaveUp : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.HasIndex(x => x.RoleId).HasDatabaseName("ix_role");
+            grants.DeclarePostgres(_ => [ActivePeriod with { Name = "ex_renamed" }]);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Renamed" /> while EF Core moves its table to another schema, and an index of EF
+    /// Core's in the schema the table leaves takes the constraint's old name. The constraint's
+    /// index has moved with its table by the time the index is created: nothing collides.
+    /// </summary>
+    public sealed class RenamedOnAMovedTableAndItsOldNameReusedWhereItWas : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "ops").DeclarePostgres(_ => [ActivePeriod with { Name = "ex_renamed" }]);
+            modelBuilder.Entity<Booking>().ToTable("bookings").HasIndex(x => x.RoomId).HasDatabaseName(Name);
+        }
+    }
+
+    /// <summary>The same move, and the index in the schema the table moves to: there the old name is still held.</summary>
+    public sealed class RenamedOnAMovedTableAndItsOldNameReusedWhereItGoes : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "ops").DeclarePostgres(_ => [ActivePeriod with { Name = "ex_renamed" }]);
+            modelBuilder.Entity<Booking>().ToTable("bookings", "ops").HasIndex(x => x.RoomId).HasDatabaseName(Name);
+        }
+    }
+
+    /// <summary>
+    /// The same table rename, and an index of EF Core's on the renamed table under the
+    /// constraint's old name: the index and the constraint's index are relations of one schema,
+    /// whatever their tables are called.
+    /// </summary>
+    public sealed class RenamedOnARenamedTableAndItsOldNameReused : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = modelBuilder.Entity<RoleGrant>().ToTable("grants");
+            grants.HasIndex(x => x.RoleId).HasDatabaseName(Name);
+            grants.DeclarePostgres(_ => [ActivePeriod with { Name = "ex_renamed" }]);
+        }
+    }
+
+    private static PgExclusion OnGrants(PgSchema<RoleGrant> pg, string name) => pg.Exclusion(pg.Overlaps(x => x.Period), name: name);
+
+    private static PgExclusion OnGrantsByRole(PgSchema<RoleGrant> pg, string name) => pg.Exclusion(pg.Equal(x => x.RoleId).Overlaps(x => x.Period), name: name);
+
+    private static PgExclusion OnBookings(PgSchema<Booking> pg, string name) => pg.Exclusion(pg.Overlaps(x => x.Period), name: name);
+
+    /// <summary>Two tables of one schema, a constraint on each: their indexes are relations of that schema.</summary>
+    public sealed class TwoTables<TNames> : ITestModel where TNames : INames
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Grants(modelBuilder).DeclarePostgres(pg => [OnGrants(pg, TNames.First)]);
+            modelBuilder.Entity<Booking>().ToTable("bookings").DeclarePostgres(pg => [OnBookings(pg, TNames.Second)]);
+        }
+    }
+
+    /// <summary>Two constraints on one table.</summary>
+    public sealed class OneTable<TNames> : ITestModel where TNames : INames
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(pg => [OnGrants(pg, TNames.First), OnGrantsByRole(pg, TNames.Second)]);
+    }
+
+    public interface INames
+    {
+        static abstract string First { get; }
+
+        static abstract string Second { get; }
+    }
+
+    public sealed class AB : INames
+    {
+        public static string First => "ex_a";
+
+        public static string Second => "ex_b";
+    }
+
+    public sealed class BA : INames
+    {
+        public static string First => "ex_b";
+
+        public static string Second => "ex_a";
+    }
+
+    public sealed class BC : INames
+    {
+        public static string First => "ex_b";
+
+        public static string Second => "ex_c";
+    }
 }
