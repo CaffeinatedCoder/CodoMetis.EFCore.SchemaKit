@@ -370,8 +370,12 @@ what is still missing).
   `NpgsqlSchemaDialect.Claims` needs the server's word first.
 - **`Plan` is a rename or a rebuild.** PostgreSQL alters nothing else about an exclusion constraint.
 - **`ImpactOf` is the measured table** (plan, section 3.7): renames follow, an altered column leaves
-  it alone, a dropped column that is an element takes the constraint with it (`Lost`), one the
-  condition alone reads has to have the constraint out of its way (`RebuildAround`).
+  it alone, a dropped column that is an element by itself takes the constraint with it (`Lost`),
+  whatever else reads it; one that only an element's expression or only the condition reads has
+  to have the constraint out of its way (`RebuildAround`, #102). The descriptor keeps the columns
+  that are elements by themselves (`KeyColumns`) for that, outside its comparison. The server's
+  word for each way of reading a column is one test in `PgExclusionLiveTests`: a new kind of
+  element needs its row there before `GoesWith` answers for it.
 - **`=` on a scalar column needs `btree_gist`, and the migration brings it.** The descriptor lists
   the extension as a dependency by 5.x's rule (a column by its store type, an expression by its
   operator, GiST only), in an `Operational<>` field: it says how the constraint comes to be, not

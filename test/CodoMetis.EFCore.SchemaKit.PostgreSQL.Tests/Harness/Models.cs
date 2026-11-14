@@ -277,6 +277,111 @@ public static class Models
         }
     }
 
+    public const string OverNotes = "ex_role_grant_note";
+
+    /// <summary>An expression over the note among the elements, under a name: <c>(lower("Note")) WITH =</c>.</summary>
+    public sealed class WithAnExpressionOverTheNote : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Equal(x => x.GranteeId).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period), name: OverNotes)]);
+    }
+
+    /// <summary><see cref="WithAnExpressionOverTheNote" /> without that element, and EF Core drops the note: a column an expression read.</summary>
+    public sealed class WithoutTheNote : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Ignore(x => x.Note);
+            grants.DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.GranteeId).Overlaps(x => x.Period), name: OverNotes)]);
+        }
+    }
+
+    /// <summary><see cref="WithAnExpressionOverTheNote" />, and the note becomes a computed column: Npgsql drops it and adds it again.</summary>
+    public sealed class WithAnExpressionOverAComputedNote : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasComputedColumnSql("'n'::text", stored: true);
+            grants.DeclarePostgres(pg =>
+                [pg.Exclusion(pg.Equal(x => x.GranteeId).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period), name: OverNotes)]);
+        }
+    }
+
+    /// <summary><see cref="WithAnExpressionOverTheNote" />, and EF Core renames the note.</summary>
+    public sealed class WithAnExpressionOverARenamedNote : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasColumnName("memo");
+            grants.DeclarePostgres(pg =>
+                [pg.Exclusion(pg.Equal(x => x.GranteeId).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period), name: OverNotes)]);
+        }
+    }
+
+    /// <summary><see cref="WithAnExpressionOverTheNote" />, and EF Core alters the note's type.</summary>
+    public sealed class WithAnExpressionOverAShortNote : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasMaxLength(40);
+            grants.DeclarePostgres(pg =>
+                [pg.Exclusion(pg.Equal(x => x.GranteeId).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period), name: OverNotes)]);
+        }
+    }
+
+    /// <summary>The note as an element by itself and inside the expression of another: both ways of reading one column.</summary>
+    public sealed class WithTheNoteBothWays : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Equal(x => x.Note).Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period), name: OverNotes)]);
+    }
+
+    /// <summary><see cref="WithTheNoteBothWays" /> with neither element, and EF Core drops the note.</summary>
+    public sealed class WithoutTheNoteAtAll : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Ignore(x => x.Note);
+            grants.DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.Period), name: OverNotes)]);
+        }
+    }
+
+    /// <summary>The grantee as an element by itself, and read by the condition too.</summary>
+    public sealed class WithTheGranteeInTheConditionToo : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+            [pg.Exclusion(pg.Equal(x => x.GranteeId).Overlaps(x => x.Period), where: x => x.GranteeId > 0, name: OverNotes)]);
+    }
+
+    /// <summary>The grantee as an element by itself, beside an expression written as SQL that names no column through a placeholder: it may read any of them.</summary>
+    public sealed class WithTheGranteeBesideSqlThatNamesNoColumn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(pg =>
+        [
+            new PgExclusion.Gist(
+            [
+                .. pg.Equal(x => x.GranteeId).Overlaps(x => x.Period).Elements,
+                new ExclusionElement(new KeyTarget.Template("lower(\"Note\")"), new ExclusionOperator("=")),
+            ]) { Name = OverNotes },
+        ]);
+    }
+
+    /// <summary>Either of the two without the grantee, whose column EF Core drops: the period alone.</summary>
+    public sealed class WithoutTheGrantee : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Ignore(x => x.GranteeId);
+            grants.DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.Period), name: OverNotes)]);
+        }
+    }
+
     /// <summary>The constraint under its name without its condition, and EF Core drops the column only the condition read.</summary>
     public sealed class WithoutRevocation : ITestModel
     {

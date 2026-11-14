@@ -312,6 +312,7 @@ new core has one mechanism.
   |---|---|---|---|---|---|---|---|
   | Index on the column, on an expression of it, with it in `INCLUDE`, or in its predicate | Follows | Unaffected | Unaffected | **Lost** | Follows | Follows | Lost |
   | Exclusion constraint with the column as an element | Follows | Unaffected | Unaffected | **Lost** | Follows | Follows | Lost |
+  | Exclusion constraint with the column in an element's expression only | Follows | Unaffected | not measured | Blocks | not measured | not measured | Lost |
   | Exclusion constraint with the column in its predicate only | Follows | Unaffected | Unaffected | Blocks | Follows | Follows | Lost |
   | Trigger `UPDATE OF` the column, or with it in `WHEN` | Follows | Blocks | Blocks | Blocks | Follows | Follows | Lost |
   | Trigger whose function body reads the column | **Stale** | Unaffected | Unaffected | **Stale** | Follows | Follows | Lost |
@@ -336,6 +337,13 @@ new core has one mechanism.
   - **PostgreSQL drops an index, and an exclusion constraint, with a column in silence,** also
     when the column is only in the index's predicate. An exclusion constraint with the column in
     its predicate only blocks the drop instead (2BP01). The same predicate, two answers.
+  - **For an exclusion constraint, what decides is whether the column is an element by itself**
+    (measured 2026-11-14 on PostgreSQL 16 and 18, #102). Such a column takes the constraint with
+    it whatever else reads it too: another element's expression, the predicate, SQL that names no
+    column. A column that only an element's expression reads, `(lower("Note")) WITH =`, blocks the
+    drop like one in the predicate (2BP01). An index is lost in both cases; the constraint is not.
+    The row was not a cell of spike E: `PgExclusionLiveTests` holds it, one assertion for each way
+    of reading a column.
   - **On PostgreSQL an `AlterColumn` that changes only nullability blocks under a trigger,**
     because Npgsql's generator writes `ALTER COLUMN … TYPE` for every `AlterColumnOperation`, and
     PostgreSQL refuses to alter the type of a column a trigger definition uses (0A000). The answer

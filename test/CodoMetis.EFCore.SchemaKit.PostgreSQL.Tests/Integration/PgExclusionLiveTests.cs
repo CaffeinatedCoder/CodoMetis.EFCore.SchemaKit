@@ -445,6 +445,79 @@ public sealed class PgExclusionLiveTests
     [TestMethod]
     public void Dropping_a_column_only_the_condition_reads() => AssertMigratesTo<Models.Scheduling, Models.WithoutRevocation>();
 
+    /// <summary>What the server does when a column is dropped by hand, with the constraint in place: gone with it, or the drop refused.</summary>
+    private static string DroppingByHand<TModel>(string column) where TModel : ITestModel
+    {
+        using var database = new LiveDatabase();
+        database.Create<TModel>();
+
+        try
+        {
+            database.Execute($"ALTER TABLE role_grants DROP COLUMN \"{column}\";");
+        }
+        catch (PostgresException refused)
+        {
+            return $"refused {refused.SqlState}, {database.Exclusions().Count} left";
+        }
+
+        return $"dropped, {database.Exclusions().Count} left";
+    }
+
+    /// <summary>
+    /// The measurement behind <c>PgExclusionDescriptor.GoesWith</c> (#102), one row for each way a
+    /// constraint reads a column. A column that is an element by itself goes, and the constraint
+    /// with it, whatever else reads it. A column read only through an element's expression, or
+    /// only by the condition, is held: the drop is refused while the constraint is there.
+    /// </summary>
+    [TestMethod]
+    public void The_server_drops_the_constraint_with_an_elements_column_and_holds_every_other_column_it_reads()
+    {
+        const string Gone = "dropped, 0 left";
+        const string Held = "refused 2BP01, 1 left";
+
+        Assert.AreEqual(Gone, DroppingByHand<Models.WithAnExpressionOverTheNote>("GranteeId"), "an element by itself");
+        Assert.AreEqual(Held, DroppingByHand<Models.WithAnExpressionOverTheNote>("Note"), "in an element's expression only");
+        Assert.AreEqual(Held, DroppingByHand<Models.Scheduling>("RevokedOn"), "in the condition only");
+        Assert.AreEqual(Gone, DroppingByHand<Models.WithTheNoteBothWays>("Note"), "an element, and in another element's expression");
+        Assert.AreEqual(Gone, DroppingByHand<Models.WithTheGranteeInTheConditionToo>("GranteeId"), "an element, and in the condition");
+        Assert.AreEqual(Gone, DroppingByHand<Models.WithTheGranteeBesideSqlThatNamesNoColumn>("GranteeId"), "an element, beside SQL that names no column");
+        Assert.AreEqual(Held, DroppingByHand<Models.WithTheGranteeBesideSqlThatNamesNoColumn>("Note"), "read by SQL that names no column");
+    }
+
+    /// <summary>So the migration applies only with the constraint dropped first (#102): answered as lost, the column's drop failed.</summary>
+    [TestMethod]
+    public void Dropping_a_column_an_elements_expression_reads() => AssertMigratesTo<Models.WithAnExpressionOverTheNote, Models.WithoutTheNote>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+    [TestMethod]
+    public void Making_a_column_of_an_elements_expression_a_computed_one() => AssertMigratesTo<Models.WithAnExpressionOverTheNote, Models.WithAnExpressionOverAComputedNote>(
+        (migrated, _) => StringAssert.Contains(migrated.Exclusions().Single(), "lower("));
+
+    [TestMethod]
+    public void Dropping_a_column_that_is_an_element_and_in_an_expression() => AssertMigratesTo<Models.WithTheNoteBothWays, Models.WithoutTheNoteAtAll>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+    [TestMethod]
+    public void Dropping_an_element_column_the_condition_reads_too() => AssertMigratesTo<Models.WithTheGranteeInTheConditionToo, Models.WithoutTheGrantee>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+    [TestMethod]
+    public void Dropping_an_element_column_beside_SQL_that_names_no_column() => AssertMigratesTo<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheGrantee>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+    /// <summary>The column that SQL reads, which only the server knows: the constraint is out of its way before the drop.</summary>
+    [TestMethod]
+    public void Dropping_a_column_that_SQL_which_names_no_column_reads() => AssertMigratesTo<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheNote>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+    [TestMethod]
+    public void Renaming_a_column_an_elements_expression_reads() => AssertMigratesTo<Models.WithAnExpressionOverTheNote, Models.WithAnExpressionOverARenamedNote>(
+        (migrated, _) => StringAssert.Contains(migrated.Exclusions().Single(), "memo"));
+
+    [TestMethod]
+    public void Altering_the_type_of_a_column_an_elements_expression_reads() => AssertMigratesTo<Models.WithAnExpressionOverTheNote, Models.WithAnExpressionOverAShortNote>(
+        (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
     /// <summary>
     /// One constraint name on two tables in two schemas, and one of them dropped: the other is
     /// still there. A constraint is named within its table, so the table's schema is what tells
