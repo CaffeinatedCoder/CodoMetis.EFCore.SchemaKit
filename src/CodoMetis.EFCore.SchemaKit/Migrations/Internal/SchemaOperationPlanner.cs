@@ -135,6 +135,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         changed.AddRange(Pair(from, to, (s, t) => s.SameButForTheNameAs(t)));
 
         var inPlace = new SchemaSql(Dialect);
+        List<(Resolved Was, Resolved Becomes, SchemaSql Statements)> inPlaceChanges = [];
         HashSet<Resolved> dropped = new(from, ReferenceEqualityComparer.Instance);
         HashSet<Resolved> created = new(to, ReferenceEqualityComparer.Instance);
 
@@ -172,10 +173,16 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                     continue;
             }
 
-            switch (was.Contributor.Plan(was.Descriptor, becomes.Descriptor, inPlace))
+            // The answer's statements are kept only if the change stays in place: the planner can
+            // still turn it into a rebuild below, and then they must not reach the migration.
+            var statements = new SchemaSql(Dialect);
+            switch (was.Contributor.Plan(was.Descriptor, becomes.Descriptor, statements))
             {
                 case SchemaChange.None:
+                    break;
+
                 case SchemaChange.InPlace:
+                    inPlaceChanges.Add((was, becomes, statements));
                     break;
 
                 case SchemaChange.Rebuild:
@@ -189,6 +196,11 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                     break;
             }
         }
+
+        // A change in place runs after EF Core's operations, where a name it gives up or takes may
+        // be held by something else; such a change is rebuilt instead (#99).
+        if (inPlaceChanges.Count > 0)
+            KeepInPlace(inPlaceChanges, sourceOrder, dropped, created, target!, inPlace);
 
         List<Resolved> drops = [.. sourceOrder.Where(dropped.Contains)];
         List<Resolved> creates = [.. targetOrder.Where(created.Contains)];
@@ -226,6 +238,98 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
         return new SchemaOperationPlan(before.Operations, [.. inPlace.Operations, .. after.Operations]);
     }
+
+    /// <summary>
+    /// Writes the changes in place whose names are free when they run, in the order they run, and
+    /// makes each of the others a rebuild (#99).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A change in place runs after EF Core's operations and before the creates. When it renames an
+    /// object, the name it gives up and the name it takes are compared, through the claims and the
+    /// namespace rules of <see cref="NameClaims" />, with what holds a name at that moment: EF Core's
+    /// objects as the target has them, since all of EF Core's operations have run; every declared
+    /// object of the source as EF Core's operations leave it, but for those dropped before them or
+    /// lost with them (what tables are made of is dropped last, so it is still there); and the
+    /// changes in place written before this one, under their new names. A name EF Core takes is the
+    /// failure of #99: <c>CREATE INDEX</c> under the name a constraint gives up runs while the
+    /// constraint still holds it. A name another rename still holds is the same failure among
+    /// declarations, which is how two constraints on two tables of one schema swapping names
+    /// failed.
+    /// </para>
+    /// <para>
+    /// A change that collides is rebuilt: the drop frees the old name before EF Core's operations,
+    /// the create takes the new one after them and after every change in place, and the create
+    /// ensures its extensions like any other. No temporary name is used. A name EF Core gives up is
+    /// no collision: its operation has run, which is why a rename into the name of an index EF Core
+    /// drops or renames in the same migration stays a rename, as the server confirms.
+    /// </para>
+    /// <para>
+    /// This is a point fix. It reasons about one moment, the changes in place, with everything else
+    /// in its phase as a whole: a name an object's create takes against EF Core's operations, a
+    /// <c>BeforeTables</c> create against an <c>EnsureSchema</c>, and an order among creates or among
+    /// drops are not looked at here. The general answer is a ledger over the ordered actions (#115).
+    /// </para>
+    /// </remarks>
+    private void KeepInPlace(
+        List<(Resolved Was, Resolved Becomes, SchemaSql Statements)> changes,
+        List<Resolved> sources,
+        HashSet<Resolved> dropped,
+        HashSet<Resolved> created,
+        IRelationalModel target,
+        SchemaSql inPlace)
+    {
+        List<NameClaims.Taken>? held = null;
+        foreach (var (was, becomes, statements) in changes)
+        {
+            List<NameClaims.Taken> gives = [.. Claims(was)];
+            List<NameClaims.Taken> takes = [.. NameClaims.Of(becomes.Contributor, becomes.Descriptor, becomes.EntityType, becomes.Declaration, party: was)];
+
+            // A change that names nothing anew holds what it held: nothing to compare.
+            if (gives.Select(taken => taken.Claim).ToHashSet().SetEquals(takes.Select(taken => taken.Claim)))
+            {
+                inPlace.Append(statements);
+                continue;
+            }
+
+            held ??= Held(sources, dropped, target);
+            if (gives.Concat(takes).Any(claim => held.Any(other => NameClaims.Collide(claim, other, Dialect))))
+            {
+                if (was.Contributor.Placement.IsBeforeTables)
+                    throw new InvalidOperationException(SchemaKitStrings.RenameBeforeTablesCollides(was.Contributor.GetType(), was.Descriptor.Name, becomes.Descriptor.Name));
+
+                dropped.Add(was);
+                created.Add(becomes);
+                held.RemoveAll(taken => ReferenceEquals(taken.Party, was));
+                continue;
+            }
+
+            inPlace.Append(statements);
+            held.RemoveAll(taken => ReferenceEquals(taken.Party, was));
+            held.AddRange(takes);
+        }
+    }
+
+    /// <summary>What holds a name when the changes in place begin: EF Core's objects as the target has them, and the declared objects still there.</summary>
+    private List<NameClaims.Taken> Held(List<Resolved> sources, HashSet<Resolved> dropped, IRelationalModel target)
+    {
+        List<NameClaims.Taken> held = [.. NameClaims.OfTheModel(target, Dialect)];
+        foreach (var source in sources)
+        {
+            // Gone with an operation of EF Core's, or dropped before them. What tables are made of
+            // is dropped after everything else, so it holds its name throughout.
+            if (source.Impact is Impact.Lost) continue;
+            if (dropped.Contains(source) && !source.Contributor.Placement.IsBeforeTables) continue;
+
+            held.AddRange(Claims(source));
+        }
+
+        return held;
+    }
+
+    /// <summary>What an object of the source takes as EF Core's operations leave it: under the new names of its table and columns, and its own name still.</summary>
+    private static IEnumerable<NameClaims.Taken> Claims(Resolved source)
+        => NameClaims.Of(source.Contributor, source.Descriptor, source.EntityType, source.Declaration, party: source);
 
     /// <summary>
     /// An object of the source side as EF Core's operations leave it. The contributor is asked

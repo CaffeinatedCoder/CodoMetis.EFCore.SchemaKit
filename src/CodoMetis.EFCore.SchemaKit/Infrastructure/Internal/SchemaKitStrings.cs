@@ -285,6 +285,11 @@ internal static class SchemaKitStrings
         => $"'{contributor.FullName}'.Plan answered Rebuild for '{name}', and its placement is BeforeTables: tables are " +
            "made of its objects, so one cannot be dropped and created again around them. Answer InPlace, or change the object under another name.";
 
+    public static string RenameBeforeTablesCollides(Type contributor, QualifiedName from, QualifiedName to)
+        => $"'{contributor.FullName}'.Plan answered InPlace for '{from}' becoming '{to}', and the migration has something else " +
+           "hold one of the two names while the change runs. An object of another kind would be rebuilt around it, and this " +
+           "one's placement is BeforeTables: tables are made of it. Move the rename to a migration of its own.";
+
     public static string UnknownOperation(Type operation)
         => $"The migration holds an operation of type '{operation.FullName}', which SchemaKit does not know. What it does " +
            "to the schema objects this model declares cannot be told, and one of them could be dropped or left broken " +
