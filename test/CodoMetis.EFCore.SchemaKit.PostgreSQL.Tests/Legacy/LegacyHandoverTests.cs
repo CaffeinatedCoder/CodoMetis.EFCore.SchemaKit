@@ -1,4 +1,6 @@
 using CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Harness;
+using Legacy5x;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
@@ -76,11 +78,48 @@ public sealed class LegacyHandoverTests
             LegacyFixture.DiffTo<MovedModels.OneWithoutItsCondition>().Shape());
     }
 
+    /// <summary>The moved model with one change of its own, as a first migration after the move holds one.</summary>
+    public sealed class DeclaredWithANewColumn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            MovedModels.Declared.Build(modelBuilder);
+            modelBuilder.Entity<Slot>().Property<string>("Note");
+        }
+    }
+
+    /// <summary>
+    /// What <c>migrations add</c> asks for when the first migration after the move holds a change:
+    /// Up from the snapshot to the model, and, since Up is not empty, Down from the model to the
+    /// snapshot (#98). A diff of no operations never asks for Down, which is why the test above
+    /// did not see it.
+    /// </summary>
     [TestMethod]
-    public void The_5x_annotation_in_the_model_the_migration_leads_to_is_refused()
+    public void The_first_migration_after_the_move_scaffolds_with_a_change_of_its_own()
+    {
+        using var context = LegacyFixture.Context<DeclaredWithANewColumn>();
+        var differ = context.GetService<IMigrationsModelDiffer>();
+        var snapshot = LegacyFixture.Snapshot(context);
+
+        CollectionAssert.AreEqual(new[] { "AddColumnOperation" }, differ.GetDifferences(snapshot, context.Relational()).Shape());
+        CollectionAssert.AreEqual(new[] { "DropColumnOperation" }, differ.GetDifferences(context.Relational(), snapshot).Shape());
+    }
+
+    /// <summary>What <c>migrations remove</c> asks of the last migration 5.x scaffolded: two snapshots, neither the context's model.</summary>
+    [TestMethod]
+    public void The_last_migration_of_5x_can_be_removed()
+    {
+        using var context = LegacyFixture.Context<MovedModels.Declared>();
+        var snapshot = LegacyFixture.Snapshot(context);
+
+        Assert.IsFalse(context.GetService<IMigrationsModelDiffer>().HasDifferences(snapshot, snapshot));
+    }
+
+    [TestMethod]
+    public void The_5x_annotation_in_the_contexts_own_model_is_refused()
     {
         var refused = Assert.ThrowsExactly<InvalidOperationException>(() => LegacyFixture.DiffTo<MovedModels.DeclaredAndTheOldAnnotationKept>());
 
-        StringAssert.Contains(refused.Message, "Slot carries the annotation 'CustomExclusion:Constraints' in the model the migration leads to");
+        StringAssert.Contains(refused.Message, "Slot carries the annotation 'CustomExclusion:Constraints' in the context's own model");
     }
 }

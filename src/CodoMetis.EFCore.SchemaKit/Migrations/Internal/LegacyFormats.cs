@@ -45,6 +45,21 @@ internal static class LegacyFormats
     /// <summary>5.x's marker of an index declared on a property of a complex type; its value is <c>true</c>.</summary>
     private const string IndexedProperty = "CustomIndex:IsIndexed";
 
+    /// <summary>
+    /// The first annotation of 5.x on the entity type, or on a property of it, that declares an
+    /// object, or null. Whether that is an error depends on whose model it is, which is the
+    /// planner's to say.
+    /// </summary>
+    public static string? DeclaredIn(IReadOnlyEntityType entityType)
+    {
+        foreach (var (annotation, _, _) in OnEntityTypes)
+        {
+            if (entityType.FindAnnotation(annotation) is { } found && HoldsSomething(found.Value)) return annotation;
+        }
+
+        return IndexedPropertyOf(entityType, path: "") is null ? null : IndexedProperty;
+    }
+
     /// <summary>Throws when the entity type carries a declaration of 5.x that none of the readers reads.</summary>
     public static void RequireRead(IReadOnlyEntityType entityType, IReadOnlyList<ILegacyDeclarationSource> readers)
     {

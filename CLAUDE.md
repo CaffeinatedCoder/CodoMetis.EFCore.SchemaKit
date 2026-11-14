@@ -214,14 +214,22 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   never rebuilt).
 - **A declaration whose owner has no contributor is refused,** on either side. #22 adds the
   explicit way out.
-- **An earlier package's annotation is read where a migration starts, and refused where it
-  leads.** The source side asks every legacy reader for the entity type's annotation and resolves
-  what it returns like any declaration; that is how a 5.x snapshot and the model that declares
-  the same objects differ in nothing. In the target the annotation is an error: nothing renders
-  it from a model, and beside a declaration of the same object it would be a second one. An
-  annotation of 5.x that declares an object and has no reader (its indexes, its temporal
-  constraints, and its exclusion constraints on a context without the PostgreSQL package) is
-  refused there too (`LegacyFormats`, #93): passed over, its objects would be created a second
+- **Which model is the consumer's is told by reference, never by where it stands in a diff**
+  (#98). It is the context's own design-time model (`IsOwn`). EF Core's scaffolder asks for Down
+  as `GetDifferences(model, snapshot)` whenever Up is not empty, and `migrations remove` asks
+  `HasDifferences` of two snapshots, so "the second argument" is a snapshot as often as not. A
+  rule for the consumer's model is asked of that one model on either side; every other model, a
+  snapshot or a migration's target model, is only read. A test of such a rule diffs both ways: a
+  handover that diffs to nothing never asks for Down, which is how this was missed.
+- **An earlier package's annotation is read in every model but the context's own, and refused in
+  that one.** Every legacy reader is asked for the entity type's annotation, and what it returns
+  is resolved like any declaration; that is how a 5.x snapshot and the model that declares the
+  same objects differ in nothing, whichever of the two the diff starts from. In the context's
+  own model the annotation is an error, with a reader for it or without one: nothing renders it
+  from a model, and beside a declaration of the same object it would be a second one. In a
+  snapshot, an annotation of 5.x that declares an object and has no reader (its indexes, its
+  temporal constraints, and its exclusion constraints on a context without the PostgreSQL
+  package) is refused (`LegacyFormats`, #93): passed over, its objects would be created a second
   time or never dropped. This applies to a context that declares nothing as well, since the
   snapshot alone says the objects exist. A reader leaves the guard by being registered.
 - **An extension a created object depends on is ensured once and first.** The planner collects
@@ -230,19 +238,19 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   object must not be created as if a dependency nothing can satisfy were met. An object that
   stays counts too, for what its target descriptor depends on and its source did not: a column's
   type change makes the database rebuild an index under the new type (#81).
-- **A declaration on a derived type that shares its table with a base type is refused, on the
-  target side only** (#82). An object is the table's: declared on a derived type it would hold
-  among the sibling types' rows too. The source side is read as it is, since a snapshot that holds
-  such a declaration describes an object that exists; moved to the base type it is the same object
-  and the migration is empty. The cost for now: a column only the derived type has cannot be
+- **A declaration on a derived type that shares its table with a base type is refused, in the
+  context's own model only** (#82). An object is the table's: declared on a derived type it would
+  hold among the sibling types' rows too. A snapshot is read as it is, since one that holds such a
+  declaration describes an object that exists; moved to the base type it is the same object and
+  the migration is empty, Up and Down. The cost for now: a column only the derived type has cannot be
   named from the base type, so nothing can be declared on it while the two share a table.
-- **A name the target takes twice is refused, every collision at once** (`NameClaims`, #96). Each
+- **A name the model takes twice is refused, every collision at once** (`NameClaims`, #96). Each
   contributor says which namespaces its object's name is in (`Claims`), the dialect says it for
   EF Core's own tables, indexes, keys, foreign keys, check constraints and sequences
   (`ISchemaDialect.Claims`), and two equal claims are a `SchemaDiagnostic.NameCollision`
   (`SK1001`) when at least one party is SchemaKit's. All of them arrive in one
-  `SchemaValidationException`. Only the target is held to it: a snapshot that holds a collision
-  stays diffable. Names compare ordinally unless either declaration's `NameComparison` says
+  `SchemaValidationException`. Only the context's own model is held to it, wherever it stands:
+  a snapshot that holds a collision stays diffable, both ways. Names compare ordinally unless either declaration's `NameComparison` says
   otherwise. A table without a schema of its own carries the model's default schema in the
   relational model already, so nothing here adds it. The kernel's default
   scopes (an index within its table, a constraint within its table) are a guess for a provider

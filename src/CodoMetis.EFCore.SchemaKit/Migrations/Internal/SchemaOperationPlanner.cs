@@ -51,6 +51,22 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
     private bool IsSqlite => services.GetRequiredService<IDatabaseProvider>().Name == "Microsoft.EntityFrameworkCore.Sqlite";
 
+    /// <summary>
+    /// Whether the model is the one the consumer writes: the context's own design-time model, told
+    /// by reference. Where a model stands in a diff does not say it. EF Core's scaffolder asks for
+    /// Down as <c>GetDifferences(model, snapshot)</c> whenever Up is not empty, and
+    /// <c>migrations remove</c> asks <c>HasDifferences</c> of two snapshots (#98). So what holds a
+    /// consumer's model is asked of this one model wherever it stands, and every other model, a
+    /// snapshot or a migration's target model, is only read.
+    /// </summary>
+    /// <remarks>
+    /// Asked when a declaration or an earlier package's annotation is met, and not before: a
+    /// context that declares nothing does not have its model resolved here.
+    /// </remarks>
+    private bool IsOwn(IRelationalModel model) => ReferenceEquals(model.Model, Own);
+
+    private IModel Own => field ??= services.GetRequiredService<IDesignTimeModel>().Model;
+
     /// <summary>A declaration as what the database will hold, with the contributor that renders it.</summary>
     /// <param name="Contributor">The contributor of the declaration's owner.</param>
     /// <param name="Descriptor">What is compared: for the source side, the object as it is after EF Core's operations.</param>
@@ -83,16 +99,18 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
     public SchemaOperationPlan Plan(IRelationalModel? source, IRelationalModel? target, IReadOnlyList<MigrationOperation> inner)
     {
-        var from = Resolve(source, isTarget: false);
-        var to   = Resolve(target, isTarget: true);
+        var from = Resolve(source);
+        var to   = Resolve(target);
         if (from.Count == 0 && to.Count == 0) return SchemaOperationPlan.Empty;
 
-        // What the target declares has to be something the database can hold: a name taken twice
-        // fails at apply, in the middle of a migration. Only the target is held to it. A snapshot
-        // that holds a collision describes a database that exists, or one that never did, and
-        // either way the way off it is a diff.
-        if (to.Count > 0)
+        // What the consumer's model declares has to be something the database can hold: a name
+        // taken twice fails at apply, in the middle of a migration. Only that model is held to it,
+        // wherever it stands. A snapshot that holds a collision describes a database that exists,
+        // or one that never did, and either way the way off it is a diff, Down included.
+        if (to.Count > 0 && IsOwn(target!))
             NameClaims.Require([.. to.Select(t => (t.Contributor, t.Descriptor, t.EntityType, t.Declaration))], target!, Dialect);
+        else if (from.Count > 0 && IsOwn(source!))
+            NameClaims.Require([.. from.Select(s => (s.Contributor, s.Descriptor, s.EntityType, s.Declaration))], source!, Dialect);
 
         // What an operation of a type nobody has looked at does to these objects is not known.
         var changes = BaseChanges.Of(inner, Dialect, IsSqlite);
@@ -307,15 +325,23 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
     }
 
     /// <summary>Every declaration of a model as a descriptor, in the order of its entity types and of their annotation keys.</summary>
-    private List<Resolved> Resolve(IRelationalModel? model, bool isTarget)
+    private List<Resolved> Resolve(IRelationalModel? model)
     {
         List<Resolved> resolved = [];
         if (model is null) return resolved;
 
         foreach (var entityType in model.Model.GetEntityTypes())
         {
-            // Where a migration starts, what 5.x declared and nothing here reads is not passed over.
-            if (!isTarget) LegacyFormats.RequireRead(entityType, Legacy);
+            // What 5.x declared. In the consumer's own model it is nobody's: nothing renders the
+            // old format, with a reader or without one. In any other model it describes objects
+            // the database has, and what nothing here reads is not passed over.
+            if (LegacyFormats.DeclaredIn(entityType) is { } legacy)
+            {
+                if (IsOwn(model))
+                    throw new InvalidOperationException(SchemaKitStrings.LegacyAnnotationInTheModel(entityType.ShortName(), legacy));
+
+                LegacyFormats.RequireRead(entityType, Legacy);
+            }
 
             var owners = entityType.GetAnnotations()
                 .Select(annotation => DeclarationCodec.OwnerOf(annotation.Name))
@@ -331,10 +357,10 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
                 foreach (var declaration in ((IDeclarationSource)contributor).Declarations(entityType))
                 {
-                    // Only where the migration leads: a snapshot that holds such a declaration, from
+                    // Only in the consumer's own model: a snapshot that holds such a declaration, from
                     // an earlier version or from 5.x, describes an object that exists, and refusing
-                    // it would leave no way to migrate off it.
-                    if (isTarget && TableOwner(entityType) is { } tableOwner)
+                    // it would leave no way to migrate off it, nor back to it.
+                    if (TableOwner(entityType) is { } tableOwner && IsOwn(model))
                         throw new InvalidOperationException(SchemaKitStrings.DeclaredOnDerivedTypeOfSharedTable(
                             entityType.ShortName(), DeclarationCodec.Describe(declaration), tableOwner.ShortName()));
 
@@ -342,17 +368,18 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                 }
             }
 
-            // What an earlier package wrote, where a migration starts: the snapshot of a project
-            // that moved here still describes its objects in that package's format, and they are
-            // in the database. Read into declarations, they are resolved like any other, so the
-            // model that declares the same objects differs from the snapshot in nothing.
+            // What an earlier package wrote, in a model that is not the consumer's own: the
+            // snapshot of a project that moved here still describes its objects in that package's
+            // format, and they are in the database. Read into declarations, they are resolved like
+            // any other, so the model that declares the same objects differs from the snapshot in
+            // nothing, whichever of the two the diff starts from.
             foreach (var reader in Legacy)
             {
                 if (entityType.FindAnnotation(reader.Annotation) is not { } annotation) continue;
 
                 // Nothing renders the old format from a model, and nothing writes it any more.
-                if (isTarget)
-                    throw new InvalidOperationException(SchemaKitStrings.LegacyAnnotationInTarget(entityType.ShortName(), reader.Annotation));
+                if (IsOwn(model))
+                    throw new InvalidOperationException(SchemaKitStrings.LegacyAnnotationInTheModel(entityType.ShortName(), reader.Annotation));
 
                 var contributor = Registry.Find(reader.Owner)
                                   ?? throw new InvalidOperationException(SchemaKitStrings.NoContributorForOwner(entityType.ShortName(), reader.Owner));

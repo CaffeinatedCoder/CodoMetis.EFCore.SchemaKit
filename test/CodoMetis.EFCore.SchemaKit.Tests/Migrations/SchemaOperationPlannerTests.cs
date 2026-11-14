@@ -410,7 +410,7 @@ public sealed class SchemaOperationPlannerTests
     }
 
     /// <summary>
-    /// The refusal is for where a migration leads, not for where it starts. A snapshot that holds
+    /// The refusal is for the context's own model, not for a snapshot. A snapshot that holds
     /// such a declaration describes an object the database has; with the declaration moved to the
     /// base type the object is the same one, and the migration is empty. Refused on the source
     /// side too, there would be no way off such a snapshot.
@@ -423,6 +423,8 @@ public sealed class SchemaOperationPlannerTests
         using var bare = Context<PlanModels.Bare>();
 
         Assert.AreEqual(0, onBase.GetService<IMigrationsModelDiffer>().GetDifferences(Model(derived), Model(onBase)).Count);
+        // And back: EF Core's Down of that move has the snapshot where the diff ends (#98).
+        Assert.AreEqual(0, onBase.GetService<IMigrationsModelDiffer>().GetDifferences(Model(onBase), Model(derived)).Count);
         // And it can be dropped with its table, as any object of the snapshot can.
         CollectionAssert.Contains(Describe(bare.GetService<IMigrationsModelDiffer>().GetDifferences(Model(derived), Model(bare))), "DROP INDEX ux_animal;");
     }
