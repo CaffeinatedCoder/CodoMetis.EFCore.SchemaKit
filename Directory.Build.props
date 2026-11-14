@@ -21,4 +21,25 @@
     <PropertyGroup>
         <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
     </PropertyGroup>
+
+    <!--
+        What a debugger needs from a published package, as in EFCore.ComplexIndexes.
+
+        Symbols ship as a .snupkg beside each .nupkg; `dotnet nuget push` uploads the pair. Source
+        Link is part of the SDK and stamps the commit into the package and the PDB;
+        EmbedUntrackedSources covers the generated files git does not hold. The repository in the
+        nuspec is RepositoryUrl above. PublishRepositoryUrl is left out on purpose: it would put
+        the clone's `origin` there instead, which is a fork's URL in a fork.
+
+        ContinuousIntegrationBuild is for CI alone. It writes source paths as /_/…, which a
+        published package wants and a laptop does not: there it would break stepping into the
+        working copy. GitHub Actions sets CI=true. PackagingConventionTests reads the packed PDB
+        for both.
+    -->
+    <PropertyGroup>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
 </Project>

@@ -4,6 +4,7 @@
         <TargetFramework>net11.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>CodoMetis.EFCore.SchemaKit</RootNamespace>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageId>CodoMetis.EFCore.SchemaKit</PackageId>
         <Description>Schema objects EF Core 11 has no API for, declared in the model and carried by migrations. The kernel: the host that puts them into every migration path, and the contract other packages contribute through.</Description>
         <!-- CS1591 polices the public surface: the .xml in the package is what a consumer sees. -->
@@ -26,6 +27,19 @@
         <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="11.0.0-rc.3.26522.148" />
     </ItemGroup>
 
+    <!-- The package's own README, which is what nuget.org shows. Its links are absolute: nuget.org
+         resolves none against the repository. -->
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <!--
+        The test assembly sees the internals in the Release build too, and so in the package. The
+        build CI tests is the build that is packed; a condition on the configuration would either
+        stop the Release tests from compiling or ship a binary no test ran against. The assembly
+        is unsigned, so the grant keeps nobody out, and neither would its absence: reflection
+        reads the same internals. Nothing internal is a promise.
+    -->
     <ItemGroup>
         <InternalsVisibleTo Include="CodoMetis.EFCore.SchemaKit.Tests" />
     </ItemGroup>

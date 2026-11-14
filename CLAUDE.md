@@ -42,6 +42,9 @@ dotnet build CodoMetis.EFCore.SchemaKit.slnx
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
 dotnet test test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.csproj
 
+# The pack checks alone (they pack both projects into a temporary folder)
+dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "ClassName~PackagingConventionTests"
+
 # Without the tests that need a server, and those alone (SCHEMAKIT_TEST_PG is an Npgsql connection string)
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "TestCategory!=Integration"
 SCHEMAKIT_TEST_PG="Host=localhost;Username=postgres;Password=…;Database=postgres" dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "TestCategory=Integration"
@@ -404,6 +407,34 @@ what is still missing).
 
 Locally the integration tests go inconclusive without `SCHEMAKIT_TEST_PG`. When `CI` is set they
 fail instead: an unreachable server must not retire them while the build reports green.
+
+## Packaging and the release
+
+`.github/workflows/release.yml`, `Conventions/PackagingConventionTests.cs` (#35 lists what of the
+5.x port is still missing: the SBOMs, `nightly.yml`, the other convention tests).
+
+- **The PostgreSQL package depends on the kernel at exactly its own version,** `[11.0.0-preview.1]`.
+  Pack writes a project reference as a lower bound; the target `ExactKernelVersion` in the
+  package's project file brackets it. It hooks `_GetProjectReferenceVersions`, a name of NuGet's
+  that is no contract, so the test reads the packed `.nuspec` and not the project file.
+- **The pack checks open the `.nupkg`.** They pack every project under `src/` into a temporary
+  folder with its own `bin` and `obj`, under a version no release has (`….packcheck`): the exact
+  pin, a README of its own in each package, license, repository and commit, `net11.0` only, a
+  `.snupkg` whose PDB has Source Link. With `SCHEMAKIT_PACKAGES` set they read that folder
+  instead, which is how the release workflow checks the packages it is about to push.
+- **`InternalsVisibleTo` for the test assemblies stays in the Release build.** What CI tests is
+  what is packed; nothing internal is a promise.
+- **`RepositoryUrl` is stated, `PublishRepositoryUrl` is not set:** it would put the clone's
+  `origin` into the nuspec.
+- **A tag `v*` publishes; `Directory.Build.props` holds the version** and the tag is checked
+  against it. `ci` calls `dotnet.yml`, `verify` packs and runs the pack checks, `publish` is the
+  only job with `id-token: write` and waits for the `nuget` environment's approval, `release`
+  the only one with `contents: write`. `publish` names the events it runs for; do not turn its
+  condition into an exclusion, or an event added to `on:` publishes.
+- **The version needs its section in `CHANGELOG.md`,** `## [x.y.z] — yyyy-mm-dd`: `verify` fails
+  a tag without one, and the section is the GitHub release's notes. A version with a suffix is a
+  prerelease there and never Latest.
+- **Never tag or publish:** a release is the maintainer's to trigger.
 
 ## What counts as correct
 
