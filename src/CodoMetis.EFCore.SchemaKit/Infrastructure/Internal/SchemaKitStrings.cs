@@ -296,4 +296,11 @@ internal static class SchemaKitStrings
     public static string TwoContributorsForOneOwner(string owner, Type first, Type second)
         => $"Two contributors have the owner '{owner}': '{first.FullName}' and '{second.FullName}'. A declaration is " +
            "rendered by the one contributor of its owner; with two, which one rendered would depend on the order of registration.";
+
+    public static string UnreplayedLegacyOperation(string operation, string annotation, string rendered, string issue)
+        => $"The migration holds {operation} with the annotation '{annotation}' of EFCore.ComplexIndexes 5.x. Only that " +
+           $"package's SQL generator read it, and wrote {rendered}. This version of SchemaKit cannot replay the " +
+           "operation, and passed on as it is the migration would apply and build another object, or fail on a name " +
+           "nobody wrote. Apply the migration with EFCore.ComplexIndexes 5.x, or replace the operation in the migration " +
+           $"with migrationBuilder.Sql(…) of the statement 5.x wrote for it. {issue}";
 }

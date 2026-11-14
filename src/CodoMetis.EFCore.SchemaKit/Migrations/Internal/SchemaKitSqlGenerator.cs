@@ -28,8 +28,14 @@ internal interface IMigrationOperationRewriter
 /// The generator every path uses: the rewriters, then the inner generator over the whole list.
 /// </summary>
 /// <remarks>
+/// <para>
 /// It hands the inner generator one list in one call, so the order of operations, transaction
 /// suppression and the script options stay the provider's to honour.
+/// </para>
+/// <para>
+/// An operation that carries an annotation only a 5.x generator rendered, and that no rewriter
+/// took, is refused in between (<see cref="LegacyFormats.RequireRewritten" />).
+/// </para>
 /// </remarks>
 internal sealed class SchemaKitSqlGenerator(
     IServiceProvider services,
@@ -50,6 +56,10 @@ internal sealed class SchemaKitSqlGenerator(
     {
         foreach (var rewriter in Rewriters)
             operations = rewriter.Rewrite(operations, model);
+
+        // After the rewriters, never before: what one of them handled no longer carries its
+        // annotation. What still does would be written by the provider as another object (#110).
+        LegacyFormats.RequireRewritten(operations);
 
         return Inner.Generate(operations, model, options);
     }
