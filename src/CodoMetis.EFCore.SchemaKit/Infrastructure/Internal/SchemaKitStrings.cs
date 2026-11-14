@@ -185,6 +185,13 @@ internal static class SchemaKitStrings
            $"not to the rows of {entity} in it: it would hold among the rows of every type in the table. Declare it on {owner}, " +
            "which says what it does.";
 
+    public static string DeclaredOnTypeWithTablesBelow(string entity, string declaration, IReadOnlyList<string> derived)
+        => $"{entity} declares {declaration}, but is mapped with TPC and its derived types have tables of their own " +
+           $"({string.Join(", ", derived)}). An object belongs to one table: theirs would not get it, and their rows would not be " +
+           "held to it, without an error. This version of SchemaKit does not carry a declaration to every table of a hierarchy " +
+           "(https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118). Declare it on each type that has no " +
+           "derived types, under a name of its own.";
+
     public static string UnknownEpoch(string entity, string declaration, int epoch, int known)
         => $"{declaration} on {entity} was written under the resolution epoch {epoch}; this version of SchemaKit resolves " +
            $"epoch {known}. Resolving it by other rules could describe another object than the database holds. Update the package.";

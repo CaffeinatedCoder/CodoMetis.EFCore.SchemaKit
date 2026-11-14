@@ -2,6 +2,7 @@ using CodoMetis.EFCore.SchemaKit.Contributors.Internal;
 using CodoMetis.EFCore.SchemaKit.Declarations.Internal;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -324,6 +325,18 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         return owner;
     }
 
+    /// <summary>
+    /// The derived types of a TPC hierarchy that have a table of their own, each a copy of the
+    /// entity type's columns. EF Core gives an index declared on such a type to every one of those
+    /// tables, and so a consumer expects of a declaration; this planner resolves one against one
+    /// table. Until it lands a declaration on each (#118), one on such a type is refused. A type
+    /// without derived types has one table, its own, and is declared on as any other.
+    /// </summary>
+    private static List<IReadOnlyEntityType> TablesBelow(IReadOnlyEntityType entityType)
+        => entityType.GetMappingStrategy() == RelationalAnnotationNames.TpcMappingStrategy
+            ? [.. entityType.GetDerivedTypes().Where(derived => StoreObjectIdentifier.Create(derived, StoreObjectType.Table) is not null)]
+            : [];
+
     /// <summary>Every declaration of a model as a descriptor, in the order of its entity types and of their annotation keys.</summary>
     private List<Resolved> Resolve(IRelationalModel? model)
     {
@@ -363,6 +376,13 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                     if (TableOwner(entityType) is { } tableOwner && IsOwn(model))
                         throw new InvalidOperationException(SchemaKitStrings.DeclaredOnDerivedTypeOfSharedTable(
                             entityType.ShortName(), DeclarationCodec.Describe(declaration), tableOwner.ShortName()));
+
+                    // The other way round: a type whose derived types have tables of their own. The
+                    // declaration is resolved against one table, so theirs would get nothing, and
+                    // nothing would say so (#101). Only in the consumer's own model, as above.
+                    if (TablesBelow(entityType) is { Count: > 0 } below && IsOwn(model))
+                        throw new InvalidOperationException(SchemaKitStrings.DeclaredOnTypeWithTablesBelow(
+                            entityType.ShortName(), DeclarationCodec.Describe(declaration), [.. below.Select(type => type.ShortName())]));
 
                     resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
                 }

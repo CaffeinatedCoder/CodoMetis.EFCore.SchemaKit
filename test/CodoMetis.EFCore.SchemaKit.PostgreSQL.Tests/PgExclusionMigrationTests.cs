@@ -431,6 +431,24 @@ public sealed class PgExclusionMigrationTests
             new[] { Extension, Drop, "AlterColumnOperation", Add },
             Contexts.Diff<Models.Scheduling, Models.SchedulingWithAComputedRevocation>().Shape());
 
+    /// <summary>
+    /// Declared on the root of a TPC hierarchy, the constraint reached the root's table alone and
+    /// overlapping stays and holds were accepted (#101). It is refused until a declaration is
+    /// carried to every table (#118); on a type without derived types it is in that type's table.
+    /// </summary>
+    [TestMethod]
+    public void A_constraint_on_a_type_of_TPC_with_derived_tables_is_refused_and_one_on_a_leaf_is_in_its_table()
+    {
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(
+            () => Contexts.Diff<Models.ReservationsInThreeTables, Models.ReservationsInThreeTablesDeclaredOnTheRoot>());
+        StringAssert.Contains(refused.Message, "Reservation declares Pg.Exclusion gist 'ex_reservation', but is mapped with TPC");
+        StringAssert.Contains(refused.Message, "(Hold, Stay)");
+
+        CollectionAssert.AreEqual(
+            new[] { Extension, """ALTER TABLE stays ADD CONSTRAINT ex_stay EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""" },
+            Contexts.Diff<Models.ReservationsInThreeTables, Models.StaysInTheirOwnTableMayNotOverlap>().Shape());
+    }
+
     /// <summary>A constraint is named within its table, so it is the table that is qualified.</summary>
     [TestMethod]
     public void A_drop_names_the_table_with_its_schema()

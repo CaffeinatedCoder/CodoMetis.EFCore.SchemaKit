@@ -32,6 +32,24 @@ public sealed class Dog : Animal
     public string Trick { get; set; } = "";
 }
 
+/// <summary>A hierarchy for TPC: an abstract root, a type with a derived type, and two types without.</summary>
+public abstract class Vehicle
+{
+    public int Id { get; set; }
+    public string Plate { get; set; } = "";
+}
+
+public class Car : Vehicle;
+
+public sealed class Roadster : Car;
+
+public sealed class Truck : Vehicle;
+
+/// <summary>A type between the root and a leaf that has no table: it is abstract.</summary>
+public abstract class Trailer : Vehicle;
+
+public sealed class Caravan : Trailer;
+
 public static class PlanModels
 {
     private static readonly TestGuard.Unique AnimalName = new([new GuardKey("Name")]) { Name = "ux_animal" };
@@ -63,6 +81,65 @@ public static class PlanModels
         {
             modelBuilder.Entity<Animal>().UseTptMappingStrategy();
             modelBuilder.Entity<Dog>().ToTable("Dogs").Metadata.Declare([new TestGuard.Unique([new GuardKey("Trick")]) { Name = "ux_trick" }]);
+        }
+    }
+
+    private static readonly TestGuard.Unique Plate = new([new GuardKey("Plate")]) { Name = "ux_plate" };
+
+    /// <summary>A table for each concrete type; the keys are not generated, which TPC would otherwise warn about on some providers.</summary>
+    private static void Vehicles(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Vehicle>().UseTpcMappingStrategy().Property(v => v.Id).ValueGeneratedNever();
+        modelBuilder.Entity<Car>().ToTable("Cars");
+        modelBuilder.Entity<Roadster>().ToTable("Roadsters");
+        modelBuilder.Entity<Truck>().ToTable("Trucks");
+    }
+
+    public sealed class VehiclesUndeclared : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Vehicles(modelBuilder);
+    }
+
+    /// <summary>Declared on the root of a TPC hierarchy, which has no table of its own here.</summary>
+    public sealed class OnTheRootOfTpc : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Vehicles(modelBuilder);
+            modelBuilder.Entity<Vehicle>().Metadata.Declare([Plate]);
+        }
+    }
+
+    /// <summary>Declared on the root, with an abstract type between it and the one table of the hierarchy.</summary>
+    public sealed class OnTheRootOfTpcAboveAnAbstractType : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Vehicle>().UseTpcMappingStrategy().Property(v => v.Id).ValueGeneratedNever();
+            modelBuilder.Entity<Trailer>();
+            modelBuilder.Entity<Caravan>().ToTable("Caravans");
+            modelBuilder.Entity<Vehicle>().Metadata.Declare([Plate]);
+        }
+    }
+
+    /// <summary>Declared on a type of a TPC hierarchy that has a table and a derived type with another.</summary>
+    public sealed class OnATypeOfTpcWithADerivedType : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Vehicles(modelBuilder);
+            modelBuilder.Entity<Car>().Metadata.Declare([Plate]);
+        }
+    }
+
+    /// <summary>Declared on the types of a TPC hierarchy that have no derived types, on a column they inherit.</summary>
+    public sealed class OnTheLeavesOfTpc : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Vehicles(modelBuilder);
+            modelBuilder.Entity<Roadster>().Metadata.Declare([Plate with { Name = "ux_roadster_plate" }]);
+            modelBuilder.Entity<Truck>().Metadata.Declare([Plate with { Name = "ux_truck_plate" }]);
         }
     }
 
@@ -427,6 +504,63 @@ public sealed class SchemaOperationPlannerTests
         Assert.AreEqual(0, onBase.GetService<IMigrationsModelDiffer>().GetDifferences(Model(onBase), Model(derived)).Count);
         // And it can be dropped with its table, as any object of the snapshot can.
         CollectionAssert.Contains(Describe(bare.GetService<IMigrationsModelDiffer>().GetDifferences(Model(derived), Model(bare))), "DROP INDEX ux_animal;");
+    }
+
+    /// <summary>
+    /// The other way round (#101): a type of a TPC hierarchy whose derived types have tables of
+    /// their own. A declaration is resolved against one table, so the others would get nothing,
+    /// where EF Core gives an index declared there to every table. Refused until a declaration is
+    /// carried to each (#118), for a root without a table as for a type that has one.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_declaration_on_a_type_of_TPC_whose_derived_types_have_tables_is_refused(Provider provider)
+    {
+        using var onTheRoot = Context<PlanModels.OnTheRootOfTpc>(provider);
+        using var inTheMiddle = Context<PlanModels.OnATypeOfTpcWithADerivedType>(provider);
+
+        var root = Assert.ThrowsExactly<InvalidOperationException>(() => onTheRoot.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(onTheRoot)));
+        StringAssert.Contains(root.Message, "Vehicle declares Test.Guard unique 'ux_plate', but is mapped with TPC");
+        // Every derived type with a table, not only the direct ones.
+        StringAssert.Contains(root.Message, "(Car, Truck, Roadster)");
+        StringAssert.Contains(root.Message, "issues/118");
+
+        // A derived type without a table is not one of them: the tables are what would be left out.
+        using var aboveAnAbstractType = Context<PlanModels.OnTheRootOfTpcAboveAnAbstractType>(provider);
+        var above = Assert.ThrowsExactly<InvalidOperationException>(
+            () => aboveAnAbstractType.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(aboveAnAbstractType)));
+        StringAssert.Contains(above.Message, "tables of their own (Caravan)");
+
+        var middle = Assert.ThrowsExactly<InvalidOperationException>(() => inTheMiddle.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(inTheMiddle)));
+        StringAssert.Contains(middle.Message, "Car declares Test.Guard unique 'ux_plate'");
+        StringAssert.Contains(middle.Message, "(Roadster)");
+        Assert.ThrowsExactly<InvalidOperationException>(() => inTheMiddle.GetService<IMigrationsModelDiffer>().HasDifferences(null, Model(inTheMiddle)));
+    }
+
+    /// <summary>A type without derived types has one table, its own, with the columns it inherits in it.</summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void On_the_types_of_TPC_without_derived_types_it_is_declared(Provider provider)
+    {
+        using var context = Context<PlanModels.OnTheLeavesOfTpc>(provider);
+        var statements = Describe(context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+
+        // Each provider delimits in its own way: the name, its table and the inherited column are what counts.
+        Assert.AreEqual(1, statements.Count(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal)
+                                                         && statement.Contains("ux_roadster_plate") && statement.Contains("Roadsters") && statement.Contains("Plate")), string.Join("\n", statements));
+        Assert.AreEqual(1, statements.Count(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal)
+                                                         && statement.Contains("ux_truck_plate") && statement.Contains("Trucks") && statement.Contains("Plate")), string.Join("\n", statements));
+        Assert.AreEqual(2, statements.Count(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal)));
+    }
+
+    /// <summary>The refusal is for the context's own model: a snapshot that holds such a declaration is read, both ways (#98).</summary>
+    [TestMethod]
+    public void A_snapshot_with_a_declaration_on_such_a_type_of_TPC_is_read()
+    {
+        using var snapshot = Context<PlanModels.OnATypeOfTpcWithADerivedType>();
+        using var undeclared = Context<PlanModels.VehiclesUndeclared>();
+        var differ = undeclared.GetService<IMigrationsModelDiffer>();
+
+        CollectionAssert.AreEqual(new[] { "DROP INDEX ux_plate;" }, Describe(differ.GetDifferences(Model(snapshot), Model(undeclared))));
+        Assert.AreEqual(1, Describe(differ.GetDifferences(Model(undeclared), Model(snapshot))).Count(statement => statement.Contains("ux_plate")));
     }
 
     /// <summary>

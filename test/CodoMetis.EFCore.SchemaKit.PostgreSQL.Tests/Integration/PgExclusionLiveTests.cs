@@ -441,6 +441,11 @@ public sealed class PgExclusionLiveTests
     public void Making_the_conditions_column_a_computed_one() => AssertMigratesTo<Models.Scheduling, Models.SchedulingWithAComputedRevocation>(
         (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
 
+    /// <summary>On a type of a TPC hierarchy without derived types the constraint is in that type's table, over the columns it inherits.</summary>
+    [TestMethod]
+    public void A_constraint_on_a_leaf_of_TPC_is_in_its_own_table() => AssertMigratesTo<Models.ReservationsInThreeTables, Models.StaysInTheirOwnTableMayNotOverlap>(
+        (migrated, _) => StringAssert.StartsWith(migrated.Exclusions().Single(), "public.stays | ex_stay"));
+
     /// <summary>The column's drop fails while the constraint is there (2BP01), so the migration applies only with the constraint dropped first.</summary>
     [TestMethod]
     public void Dropping_a_column_only_the_condition_reads() => AssertMigratesTo<Models.Scheduling, Models.WithoutRevocation>();

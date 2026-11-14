@@ -404,6 +404,39 @@ public static class Models
         }
     }
 
+    private static void ReservationsInTablesOfTheirOwn(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Reservation>().UseTpcMappingStrategy().ToTable("reservations");
+        modelBuilder.Entity<Stay>().ToTable("stays");
+        modelBuilder.Entity<Hold>().ToTable("holds");
+    }
+
+    /// <summary>Reservations, stays and holds in a table each (TPC), with nothing declared.</summary>
+    public sealed class ReservationsInThreeTables : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => ReservationsInTablesOfTheirOwn(modelBuilder);
+    }
+
+    /// <summary>The constraint declared on the root of that hierarchy, which has a table, as have its derived types.</summary>
+    public sealed class ReservationsInThreeTablesDeclaredOnTheRoot : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            ReservationsInTablesOfTheirOwn(modelBuilder);
+            modelBuilder.Entity<Reservation>().DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: "ex_reservation")]);
+        }
+    }
+
+    /// <summary>The constraint declared on a type without derived types: no two stays of a room overlap, in the stays' own table.</summary>
+    public sealed class StaysInTheirOwnTableMayNotOverlap : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            ReservationsInTablesOfTheirOwn(modelBuilder);
+            modelBuilder.Entity<Stay>().DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: "ex_stay")]);
+        }
+    }
+
     /// <summary>No two reservations of a room overlap, which is what the constraint in the table does.</summary>
     public sealed class ReservationsMayNotOverlap : ITestModel
     {
