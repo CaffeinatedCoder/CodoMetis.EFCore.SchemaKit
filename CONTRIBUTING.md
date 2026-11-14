@@ -71,8 +71,9 @@ line.
 ## What is not here yet
 
 Most of the convention tests that enforce the above in `EFCore.ComplexIndexes` (changelog form,
-documentation links, workflow gate, release wiring) are not ported yet. Three conventions are held
-by tests already: no EF-internal API in a shipping project, the kernel's public surface, and what
-a packed package carries (`PackagingConventionTests`). The release workflow checks the tag against
-the version and the changelog's section itself. The rest of this page is held by review until the
-port (#35).
+workflow gate, release wiring) are not ported yet. Held by tests already: no EF-internal API in a
+shipping project, the kernel's public surface, what a packed package carries
+(`PackagingConventionTests`), every C# sample of the READMEs and of `docs/` compiled against the
+shipped assemblies (`DocumentationSampleTests`), and every link of those pages
+(`DocumentationLinkTests`). The release workflow checks the tag against the version and the
+changelog's section itself. The rest of this page is held by review until the port (#35).
