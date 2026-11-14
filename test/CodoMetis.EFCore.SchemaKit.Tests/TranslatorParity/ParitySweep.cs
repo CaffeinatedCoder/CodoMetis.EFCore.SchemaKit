@@ -63,6 +63,12 @@ internal static class ParitySweep
         var cases   = ParityCatalogue.Build();
         var lambdas = Compile(cases);
 
+        // The conversions a row exercises are in the tree the compiler built for it.
+        cases = cases.Select((c, i) => lambdas[i] is { } lambda
+                                           ? c with { Constructs = new HashSet<string>(c.Constructs.Concat(ParityCatalogue.ConversionsIn(lambda))) }
+                                           : c)
+                     .ToList();
+
         // ── The package's side: the translator, then the resolver ──
 
         var templates = new Dictionary<int, string>();

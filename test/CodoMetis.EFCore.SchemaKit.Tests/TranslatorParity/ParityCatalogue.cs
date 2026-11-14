@@ -126,6 +126,10 @@ internal static class ParityCatalogue
             atoms.AddRange(Comparisons(value, operands));
         cases.AddRange(atoms);
 
+        // Every conversion the translator leaves out of a template, as the compiler writes it for a
+        // comparison of two types and as a cast, which is the same node.
+        atoms.AddRange(Conversions(operands));
+
         // Negation over each comparison with a constant, which is where null compensation moves.
         foreach (var atom in atoms.Where(a => a.Captures.Length == 0 && !a.Lambda.Contains(" null")))
             cases.Add(Negate(atom));
@@ -164,7 +168,48 @@ internal static class ParityCatalogue
                                     .Concat(LambdaTranslator.ValueOperators.Select(o => $"operator:{o}"))
                                     .Concat(LambdaTranslator.ComparisonOperators.Keys.Select(o => $"operator:{o}"))
                                     .Concat(LambdaTranslator.LogicalOperators.Select(o => $"operator:{o}"))
-                                    .Concat(LambdaTranslator.LiteralTypes.Select(t => $"literal:{t.Name}"));
+                                    .Concat(LambdaTranslator.LiteralTypes.Select(t => $"literal:{t.Name}"))
+                                    .Concat(LambdaTranslator.SilentConversions.Select(c => ConversionKey(c.From, c.To)));
+
+    /// <summary>
+    /// The conversions of <see cref="LambdaTranslator.SilentConversions" /> in a row's tree, of what
+    /// it reads from the entity. Read from the tree the compiler built, not from the row's text:
+    /// which conversion a comparison carries is the compiler's rule, and most rows that have one
+    /// were not written for it (<c>x.Short == (short)5</c> compares two ints).
+    /// </summary>
+    public static IReadOnlySet<string> ConversionsIn(LambdaExpression lambda)
+    {
+        var finder = new ConversionFinder();
+        finder.Visit(lambda.Body);
+        return finder.Found;
+    }
+
+    private sealed class ConversionFinder : ExpressionVisitor
+    {
+        public HashSet<string> Found { get; } = [];
+
+        private bool _parameter;
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            _parameter = true;
+            return node;
+        }
+
+        protected override Expression VisitUnary(UnaryExpression node)
+        {
+            var outer = _parameter;
+            _parameter = false;
+            base.VisitUnary(node);
+
+            var (from, to) = (Underlying(node.Operand.Type), Underlying(node.Type));
+            if (node.NodeType == ExpressionType.Convert && _parameter && LambdaTranslator.SilentConversions.Contains((from, to)))
+                Found.Add(ConversionKey(from, to));
+
+            _parameter |= outer;
+            return node;
+        }
+    }
 
     // ── Operands ──
 
@@ -302,6 +347,35 @@ internal static class ParityCatalogue
                 => new(ParityKind.Filter, "x => " + lambda, captures, Union(constructs, Set(extra)));
         }
     }
+
+    // ── Conversions ──
+
+    // A column of the source type against a column and a sample of the target type, and the cast
+    // written out against both: the compiler widens to the wider side, so the first two carry the
+    // conversion for a pair it promotes to by itself, and the cast carries it for the others
+    // ((short)x.Byte, which it then promotes to int). A char is left to the rows above: it is in
+    // the table for the comparison with a char, and against a number it is no comparison a
+    // database makes.
+    private static IEnumerable<ParityCase> Conversions(IReadOnlyList<Operand> operands)
+    {
+        foreach (var (from, to) in LambdaTranslator.SilentConversions.Where(c => c.From != typeof(char)))
+        foreach (var source in operands.Where(o => Underlying(o.Type) == from && o.Shape is "column" or "nullable"))
+        foreach (var op in LambdaTranslator.ComparisonOperators.Keys)
+        {
+            var constructs = Set($"shape:{source.Shape}", $"operator:{op}");
+            var cast       = $"({Name(to)}{(source.Nullable ? "?" : "")}){source.Path}";
+
+            foreach (var left in new[] { source.Path, cast })
+            {
+                yield return new ParityCase(ParityKind.Filter, $"x => {left} {CSharp(op)} {Sample(to)}", "", constructs);
+
+                foreach (var target in operands.Where(o => Underlying(o.Type) == to && o.Shape is "column" or "nullable"))
+                    yield return new ParityCase(ParityKind.Filter, $"x => {left} {CSharp(op)} {target.Path}", "", constructs);
+            }
+        }
+    }
+
+    public static string ConversionKey(Type from, Type to) => $"conversion:{from.Name}->{to.Name}";
 
     private static ParityCase Negate(ParityCase atom)
         => atom with { Lambda = $"x => !({atom.Lambda["x => ".Length..]})", Constructs = Union(atom.Constructs, Set($"operator:{ExpressionType.Not}")) };

@@ -210,6 +210,17 @@ internal static class SchemaKitStrings
         => $"The expression '{node}' compares an enum. How an enum is stored depends on the property's value conversion, " +
            $"which is not known where the lambda is written: the comparison could be against a number on a text column. {WriteItAsSql}";
 
+    public static string ConversionNotTranslated(System.Linq.Expressions.Expression node, Type from, Type to)
+        => $"The expression '{node}' converts {TypeName(from)} to {TypeName(to)}. A declaration has no spelling for a conversion: " +
+           "it would be left out, and the database would read the value as it is stored, so (int)x.Amount == 2 would hold " +
+           "for 2 alone where the lambda holds for 2.5 too. Left out are only the conversions that keep every value on every " +
+           "database: to and from Nullable<T>, to object or an interface, and from an integer type to a wider one. Compare " +
+           "the property with a value of its own type (x.Amount == 2m, x.Ratio > 0.5f); where the conversion is what is " +
+           $"meant: {WriteItAsSql}";
+
+    private static string TypeName(Type type)
+        => Nullable.GetUnderlyingType(type) is { } underlying ? underlying.Name + "?" : type.Name;
+
     public static string MemberOfScalarNotTranslated(System.Linq.Expressions.Expression member, string name, Type owner)
         => $"The expression '{member}' reads {name} of a {owner.Name}, which is not a property the model maps and has no " +
            $"translation. {WriteItAsSql}";
