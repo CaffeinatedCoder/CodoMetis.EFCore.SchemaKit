@@ -41,9 +41,6 @@ name: Release
 on:
   push:
     tags: [ "v*" ]
-  # TEMPORARY, for one run on the pull request: exercises ci and verify. To be removed before merge.
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
     inputs:
       dry_run:
