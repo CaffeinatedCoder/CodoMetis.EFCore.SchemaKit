@@ -270,7 +270,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   `SchemaValidationException`. Only the context's own model is held to it, wherever it stands:
   a snapshot that holds a collision stays diffable, both ways. Names compare ordinally unless either declaration's `NameComparison` says
   otherwise. A table without a schema of its own carries the model's default schema in the
-  relational model already, so nothing here adds it. The kernel's default
+  relational model already; where the model sets none, the claims are compared under the
+  dialect's `DefaultSchema`, the schema the database puts it in (#100). The kernel's dialect says
+  null and does not guess: a table without a schema then shares a namespace only with another. The kernel's default
   scopes (an index within its table, a constraint within its table) are a guess for a provider
   without a package; SQL Server's, where a constraint is an object of the schema, come with #29.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
@@ -378,6 +380,9 @@ what is still missing).
   contributor. The dialect is registered with `Replace`, since EF Core does not promise which of
   the two extensions is applied first. `AddEntityFrameworkSchemaKitNpgsql()` is the same for a
   caller-owned provider.
+- **A table without a schema is in `public`** (`NpgsqlSchemaDialect.DefaultSchema`, #100), as on a
+  stock database: claims are compared under it, and `NameClaimLiveTests` holds it. A `search_path`
+  that points elsewhere is a database the model does not describe.
 - **The dialect counts an identifier's bytes.** PostgreSQL keeps 63 bytes and cuts the rest off
   without an error. It still delimits through Npgsql's helper, which writes a lower-case name bare:
   `ALTER TABLE role_grants`, not `"role_grants"`.

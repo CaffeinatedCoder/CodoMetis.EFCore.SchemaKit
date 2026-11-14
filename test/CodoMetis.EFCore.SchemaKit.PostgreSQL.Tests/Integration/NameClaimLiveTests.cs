@@ -59,6 +59,36 @@ public sealed class NameClaimLiveTests
         Assert.HasCount(2, database.Exclusions());
     }
 
+    /// <summary>
+    /// A table created without a schema lands in public on a stock database, so its constraint's
+    /// index and an index on a table named public.x are relations of one schema (#100). The
+    /// constraint's table is the unqualified one, as a model without a default schema writes it.
+    /// </summary>
+    [TestMethod]
+    public void The_server_refuses_a_name_taken_in_public_for_a_table_created_without_a_schema()
+    {
+        using var database = new LiveDatabase();
+        database.Execute(Tables);
+        database.Execute("CREATE TABLE public.desks (id int); CREATE INDEX ix_public ON public.desks (id)");
+
+        var refused = Assert.ThrowsExactly<PostgresException>(() => database.Execute(Add("ix_public")));
+
+        Assert.AreEqual(PostgresErrorCodes.DuplicateTable, refused.SqlState);
+    }
+
+    /// <summary>And a name taken in another schema leaves it free there: the reverse of the row above.</summary>
+    [TestMethod]
+    public void The_server_takes_a_name_taken_in_another_schema_for_a_table_created_without_one()
+    {
+        using var database = new LiveDatabase();
+        database.Execute(Tables);
+        database.Execute("CREATE SCHEMA ops; CREATE TABLE ops.desks (id int); CREATE INDEX ix_ops ON ops.desks (id)");
+
+        database.Execute(Add("ix_ops"));
+
+        Assert.HasCount(2, database.Exclusions());
+    }
+
     [TestMethod]
     public void The_server_takes_one_name_in_two_schemas()
     {

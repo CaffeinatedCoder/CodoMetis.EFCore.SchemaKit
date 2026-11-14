@@ -50,7 +50,7 @@ internal static class NameClaims
                 var comparison = first.Comparison == SchemaNameComparison.IgnoreCase || second.Comparison == SchemaNameComparison.IgnoreCase
                     ? StringComparison.OrdinalIgnoreCase
                     : StringComparison.Ordinal;
-                if (!Same(first.Claim, second.Claim, comparison)) continue;
+                if (!Same(first.Claim, second.Claim, comparison, dialect.DefaultSchema)) continue;
 
                 // Two objects that collide in two namespaces, as two exclusion constraints of one
                 // name do, are one finding.
@@ -106,8 +106,10 @@ internal static class NameClaims
     }
 
     // A table without a schema of its own is in the model's default schema, and the relational
-    // model says so already: both sides of a comparison carry it, or neither does.
-    private static bool Same(NameClaim first, NameClaim second, StringComparison comparison)
+    // model says so already. A model without one leaves the schema to the database, and the
+    // dialect says which that is (#100): PostgreSQL's public. A dialect that does not know says
+    // null, and then a table without a schema shares a namespace only with another without one.
+    private static bool Same(NameClaim first, NameClaim second, StringComparison comparison, Identifier? defaultSchema)
     {
         return (first, second) switch
         {
@@ -121,7 +123,7 @@ internal static class NameClaims
         };
 
         bool SameName(Identifier a, Identifier b) => string.Equals(a.Name, b.Name, comparison);
-        bool SameSchema(Identifier? a, Identifier? b) => string.Equals(a?.Name, b?.Name, comparison);
+        bool SameSchema(Identifier? a, Identifier? b) => string.Equals((a ?? defaultSchema)?.Name, (b ?? defaultSchema)?.Name, comparison);
         bool SameTable(TableRef a, TableRef b) => SameSchema(a.Schema, b.Schema) && SameName(a.Name, b.Name);
     }
 
