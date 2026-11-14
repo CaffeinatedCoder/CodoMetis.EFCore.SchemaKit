@@ -26,7 +26,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
-| `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing |
+| `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing. `Mixed/` references the kernel at another version than the PostgreSQL package's, which NuGet builds with NU1608, and must be refused (#113) |
 | `docs/moving-from-complexindexes-5x.md` | The guide for a project coming from 5.x, a first cut that covers `preview.1` (#73) |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
 
@@ -111,6 +111,21 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   reference, and stamps the model (`CodoMetis:SchemaKit`). A declaration API calls
   `SchemaKitModelStamp.Require` first. The stamp lands in snapshots, so its name and value are
   permanent from 11.0.0.
+- **The stamp says the model is wired; which owners can be declared is kept beside the model**
+  (#113). The kernel's `UseSchemaKit()` alone stamps a model and renders nothing, so `Declare` and
+  `Redeclare` also ask for a contributor of the declaration's owner and name the package to
+  register. `AddSchemaContributor` adds a `SchemaContributorRegistration`, a plain value, since no
+  contributor may be resolved while a model is built; the convention puts the owners into a
+  `ConditionalWeakTable` keyed by the model. Not an annotation: it would land in the snapshot and
+  move with the packages a context registers. A snapshot's own declarations are still the
+  planner's to refuse, at diff. A contributor put into the collection without
+  `AddSchemaContributor` cannot be declared for.
+- **`SchemaKitPackages.RequireKernel(assembly)` is the version check** (#113): a package of this
+  repository calls it first in each registration, from a method that calls nothing else of the
+  kernel (the rest is in a `NoInlining` method), since the runtime binds a method's calls when it
+  compiles it. It compares informational versions without the commit; the assembly version is
+  `11.0.0.0` for every preview. Its signature never changes: a version that changed it would fail
+  as the `MissingMethodException` it is there to replace.
 - **`SchemaKitModelDiffer`** asks an internal `ISchemaOperationPlanner` for operations before and
   after the inner differ's and splices them; `HasDifferences` runs the same plan. The host knows
   nothing of declarations or contributors: they arrive behind that planner.

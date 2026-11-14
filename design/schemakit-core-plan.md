@@ -481,7 +481,8 @@ var report = await context.Database.VerifySchemaKitAsync(ct);
 
 ### 3.12 Other providers and SQLite
 
-- A declaration whose owner has no contributor in the active provider is an **error** at diff.
+- A declaration whose owner has no contributor in the active provider is an **error**: where it is
+  written in the context's own model (#113), and at diff in a snapshot.
 - The exception is explicit: `IgnoreDeclarationsOf(SchemaProvider.PostgreSql)` on the options of the
   other provider, logged once. Since the stamp already requires `UseSchemaKit()` on those options,
   a consumer testing on SQLite writes one argument. A warning by default, my first position, would
@@ -614,6 +615,7 @@ Taken by the maintainer on 2026-11-11. "As recommended" means the plan above alr
 | The catalog verifier ([3.11](#311-the-catalog-verifier)) | In 11.0.0, for the PostgreSQL kinds |
 | Identity: no silent replacement ([3.4](#34-declarations-identity-storage)) | Adopted. It repairs a confirmed defect, so it was not put as a choice |
 | The contract: `Plan` and `ImpactOf` mandatory, frozen after an outside contributor ([3.10](#310-the-contributor-contract)) | Adopted, with the freeze at `rc.1` |
+| The name of the kernel's own `UseSchemaKit()` on `DbContextOptionsBuilder`, beside a provider package's (#141, decided 2026-11-14) | It keeps its name, and is neither renamed nor hidden. The guard is the refusal where an object is declared without its package's registration (#113) |
 
 **Surface** (the open questions of `design/schemakit-api.md`, section 16)
 

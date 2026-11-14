@@ -69,6 +69,7 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SchemaDialect",
         "CodoMetis.EFCore.SchemaKit.SchemaDialectDependencies",
         "CodoMetis.EFCore.SchemaKit.SchemaJsonReader",
+        "CodoMetis.EFCore.SchemaKit.SchemaKitPackages",
         "CodoMetis.EFCore.SchemaKit.SchemaJsonWriter",
         "CodoMetis.EFCore.SchemaKit.SchemaNameComparison",
         "CodoMetis.EFCore.SchemaKit.SchemaPlacement",

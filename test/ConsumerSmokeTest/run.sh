@@ -34,7 +34,9 @@
 # test fails without it: no-schemakit (no UseSchemaKit()), kernel-only (the kernel's UseSchemaKit()
 # on the outer builder in place of the provider's), user-differ (the consumer's own
 # IDesignTimeServices registers EF Core's differ). Each must make the run fail. The rows that ask
-# for a refusal set their wiring themselves and keep it.
+# for a refusal set their wiring themselves and keep it. The version check has no switch: it is
+# shown by taking RequireKernel out of the package's UseSchemaKit(), after which the mixed consumer
+# prints REGISTERED.
 set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -169,6 +171,15 @@ else
   echo "    the packages in $feed"
 fi
 
+# A kernel of another version, for the consumer that mixes the two (#113). Higher than the one under
+# test: NuGet refuses a direct reference below a dependency's pin (NU1605) and lets one above it
+# through with a warning. Packed from this checkout in both modes, into a folder of its own, since
+# a feed that was handed in is not written to.
+mixed_version=$version.mixed
+mixed_feed=$work/feed-mixed
+in_dir "$root" pack-mixed-kernel dotnet pack "$root/src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" -c Release -o "$mixed_feed" -p:Version="$mixed_version"
+[[ $code == 0 ]] || fail "pack the kernel as $mixed_version" "dotnet pack failed"
+
 kernel_package=$feed/CodoMetis.EFCore.SchemaKit.$version.nupkg
 pg_package=$feed/CodoMetis.EFCore.SchemaKit.PostgreSQL.$version.nupkg
 [[ -f $kernel_package && -f $pg_package ]] || { log=; fail "the packages" "no $version of both packages in $feed"; }
@@ -193,10 +204,12 @@ cat > "$work/nuget.config" <<EOF
   <packageSources>
     <clear />
     <add key="schemakit" value="$feed" />
+    <add key="schemakit-mixed" value="$mixed_feed" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
     <packageSource key="schemakit"><package pattern="CodoMetis.*" /></packageSource>
+    <packageSource key="schemakit-mixed"><package pattern="CodoMetis.*" /></packageSource>
     <packageSource key="nuget.org"><package pattern="*" /></packageSource>
   </packageSourceMapping>
 </configuration>
@@ -206,6 +219,7 @@ write_props() { # Npgsql's version, once the consumer has restored it
 <Project>
   <PropertyGroup>
     <SchemaKitVersion>$version</SchemaKitVersion>
+    <MixedKernelVersion>$mixed_version</MixedKernelVersion>
     <EfVersion>$ef_version</EfVersion>
     <NpgsqlEfVersion>$npgsql_ef_version</NpgsqlEfVersion>
     <NpgsqlVersion>$1</NpgsqlVersion>
@@ -252,10 +266,23 @@ refused "no UseSchemaKit(): EnsureCreated()" "UseSchemaKit() is not on this cont
 
 export SMOKE_WIRING=kernel
 ef "$app_dir" migrations add KernelOnly
-refused "the kernel's UseSchemaKit() alone: migrations add" "no contributor with that owner is registered" KernelOnly
+refused "the kernel's UseSchemaKit() alone: migrations add" "the registration of CodoMetis.EFCore.SchemaKit.PostgreSQL is not" KernelOnly
 app ensure-created
-refused "the kernel's UseSchemaKit() alone: EnsureCreated()" "no contributor with that owner is registered"
+refused "the kernel's UseSchemaKit() alone: EnsureCreated()" "the registration of CodoMetis.EFCore.SchemaKit.PostgreSQL is not"
 unset SMOKE_WIRING
+
+# The PostgreSQL package beside a kernel of another version. The build's log has to hold NuGet's
+# warning: without it the consumer would have got one kernel after all and the row would test nothing.
+build "$work/Mixed"
+build_log=$log
+in_dir "$work/Mixed" mixed-run dotnet bin/Debug/net11.0/Mixed.dll
+if has "$build_log" NU1608 && [[ $code != 0 ]] \
+    && has "$log" "CodoMetis.EFCore.SchemaKit.PostgreSQL $version is loaded beside CodoMetis.EFCore.SchemaKit $mixed_version" \
+    && lacks "$log" REGISTERED "System.MissingMethodException:"; then
+  ok "a kernel of another version beside the package" "NuGet builds the pair with NU1608; refused: …is loaded beside…"
+else
+  fail "a kernel of another version beside the package" "the pair was not refused with both versions (exit $code; NU1608 in the build: $(has "$build_log" NU1608 && echo yes || echo no))"
+fi
 
 # ---- design time ----------------------------------------------------------------------------------------
 

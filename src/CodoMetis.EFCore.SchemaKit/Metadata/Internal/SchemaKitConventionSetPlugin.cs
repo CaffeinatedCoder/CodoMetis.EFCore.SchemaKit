@@ -1,7 +1,9 @@
 using System.Reflection;
+using CodoMetis.EFCore.SchemaKit.Contributors.Internal;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
@@ -46,7 +48,11 @@ internal sealed class SchemaKitWiringConvention(IServiceProvider services) : IMo
             services.GetService<ICurrentDbContext>()?.Context.GetType().Assembly,
             Assembly.GetEntryAssembly());
 
-        modelBuilder.HasAnnotation(SchemaKitModelStamp.Annotation, SchemaKitModelStamp.Value);
+        // The registrations are plain values: a contributor itself may need the dialect, which reads
+        // the design-time model, and must not be resolved while a model is being built.
+        SchemaKitModelStamp.Stamp(
+            (IMutableModel)modelBuilder.Metadata,
+            services.GetServices<SchemaContributorRegistration>().Select(r => r.Owner));
     }
 
     private void ThrowUnlessOutermost<TService, TOurs>() where TService : notnull

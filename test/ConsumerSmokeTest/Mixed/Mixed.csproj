@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        A consumer that references the kernel directly, at another version than the PostgreSQL
+        package's (#113). The package pins the kernel exactly, and NuGet answers a direct reference
+        that breaks the pin with a warning, NU1608, and the build: the project compiles, and the
+        two assemblies meet at run time. run.sh packs that second kernel and reads the warning
+        from the build's log, so that this row tests the pair NuGet really lets through.
+    -->
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CodoMetis.EFCore.SchemaKit" Version="$(MixedKernelVersion)" />
+        <PackageReference Include="CodoMetis.EFCore.SchemaKit.PostgreSQL" Version="$(SchemaKitVersion)" />
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(NpgsqlEfVersion)" />
+    </ItemGroup>
+
+</Project>
