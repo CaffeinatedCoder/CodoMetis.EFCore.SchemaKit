@@ -47,6 +47,20 @@ public sealed class PgExclusionDeclarationTests
     public void A_lambda_the_translator_has_no_sql_for_fails_at_the_declaration()
         => Assert.ThrowsExactly<NotSupportedException>(() => Pg.Exclusion(Pg.Overlaps(x => x.Period), where: x => x.Note!.Normalize() == "a"));
 
+    /// <summary>
+    /// Issue 103: a cast that can change the value was left out, and the constraint was created
+    /// over other rows than the lambda names. In an element as in the condition.
+    /// </summary>
+    [TestMethod]
+    public void A_cast_that_can_change_the_value_fails_at_the_declaration()
+    {
+        var message = Assert.ThrowsExactly<NotSupportedException>(
+            () => Pg.Exclusion(Pg.Overlaps(x => x.Period), where: x => (short)x.GranteeId == 2)).Message;
+
+        StringAssert.Contains(message, "converts Int32 to Int16.");
+        Assert.ThrowsExactly<NotSupportedException>(() => Pg.Exclusion(Pg.Overlaps(x => x.Period).Equal(x => (short)x.GranteeId)));
+    }
+
     [TestMethod]
     public void An_unchecked_operator_is_any_operator_but_equality()
     {

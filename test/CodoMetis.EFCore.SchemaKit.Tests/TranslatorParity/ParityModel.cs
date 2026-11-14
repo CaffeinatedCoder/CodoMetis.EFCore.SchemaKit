@@ -30,6 +30,11 @@ public sealed class ParityRow
     public Guid     Guid  { get; set; }
     public DateTime Date  { get; set; }
 
+    // The other sources of the conversions the translator leaves out (SilentConversions).
+    public sbyte    SByte  { get; set; }
+    public ushort   UShort { get; set; }
+    public uint     UInt   { get; set; }
+
     public string?   NStr   { get; set; }
     public string?   NStr2  { get; set; }
     public int?      NInt   { get; set; }

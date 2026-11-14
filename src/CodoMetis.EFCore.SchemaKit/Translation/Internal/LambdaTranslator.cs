@@ -114,6 +114,59 @@ internal static class LambdaTranslator
         typeof(uint), typeof(ulong), typeof(ushort), typeof(decimal), typeof(double), typeof(float),
     };
 
+    /// <summary>
+    /// The conversions between two different types that are left out of a template, source to
+    /// target: the ones that keep every value and that every database compares as C# does. The
+    /// compiler writes them without being asked (<c>x.Short == 5</c> arrives as
+    /// <c>Convert(x.Short, Int32) == 5</c>), so refusing one would refuse the comparison. A
+    /// <c>Nullable&lt;T&gt;</c> on either side is looked through, and a conversion to a type the
+    /// source already is (itself, <c>object</c>, an interface) needs no entry:
+    /// <see cref="IsSilentConversion" /> is the whole rule.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not here, and so refused where the lambda is written: everything else. A conversion that can
+    /// change the value was left out all the same, and <c>(int)x.Amount == 2</c> was stored as
+    /// <c>{Amount} = 2</c>, which is false for 2.5 where the lambda is true. That holds for an
+    /// integer to a floating point too (<c>(float)x.Count == 16777216f</c> is true for 16777217),
+    /// and what a database does with the two sides of such a comparison is its own rule, not C#'s.
+    /// An integer to a decimal keeps every value, but how the two then compare is the database's
+    /// typing of a decimal; it is refused with the rest until a provider says how it writes one.
+    /// </para>
+    /// <para>
+    /// <c>char</c> to <c>int</c> is no widening the database knows of. It is here because C#
+    /// compares chars as ints, so every comparison of a char column carries it, and the comparison
+    /// puts the constant back to the char it was written as (<see cref="VisitOperands" />).
+    /// </para>
+    /// </remarks>
+    internal static readonly IReadOnlySet<(Type From, Type To)> SilentConversions = new HashSet<(Type, Type)>
+    {
+        (typeof(sbyte), typeof(short)), (typeof(sbyte), typeof(int)), (typeof(sbyte), typeof(long)),
+        (typeof(short), typeof(int)), (typeof(short), typeof(long)),
+        (typeof(int), typeof(long)),
+
+        (typeof(byte), typeof(short)), (typeof(byte), typeof(ushort)), (typeof(byte), typeof(int)),
+        (typeof(byte), typeof(uint)), (typeof(byte), typeof(long)), (typeof(byte), typeof(ulong)),
+        (typeof(ushort), typeof(int)), (typeof(ushort), typeof(uint)), (typeof(ushort), typeof(long)), (typeof(ushort), typeof(ulong)),
+        (typeof(uint), typeof(long)), (typeof(uint), typeof(ulong)),
+
+        (typeof(char), typeof(int)),
+    };
+
+    /// <summary>
+    /// Whether a conversion of what a lambda reads from the entity is left out of the template: one
+    /// to the type itself or its <c>Nullable&lt;T&gt;</c> (and back, which is <c>.Value</c>), to a
+    /// type the source already is, or one of <see cref="SilentConversions" />. Decided from the two
+    /// types alone.
+    /// </summary>
+    internal static bool IsSilentConversion(Type from, Type to)
+    {
+        var source = Nullable.GetUnderlyingType(from) ?? from;
+        var target = Nullable.GetUnderlyingType(to) ?? to;
+
+        return source == target || to.IsAssignableFrom(from) || target.IsAssignableFrom(source) || SilentConversions.Contains((source, target));
+    }
+
     private static MethodInfo StringMethod(string name, params Type[] parameters)
         => typeof(string).GetMethod(name, parameters)
         ?? throw new InvalidOperationException($"string.{name}({string.Join(", ", parameters.Select(p => p.Name))}) does not exist.");
@@ -138,7 +191,9 @@ internal static class LambdaTranslator
     public static string Expression(LambdaExpression lambda)
     {
         ArgumentNullException.ThrowIfNull(lambda);
-        return Visit(lambda.Body, Root(lambda));
+        var root = Root(lambda);
+        new ConversionCheck(root).Visit(lambda.Body);
+        return Visit(lambda.Body, root);
     }
 
     // The entity being configured is the one parameter. A lambda over two has no single table.
@@ -153,7 +208,44 @@ internal static class LambdaTranslator
     public static string Predicate(LambdaExpression lambda)
     {
         ArgumentNullException.ThrowIfNull(lambda);
-        return VisitPredicate(lambda.Body, Root(lambda), negated: false);
+        var root = Root(lambda);
+        new ConversionCheck(root).Visit(lambda.Body);
+        return VisitPredicate(lambda.Body, root, negated: false);
+    }
+
+    // The dispatch below takes a conversion off wherever it meets one, in the operand of a
+    // comparison, in a null test, in a concatenation, and writes what is under it. That is right
+    // only for a conversion that keeps the value, so every conversion of what the lambda reads from
+    // the entity is held against the table first, in one pass over the whole lambda: a place that
+    // strips one cannot be the place that forgot to ask. A conversion of a value alone (a captured
+    // variable, a constant) is not asked about: C# does it, and the result is written.
+    private sealed class ConversionCheck(ParameterExpression root) : ExpressionVisitor
+    {
+        public override System.Linq.Expressions.Expression? Visit(System.Linq.Expressions.Expression? node)
+            => node is null || !DependsOnParameter(node, root) ? node : base.Visit(node);
+
+        // A comparison of an enum keeps its own refusal: the compiler converts the enum to its
+        // number first, and the reason that says why is the enum's, not the conversion's.
+        protected override System.Linq.Expressions.Expression VisitBinary(BinaryExpression node)
+        {
+            if (ComparisonOperators.ContainsKey(node.NodeType))
+            {
+                RefuseEnum(node.Left);
+                RefuseEnum(node.Right);
+            }
+
+            // `x.Score ?? x.Price` converts its left side in a lambda of its own, over a parameter
+            // that is not the entity: it reads the entity all the same.
+            if (node.Conversion is { } conversion)
+                new ConversionCheck(conversion.Parameters[0]).Visit(conversion.Body);
+
+            return base.VisitBinary(node);
+        }
+
+        protected override System.Linq.Expressions.Expression VisitUnary(UnaryExpression node)
+            => node.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked && !IsSilentConversion(node.Operand.Type, node.Type)
+                   ? throw new NotSupportedException(SchemaKitStrings.ConversionNotTranslated(node, node.Operand.Type, node.Type))
+                   : base.VisitUnary(node);
     }
 
     // C# compares with two-valued logic: `x.Kind != "a"` is true for a null Kind. SQL's `<>` is
@@ -256,14 +348,18 @@ internal static class LambdaTranslator
     // text column and fail at apply time. Refuse it here, at the declaration.
     private static string VisitOperand(System.Linq.Expressions.Expression node, ParameterExpression root)
     {
+        RefuseEnum(node);
+        return Visit(node, root);
+    }
+
+    private static void RefuseEnum(System.Linq.Expressions.Expression node)
+    {
         var stripped = node;
         while (stripped is UnaryExpression { NodeType: ExpressionType.Convert } convert)
             stripped = convert.Operand;
 
         if ((Nullable.GetUnderlyingType(stripped.Type) ?? stripped.Type).IsEnum)
             throw new NotSupportedException(SchemaKitStrings.EnumNotTranslated(node));
-
-        return Visit(node, root);
     }
 
     // C# compares chars as ints: x.Grade == 'A' arrives as Convert(x.Grade) == 65, and the constant
@@ -287,7 +383,7 @@ internal static class LambdaTranslator
         && (Nullable.GetUnderlyingType(convert.Operand.Type) ?? convert.Operand.Type) == typeof(char);
 
     private static char? CharCode(System.Linq.Expressions.Expression node, ParameterExpression root)
-        => !DependsOnParameter(node, root) && !IsConvertedChar(node) && Evaluate(node) is int code ? (char)code : null;
+        => !DependsOnParameter(node, root) && Evaluate(node) is int code ? (char)code : null;
 
     private static bool IsHasValue(System.Linq.Expressions.Expression node, ParameterExpression root)
         => node is MemberExpression { Member.Name: nameof(Nullable<int>.HasValue), Expression: { } target }
@@ -461,7 +557,10 @@ internal static class LambdaTranslator
     {
         switch (node)
         {
-            case UnaryExpression { NodeType: ExpressionType.Convert } convert:
+            // Of what the lambda reads from the entity, and so one of SilentConversions: the check
+            // in front of the dispatch refused every other. A conversion of a value alone is C#'s
+            // to do, below: (int)limit with a limit of 2.5 is 2, and was written as 2.5.
+            case UnaryExpression { NodeType: ExpressionType.Convert } convert when DependsOnParameter(convert, root):
                 return Visit(convert.Operand, root);
 
             case MemberExpression { Expression: { } target } member

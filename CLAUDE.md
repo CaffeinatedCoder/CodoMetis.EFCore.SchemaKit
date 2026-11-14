@@ -300,8 +300,18 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
 - **A comparison that can be NULL is written as EF Core writes it.** `x.Tag != "blocked"` keeps the
   rows whose tag is null, as C# does; a negation over such a comparison is pushed down to it.
 - **The accepted constructs are data** (`StringMethods`, `ValueMembers`, the operator sets,
-  `LiteralTypes`). Add a construct to a table, not only to the dispatch: the sweep and the analyzer
-  read the tables.
+  `LiteralTypes`, `SilentConversions`). Add a construct to a table, not only to the dispatch: the
+  sweep and the analyzer read the tables.
+- **A conversion is left out of a template only when it keeps every value on every database**
+  (#103): to and from `Nullable<T>`, to a type the source already is, and the pairs of
+  `SilentConversions`, which are the widenings between integer types and `char` to `int` (C#
+  compares chars as ints). Every other conversion of what the lambda reads from the entity is
+  refused, the ones the compiler adds unasked included (`x.Count > 2.5` converts an `int` to a
+  `double`): `(int)x.Amount == 2` was stored as `{Amount} = 2`. One pass over the whole lambda
+  asks, ahead of the dispatch, because the dispatch takes a conversion off in eight places. A
+  conversion of a captured value is C#'s to do, and its result is written. Nothing renders a cast
+  yet (#112, #114): a row added to the table is a claim about every provider, and a widening EF
+  Core writes as a cast is waived in the sweep until then (#125).
 - **The parity sweep is what says a template is right** (`test/…/TranslatorParity`, ported from
   5.x). It reads the tables, crosses every construct with every operand shape, compiles the rows
   with Roslyn and compares the translator and the resolver with EF Core's `ToQueryString()`, both
