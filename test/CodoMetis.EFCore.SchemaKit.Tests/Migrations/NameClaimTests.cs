@@ -57,6 +57,21 @@ public static class ClaimModels
         }
     }
 
+    /// <summary>
+    /// A table without a schema, in a model without a default schema, and one in a schema that
+    /// one database or another puts such a table in. Only a provider's dialect knows which (#100).
+    /// </summary>
+    public sealed class WithoutASchemaAndInOne : IPlanModel
+    {
+        public const string Schema = "public";
+
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Animal>().Metadata.Declare([Unique("Thing")]);
+            modelBuilder.Entity<Thing>().ToTable("Thing", Schema);
+        }
+    }
+
     /// <summary>A trigger and an index are named in two namespaces.</summary>
     public sealed class ATriggerAndAnIndexOfOneName : IPlanModel
     {
@@ -137,6 +152,23 @@ public sealed class NameClaimTests
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
     public void An_object_named_like_a_table_of_EF_Cores_is_refused(Provider provider)
         => Assert.AreEqual("the table 'Thing'", TheCollision<ClaimModels.LikeATable>(provider).Second);
+
+    /// <summary>
+    /// Which schema a table without one is in is the database's, and a provider without a package
+    /// has no dialect to say it: the kernel does not guess (#100). The same name in a named schema
+    /// and in none is two names here, and a provider's package says otherwise where it knows.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer)]
+    public void Without_a_providers_rule_a_table_without_a_schema_is_in_no_named_one(Provider provider)
+        => Assert.AreEqual(1, Create<ClaimModels.WithoutASchemaAndInOne>(provider).Count(statement => statement.Contains("UNIQUE INDEX")));
+
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void The_kernels_dialect_knows_no_default_schema(Provider provider)
+    {
+        using var context = SchemaOperationPlannerTests.Context<LegacyModels.Undeclared>(provider);
+
+        Assert.IsNull(context.GetService<ISchemaDialect>().DefaultSchema);
+    }
 
     [TestMethod]
     public void Names_that_differ_in_case_are_two_names()

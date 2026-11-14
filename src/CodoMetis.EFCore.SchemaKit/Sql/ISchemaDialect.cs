@@ -59,6 +59,20 @@ public interface ISchemaDialect
     /// <param name="table">The table it belongs to; for a table or a sequence, the object itself.</param>
     /// <param name="name">Its name.</param>
     IEnumerable<NameClaim> Claims(SchemaModelObject kind, TableRef table, Identifier name);
+
+    /// <summary>
+    /// The schema the database puts an object in when its statement names none, or null when the
+    /// dialect does not know it. A name claimed by a table without a schema is compared under it
+    /// with one in that schema.
+    /// </summary>
+    /// <remarks>
+    /// A model's own default schema is in the relational model already: a table without a schema
+    /// is in the model's default schema when the model sets one, and only otherwise in this one.
+    /// The answer is the database's as it is created, not as a session may be set up: where
+    /// PostgreSQL's <c>search_path</c> points elsewhere, the database is one the model does not
+    /// describe, and its tables are not where the model says they are.
+    /// </remarks>
+    Identifier? DefaultSchema { get; }
 }
 
 /// <summary>The objects of a model that EF Core creates itself and that take a name.</summary>
@@ -204,6 +218,14 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
             _                                                     => [new NameClaim.Constraint(table, name)],
         };
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Null here: which schema a provider without a package puts an unqualified table in is not
+    /// the kernel's to guess. A table without a schema then shares a namespace only with another
+    /// table without one.
+    /// </remarks>
+    public virtual Identifier? DefaultSchema => null;
 
     [GeneratedRegex("^[a-z_][a-z0-9_$]*$")]
     private static partial Regex BareName();

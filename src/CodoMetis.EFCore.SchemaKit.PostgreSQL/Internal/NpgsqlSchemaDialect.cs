@@ -28,6 +28,12 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
 
     protected override int Measure(string name) => Encoding.UTF8.GetByteCount(name);
 
+    // A table without a schema, in a model without a default schema, is created where the
+    // search_path's first schema is, which on a stock database is public. A search_path that
+    // points elsewhere makes a database the model does not describe: its ToTable("x", "public")
+    // and its ToTable("x") are then two tables, where the model says one schema (#100).
+    public override Identifier? DefaultSchema => field ??= Identifier("public");
+
     public override void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql)
     {
         ArgumentNullException.ThrowIfNull(extension);

@@ -72,7 +72,7 @@ public readonly struct PgSchema<TEntity>
         ArgumentNullException.ThrowIfNull(elements);
         return new PgExclusion.Gist(elements.Elements)
         {
-            Where = where is null ? null : Predicate.Of(where),
+            Where = where is null ? null : Predicate.Of(where, SqlSpelling.PostgreSql),
             Deferral = deferral ?? Deferral.NotDeferrable,
             Name = name,
         };
@@ -87,6 +87,22 @@ public static class PgSchema
     public static PgSchema<TEntity> For<TEntity>()
         where TEntity : class
         => default;
+
+    /// <summary>
+    /// A condition as a value, spelled for PostgreSQL where it is written: for one that several
+    /// declarations share, or that a convention adds to each of them with <c>AndWhere</c>.
+    /// </summary>
+    /// <remarks>
+    /// <typeparamref name="TEntity" /> may be an interface, so that one condition serves every
+    /// entity type that implements it. Its paths are resolved against each entity type it is
+    /// declared on. A comparison that can be NULL is written as EF Core writes it in a query, so
+    /// the condition keeps the rows C# keeps.
+    /// </remarks>
+    /// <param name="condition">The condition.</param>
+    /// <typeparam name="TEntity">The entity type, or an interface of it.</typeparam>
+    /// <exception cref="NotSupportedException">The lambda holds something the translator has no SQL for.</exception>
+    public static Predicate Where<TEntity>(Expression<Func<TEntity, bool>> condition)
+        => Predicate.Of(condition, SqlSpelling.PostgreSql);
 }
 
 /// <summary>
@@ -184,7 +200,7 @@ public sealed class ExclusionElements<TEntity>
 internal static class Exclusions
 {
     public static ExclusionElement Element(LambdaExpression key, ExclusionOperator @operator)
-        => new(KeyTarget.Of(key), @operator);
+        => new(KeyTarget.Of(key, SqlSpelling.PostgreSql), @operator);
 
     /// <summary>
     /// The unchecked form must still leave the stage honest: with <c>=</c> it would turn a draft of

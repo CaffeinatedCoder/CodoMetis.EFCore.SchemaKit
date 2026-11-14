@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using CodoMetis.EFCore.SchemaKit.Translation.Internal;
 
@@ -5,7 +6,9 @@ namespace CodoMetis.EFCore.SchemaKit;
 
 // What a declaration is made of before anything is resolved: the two values every provider's
 // declarations share. They are what a consumer writes and what the read model hands back, so
-// unlike the contributor contract they are not marked experimental.
+// unlike the contributor contract they are not marked experimental. The two methods that make
+// one from a lambda are the contract's: the SQL they write is one provider's, so they are handed
+// that provider's spelling, by its package (#132).
 
 /// <summary>
 /// What a key of an index or an element of a constraint is built from: a property path, which is
@@ -31,6 +34,10 @@ public closed record KeyTarget
     }
 
     /// <summary>An expression: SQL in which each <c>{Path}</c> stands for that path's column.</summary>
+    /// <remarks>
+    /// The SQL is one provider's, as its queries spell it, and this is its stored form in this
+    /// preview. The form is not final before 11.0.0.
+    /// </remarks>
     /// <param name="Sql">The SQL, with its placeholders.</param>
     public sealed record Template(string Sql) : KeyTarget
     {
@@ -47,11 +54,18 @@ public closed record KeyTarget
     /// and nothing else is a <see cref="Column" />; anything else the translator accepts is a
     /// <see cref="Template" />.
     /// </summary>
+    /// <remarks>
+    /// For a provider's package, which passes its own spelling. A consumer writes the lambda into
+    /// the provider's factory.
+    /// </remarks>
     /// <param name="key">The lambda, with the entity as its one parameter.</param>
+    /// <param name="spelling">The spelling of the provider the declaration is for.</param>
     /// <exception cref="NotSupportedException">The lambda holds something the translator has no SQL for.</exception>
-    public static KeyTarget Of(LambdaExpression key)
+    [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+    public static KeyTarget Of(LambdaExpression key, SqlSpelling spelling)
     {
         ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(spelling);
         var template = LambdaTranslator.Expression(key);
 
         // The translator writes a property as one placeholder and nothing around it. Anything it
@@ -73,6 +87,10 @@ public closed record KeyTarget
 /// The condition of a partial index or a constraint, as it is stored: SQL in which each
 /// <c>{Path}</c> stands for that path's column.
 /// </summary>
+/// <remarks>
+/// The SQL is one provider's, as its queries spell it, and this is its stored form in this
+/// preview. The form is not final before 11.0.0.
+/// </remarks>
 /// <param name="Template">The SQL, with its placeholders.</param>
 public sealed record Predicate(string Template)
 {
@@ -95,16 +113,25 @@ public sealed record Predicate(string Template)
     /// as EF Core writes it in a query, so the condition keeps the rows C# keeps.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// For a provider's package, which passes its own spelling. A consumer writes the condition
+    /// into the provider's factory.
+    /// </para>
+    /// <para>
     /// <typeparamref name="TEntity" /> may be an interface, so that one predicate serves a
     /// convention over every entity type that implements it. Its paths are resolved against each
     /// entity type it is declared on.
+    /// </para>
     /// </remarks>
     /// <param name="predicate">The condition.</param>
+    /// <param name="spelling">The spelling of the provider the declaration is for.</param>
     /// <typeparam name="TEntity">The entity type, or an interface of it.</typeparam>
     /// <exception cref="NotSupportedException">The lambda holds something the translator has no SQL for.</exception>
-    public static Predicate Of<TEntity>(Expression<Func<TEntity, bool>> predicate)
+    [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+    public static Predicate Of<TEntity>(Expression<Func<TEntity, bool>> predicate, SqlSpelling spelling)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        ArgumentNullException.ThrowIfNull(spelling);
         return new Predicate(LambdaTranslator.Predicate(predicate));
     }
 

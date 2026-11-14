@@ -27,6 +27,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
 | `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing |
+| `docs/moving-from-complexindexes-5x.md` | The guide for a project coming from 5.x, a first cut that covers `preview.1` (#73) |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
 
 The prototype is not the implementation. It has defects the plan lists on purpose (sections 3.4,
@@ -195,7 +196,13 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   union holds text only, so it exposes nothing of the marked contract.
 - **`KeyTarget`, `Predicate` and `ValueList<T>` are what a declaration is made of, and carry no
   experimental mark:** a consumer writes them and reads them back. `KeyTarget.Of` and
-  `Predicate.Of` are the translator's only public entry points. A lambda that is one property is a
+  `Predicate.Of` are the translator's only public entry points, **and they are the contract's,
+  marked on the method** (#132): a lambda becomes one provider's SQL, so they take that provider's
+  `SqlSpelling`, which its package passes. A consumer writes a lambda into the provider's factory
+  (`pg.Equal(…)`, `where:`, `PgSchema.Where<T>(…)` for a condition several types share) and never
+  names a spelling. The kernel holds one spelling for now, PostgreSQL's; the tables move to the
+  provider's package with #114. `PublicSurfaceTests` holds that nothing public in the kernel
+  takes a lambda without a spelling. A lambda that is one property is a
   `Column`, anything else a `Template`; the two are rendered and named differently.
   `Predicate.And` takes for a conjunct only what it wrote itself, `(…) AND (other)` with the
   first parenthesis closing right before the `AND`: a hand-written `{A} OR {B} AND ({C})` ends the
@@ -274,7 +281,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   `SchemaValidationException`. Only the context's own model is held to it, wherever it stands:
   a snapshot that holds a collision stays diffable, both ways. Names compare ordinally unless either declaration's `NameComparison` says
   otherwise. A table without a schema of its own carries the model's default schema in the
-  relational model already, so nothing here adds it. The kernel's default
+  relational model already; where the model sets none, the claims are compared under the
+  dialect's `DefaultSchema`, the schema the database puts it in (#100). The kernel's dialect says
+  null and does not guess: a table without a schema then shares a namespace only with another. The kernel's default
   scopes (an index within its table, a constraint within its table) are a guess for a provider
   without a package; SQL Server's, where a constraint is an object of the schema, come with #29.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
@@ -382,6 +391,9 @@ what is still missing).
   contributor. The dialect is registered with `Replace`, since EF Core does not promise which of
   the two extensions is applied first. `AddEntityFrameworkSchemaKitNpgsql()` is the same for a
   caller-owned provider.
+- **A table without a schema is in `public`** (`NpgsqlSchemaDialect.DefaultSchema`, #100), as on a
+  stock database: claims are compared under it, and `NameClaimLiveTests` holds it. A `search_path`
+  that points elsewhere is a database the model does not describe.
 - **The dialect counts an identifier's bytes.** PostgreSQL keeps 63 bytes and cuts the rest off
   without an error. It still delimits through Npgsql's helper, which writes a lower-case name bare:
   `ALTER TABLE role_grants`, not `"role_grants"`.
@@ -464,6 +476,23 @@ fail instead: an unreachable server must not retire them while the build reports
   a tag without one, and the section is the GitHub release's notes. A version with a suffix is a
   prerelease there and never Latest.
 - **Never tag or publish:** a release is the maintainer's to trigger.
+
+## The documentation
+
+`README.md`, `docs/moving-from-complexindexes-5x.md` (#73), `CHANGELOG.md` and a README per package
+under `src/*/README.md`, which is what nuget.org shows. Held by
+`test/…PostgreSQL.Tests/Documentation`:
+
+- **Every ` ```csharp ` block compiles against the shipped assemblies with nothing suppressed.** A
+  block with a type declaration is a file of its own; any other is statements, compiled in a method
+  that has `modelBuilder`, `options`, `services` and `connectionString`, beside the entity types the
+  samples name. Both are in the test, so a sample's surroundings are visible. 5.x code is fenced
+  ` ```csharp 5.x ` and is not compiled; any other marker fails.
+- **Every link resolves:** a relative one to a file and a heading that exist, an absolute one to
+  this repository's `blob/main` or `tree/main` the same way. A package README has absolute links
+  only, since nuget.org resolves no relative one.
+- **Write only what is measured.** A statement about what a migration does names the test that
+  shows it, or is left out.
 
 ## What counts as correct
 

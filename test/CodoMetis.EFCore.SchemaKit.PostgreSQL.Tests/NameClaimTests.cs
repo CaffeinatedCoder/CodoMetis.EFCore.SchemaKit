@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests;
 
@@ -120,6 +121,29 @@ public static class ClaimModels
             modelBuilder.HasDefaultSchema("app");
             Grants(modelBuilder).DeclarePostgres(_ => [Named("ix_shared")]);
             modelBuilder.Entity<Booking>().ToTable("bookings", "app").HasIndex(x => x.RoomId).HasDatabaseName("ix_shared");
+        }
+    }
+
+    /// <summary>
+    /// The model sets no default schema: the constraint's table is where the server puts a table
+    /// without one, which is public, and the index is in public by name (#100).
+    /// </summary>
+    public sealed class WithoutASchemaAndInPublic : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Grants(modelBuilder).DeclarePostgres(_ => [Named("ix_shared")]);
+            modelBuilder.Entity<Booking>().ToTable("bookings", "public").HasIndex(x => x.RoomId).HasDatabaseName("ix_shared");
+        }
+    }
+
+    /// <summary>The same, with the index in a schema of its own: two relations of two schemas.</summary>
+    public sealed class WithoutASchemaAndInAnother : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Grants(modelBuilder).DeclarePostgres(_ => [Named("ix_shared")]);
+            modelBuilder.Entity<Booking>().ToTable("bookings", "ops").HasIndex(x => x.RoomId).HasDatabaseName("ix_shared");
         }
     }
 
@@ -264,6 +288,34 @@ public sealed class NameClaimTests
 
         Assert.AreEqual("the relations of schema 'app' (tables, indexes, sequences, and the indexes behind constraints)", collision.Namespace);
         Assert.AreEqual("the index 'ix_shared' on 'app.bookings'", collision.Second);
+    }
+
+    /// <summary>A model without a default schema leaves a table without one to the server, which puts it in public (#100).</summary>
+    [TestMethod]
+    public void A_table_without_a_schema_is_in_public_when_the_model_sets_none()
+    {
+        var collision = TheCollision<ClaimModels.WithoutASchemaAndInPublic>();
+
+        Assert.AreEqual("ix_shared", collision.Name);
+        Assert.AreEqual("Pg.Exclusion gist 'ix_shared' on RoleGrant", collision.First);
+        Assert.AreEqual("the index 'ix_shared' on 'public.bookings'", collision.Second);
+    }
+
+    [TestMethod]
+    public void A_table_without_a_schema_is_not_in_another_named_one()
+    {
+        var operations = Contexts.Diff<Models.Bare, ClaimModels.WithoutASchemaAndInAnother>();
+
+        Assert.HasCount(1, operations.Sql().Where(sql => sql.Contains("EXCLUDE")).ToList());
+        Assert.HasCount(1, operations.OfType<CreateIndexOperation>().ToList());
+    }
+
+    [TestMethod]
+    public void The_dialect_puts_a_table_without_a_schema_in_public()
+    {
+        using var context = Contexts.Of<Models.Bare>();
+
+        Assert.AreEqual("public", context.GetService<ISchemaDialect>().DefaultSchema?.Name);
     }
 
     /// <summary>A constraint is named within its table: its name is written without the schema, wherever the table is (#84).</summary>
