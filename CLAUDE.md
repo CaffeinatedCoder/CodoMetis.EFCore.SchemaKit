@@ -191,7 +191,13 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   union holds text only, so it exposes nothing of the marked contract.
 - **`KeyTarget`, `Predicate` and `ValueList<T>` are what a declaration is made of, and carry no
   experimental mark:** a consumer writes them and reads them back. `KeyTarget.Of` and
-  `Predicate.Of` are the translator's only public entry points. A lambda that is one property is a
+  `Predicate.Of` are the translator's only public entry points, **and they are the contract's,
+  marked on the method** (#132): a lambda becomes one provider's SQL, so they take that provider's
+  `SqlSpelling`, which its package passes. A consumer writes a lambda into the provider's factory
+  (`pg.Equal(…)`, `where:`, `PgSchema.Where<T>(…)` for a condition several types share) and never
+  names a spelling. The kernel holds one spelling for now, PostgreSQL's; the tables move to the
+  provider's package with #114. `PublicSurfaceTests` holds that nothing public in the kernel
+  takes a lambda without a spelling. A lambda that is one property is a
   `Column`, anything else a `Template`; the two are rendered and named differently.
   `Predicate.And` takes for a conjunct only what it wrote itself, `(…) AND (other)` with the
   first parenthesis closing right before the `AND`: a hand-written `{A} OR {B} AND ({C})` ends the

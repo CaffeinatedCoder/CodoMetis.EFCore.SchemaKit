@@ -57,7 +57,7 @@ public sealed class ConsumerCompileTests
                     pg.Exclusion(pg.Overlaps(x => x.Period).WithUncheckedOperator(x => x.GranteeId, "<>"), where: x => x.RevokedOn == null),
                 ]);
 
-                var notRevoked = Predicate.Of<IWithdrawable>(x => x.RevokedOn == null);
+                var notRevoked = PgSchema.Where<IWithdrawable>(x => x.RevokedOn == null);
 
                 foreach (var entity in modelBuilder.Model.GetEntityTypes().Where(e => e.ClrType.IsAssignableTo(typeof(IWithdrawable))))
                 {
@@ -94,6 +94,14 @@ public sealed class ConsumerCompileTests
         public static class Contributor
         {
             public static void Apply(ModelBuilder modelBuilder) => modelBuilder.Entity<Grant>().Metadata.Declare([Grants.NoOverlap]);
+        }
+        """;
+
+    /// <summary>What only a provider's package does: having a lambda spelled through the kernel's own factories.</summary>
+    private const string CallsTheKernelsFactories = """
+        public static class Spelled
+        {
+            public static readonly Predicate NotRevoked = Predicate.Of<IWithdrawable>(x => x.RevokedOn == null, SqlSpelling.PostgreSql);
         }
         """;
 
@@ -138,5 +146,19 @@ public sealed class ConsumerCompileTests
 
         Assert.AreEqual(1, diagnostics.Count, string.Join("\n", diagnostics));
         Assert.AreEqual("SK9001", diagnostics[0].Id);
+    }
+
+    /// <summary>
+    /// A lambda is spelled for one provider, by that provider's package (#132). A consumer who
+    /// reaches for the kernel's factory is told so by the compiler, twice: for the method and for
+    /// the spelling it has to name. The provider's own factory, in the first test, asks nothing.
+    /// </summary>
+    [TestMethod]
+    public void The_kernels_lambda_factories_ask_for_the_opt_in()
+    {
+        var diagnostics = Compile(Model, "using CodoMetis.EFCore.SchemaKit;\n" + CallsTheKernelsFactories);
+
+        Assert.IsTrue(diagnostics.Count >= 2, string.Join("\n", diagnostics));
+        Assert.IsTrue(diagnostics.All(d => d.Id == "SK9001"), string.Join("\n", diagnostics));
     }
 }
