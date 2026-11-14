@@ -1,5 +1,6 @@
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
 namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 
@@ -19,7 +20,8 @@ namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 /// <para>
 /// Not on it, since they declare nothing: <c>CustomIndex:RenderingVersion</c> and
 /// <c>CustomTemporal:SuppressAutoExtension</c> on the model, the properties that describe a
-/// property-level index beside its <c>IsIndexed</c>, and what 5.x stamped on operations.
+/// property-level index beside its <c>IsIndexed</c>, and what 5.x stamped on operations, which
+/// has a list of its own (<see cref="RequireRewritten" />).
 /// </para>
 /// <para>
 /// An annotation on an entity type leaves the guard when a <see cref="LegacyDeclarationReader{TDeclaration}" />
@@ -99,5 +101,100 @@ internal static class LegacyFormats
         }
 
         return null;
+    }
+
+    private const string Replay = TakeOver + "28";
+
+    /// <summary>
+    /// What 5.x stamped on a <see cref="MigrationOperation" /> for its own SQL generators to render,
+    /// and so what sits in a migration it scaffolded: the annotation, and what its generator made of
+    /// the operation that carries it. The provider's generator does not read them and writes the
+    /// operation as if they were not there (#110).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The list is 5.x's and is finished. It is taken from the two generators 5.x had and from the
+    /// differs that stamped for them, over every published version:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>
+    /// <c>CustomTemporal:WithoutOverlaps</c> on an <see cref="AddUniqueConstraintOperation" />, its value
+    /// the period column, up to 5.0.1; from 5.0.2 the constraint is scaffolded as SQL.
+    /// <c>NpgsqlComplexIndexSqlGenerator</c> wrote <c>UNIQUE (…, period WITHOUT OVERLAPS)</c>.
+    /// Npgsql's generator writes a plain <c>UNIQUE</c> under the same name, which applies.
+    /// </item>
+    /// <item>
+    /// <c>CustomTemporal:ForeignKeyDependentPeriod</c> and <c>CustomTemporal:ForeignKeyPrincipalPeriod</c>
+    /// on an <see cref="AddForeignKeyOperation" />, in 5.0.1 only. The same generator wrote
+    /// <c>FOREIGN KEY (…, PERIOD a) REFERENCES t (…, PERIOD b)</c>; Npgsql's writes a plain foreign
+    /// key. 5.x rendered the temporal one only with both annotations; either alone is refused here.
+    /// </item>
+    /// <item>
+    /// <c>CustomIndex:IndexParts</c> on a <see cref="CreateIndexOperation" />, in every version to
+    /// 5.6.0, for an index with an expression or <c>NULLS FIRST</c>/<c>LAST</c>. The same generator
+    /// wrote the index from the annotation's parts. The operation's columns are the parts' text
+    /// and a last column <c>__requires_UseNpgsqlComplexIndexes__</c>, so that any other generator
+    /// fails at apply on a column that does not exist. SQLite, which reads a double-quoted name
+    /// that is no column as a string unless that is switched off, creates an index over a constant.
+    /// </item>
+    /// <item>
+    /// <c>CustomIndex:AfterTableRebuild</c> on a <see cref="CreateIndexOperation" />, from 5.5.0, on
+    /// SQLite. <c>SqliteRebuildMigrationsSqlGenerator</c> moved the create behind the table rebuild
+    /// and took <c>__requires_UseComplexIndexes__()</c> off its filter. SQLite's generator runs it
+    /// where it stands and fails on that function.
+    /// </item>
+    /// </list>
+    /// <para>
+    /// 5.x had no generator for SQL Server: what it scaffolded there is EF Core's own. The provider
+    /// annotations it forwarded to an index (<c>Npgsql:…</c>, <c>SqlServer:…</c>) are the provider's
+    /// and its generator reads them.
+    /// </para>
+    /// <para>
+    /// The guard is the same on every provider, and holds an annotation whatever its value and
+    /// whatever operation carries it: one in a shape 5.x never wrote is not passed through either.
+    /// An annotation leaves the guard when an <see cref="IMigrationOperationRewriter" /> takes it off
+    /// the operation, or replaces the operation (#28).
+    /// </para>
+    /// </remarks>
+    private static readonly (string Annotation, string Rendered)[] OnOperations =
+    [
+        ("CustomTemporal:WithoutOverlaps", "a unique constraint WITHOUT OVERLAPS, where the provider writes a plain unique constraint"),
+        ("CustomTemporal:ForeignKeyDependentPeriod", "a temporal foreign key (PERIOD), where the provider writes a plain foreign key"),
+        ("CustomTemporal:ForeignKeyPrincipalPeriod", "a temporal foreign key (PERIOD), where the provider writes a plain foreign key"),
+        ("CustomIndex:IndexParts", "an index over the expressions and the null ordering the annotation holds, where the provider writes the operation's placeholder columns"),
+        ("CustomIndex:AfterTableRebuild", "the index after SQLite's table rebuild and without the marker in its filter, where the provider runs it in place with the marker"),
+    ];
+
+    /// <summary>
+    /// Throws when an operation still carries an annotation only 5.x's generators rendered. Called
+    /// with the list the rewriters return, so what a rewriter handled is not met here.
+    /// </summary>
+    public static void RequireRewritten(IReadOnlyList<MigrationOperation> operations)
+    {
+        foreach (var operation in operations)
+        {
+            foreach (var (annotation, rendered) in OnOperations)
+            {
+                if (operation.FindAnnotation(annotation) is null) continue;
+
+                throw new InvalidOperationException(SchemaKitStrings.UnreplayedLegacyOperation(Describe(operation), annotation, rendered, Replay));
+            }
+        }
+    }
+
+    private static string Describe(MigrationOperation operation)
+    {
+        var name = operation switch
+        {
+            CreateIndexOperation index              => index.Name,
+            AddUniqueConstraintOperation constraint => constraint.Name,
+            AddForeignKeyOperation foreignKey       => foreignKey.Name,
+            _                                       => null,
+        };
+        var described = name is null ? operation.GetType().Name : $"{operation.GetType().Name} '{name}'";
+
+        return operation is ITableMigrationOperation { Table: { } table } on
+            ? $"{described} on table '{(on.Schema is null ? table : $"{on.Schema}.{table}")}'"
+            : described;
     }
 }

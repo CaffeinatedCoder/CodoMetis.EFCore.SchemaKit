@@ -108,6 +108,15 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   nothing of declarations or contributors: they arrive behind that planner.
 - **`SchemaKitSqlGenerator`** runs `IMigrationOperationRewriter`s (for operations 5.x scaffolded) and
   hands the inner generator the whole list in one call.
+- **After the rewriters, an operation that still carries an annotation only a 5.x generator
+  rendered is refused** (`LegacyFormats.RequireRewritten`, #110). The provider's generator writes
+  such an operation as if the annotation were not there: an `AddUniqueConstraint` stamped
+  `CustomTemporal:WithoutOverlaps` becomes a plain unique constraint under the temporal one's name.
+  The list is 5.x's and is finished, taken from its two generators over every published version:
+  that annotation and the temporal foreign key's two (to 5.0.1), `CustomIndex:IndexParts` and
+  `CustomIndex:AfterTableRebuild` on a `CreateIndex`. It is the generator's side of the snapshot's
+  guard (#93) and the same on every provider. A rewriter leaves it by taking the annotation off the
+  operation or replacing the operation (#28); the check reads the operations alone, never the model.
 
 A test suite that varies the wiring creates many internal service providers; EF Core raises the
 twenty-first as an error, which `Harness/Setup.cs` switches off.

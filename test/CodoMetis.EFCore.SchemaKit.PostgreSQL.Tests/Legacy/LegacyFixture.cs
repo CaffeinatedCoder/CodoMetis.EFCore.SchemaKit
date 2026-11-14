@@ -239,6 +239,13 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
         /// <summary>What the 5.x migration does to a database, statement by statement as 5.x scaffolded it.</summary>
         public static IReadOnlyList<MigrationOperation> Up => Compiled.Value.Migration.UpOperations;
 
+        /// <summary>The way back, as 5.x scaffolded it.</summary>
+        public static IReadOnlyList<MigrationOperation> Down => Compiled.Value.Migration.DownOperations;
+
+        /// <summary>The 5.x migration of the kinds nothing reads yet: Up, then Down.</summary>
+        public static (IReadOnlyList<MigrationOperation> Up, IReadOnlyList<MigrationOperation> Down) OtherKindsMigration
+            => (CompiledOtherKinds.Value.Migration.UpOperations, CompiledOtherKinds.Value.Migration.DownOperations);
+
         /// <summary>What <c>migrations add</c> scaffolds for the consumer's first migration after the move.</summary>
         public static IReadOnlyList<MigrationOperation> DiffTo<TModel>()
             where TModel : ITestModel
