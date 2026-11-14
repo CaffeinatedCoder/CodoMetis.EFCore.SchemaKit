@@ -70,8 +70,7 @@ What happens when a step is missed, as this preview has it:
 | `ReplaceService` of the differ or the SQL generator after `UseSchemaKit()` | The first model built is refused, and the message says to call `UseSchemaKit()` last |
 
 Each row but the second is a row of the consumer smoke test (`test/ConsumerSmokeTest/run.sh`), on
-the packed packages. Whether the kernel's own `UseSchemaKit()` keeps its name is not settled for
-`11.0.0` ([#141](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/141)).
+the packed packages.
 
 ## Exclusion constraints
 
