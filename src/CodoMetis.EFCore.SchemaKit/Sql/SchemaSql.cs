@@ -31,6 +31,9 @@ public sealed partial class SchemaSql
     /// <summary>The statements so far, as the operations a migration carries.</summary>
     internal IReadOnlyList<SqlOperation> Operations => _operations;
 
+    /// <summary>Adds another builder's statements, in their order: a contributor's answer the planner keeps.</summary>
+    internal void Append(SchemaSql other) => _operations.AddRange(other._operations);
+
     /// <summary>
     /// Adds one statement. The provider's statement terminator is appended; do not write one.
     /// </summary>

@@ -224,6 +224,14 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 - **Order:** drops, EF Core's operations untouched, in-place statements, creates; contributors by
   placement, and a `BeforeTables` contributor the other way round (created before, dropped after,
   never rebuilt).
+- **A rename in place whose name is held when it runs is a rebuild** (`KeepInPlace`, #99). A
+  change in place runs after EF Core's operations: an index EF Core creates under the name a
+  constraint gives up fails with 42P07. Both names are compared, through `NameClaims`, with what
+  holds a name at that moment: EF Core's objects as the target has them, the declared objects as
+  EF Core's operations leave them but for those dropped before or lost, and the earlier changes in
+  place under their new names. A name EF Core gives up is free by then, and the server agrees. The
+  contributor's statements go into a builder of their own and reach the migration only if the
+  change stays in place. It is a point fix; the ledger over ordered actions is #115.
 - **A declaration whose owner has no contributor is refused,** on either side. #22 adds the
   explicit way out.
 - **Which model is the consumer's is told by reference, never by where it stands in a diff**

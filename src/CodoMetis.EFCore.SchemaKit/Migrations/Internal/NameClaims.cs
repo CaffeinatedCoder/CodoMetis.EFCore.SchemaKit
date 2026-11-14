@@ -21,7 +21,12 @@ namespace CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 internal static class NameClaims
 {
     /// <summary>A name taken, by whom, and how that party's names compare.</summary>
-    private sealed record Taken(NameClaim Claim, string By, object Party, bool Ours, SchemaNameComparison Comparison);
+    /// <param name="Claim">The name, and the namespace it is taken in.</param>
+    /// <param name="By">The party, as a message names it.</param>
+    /// <param name="Party">The party itself: two claims of one party never collide with each other.</param>
+    /// <param name="Ours">Whether the party is a declaration, not one of EF Core's own objects.</param>
+    /// <param name="Comparison">How the party's names compare.</param>
+    internal sealed record Taken(NameClaim Claim, string By, object Party, bool Ours, SchemaNameComparison Comparison);
 
     /// <summary>Throws with every collision between the declared objects, and between one of them and one of EF Core's.</summary>
     public static void Require(
@@ -31,11 +36,7 @@ internal static class NameClaims
     {
         List<Taken> taken = [];
         foreach (var (contributor, descriptor, entityType, declaration) in declared)
-        {
-            var by = $"{declaration.Owner} {declaration.Kind} '{descriptor.Name}' on {entityType.ShortName()}";
-            foreach (var claim in contributor.Claims(descriptor).Distinct())
-                taken.Add(new Taken(claim, by, descriptor, Ours: true, declaration.NameComparison));
-        }
+            taken.AddRange(Of(contributor, descriptor, entityType, declaration, party: descriptor));
 
         var ours = taken.Count;
         taken.AddRange(OfTheModel(model, dialect));
@@ -47,10 +48,7 @@ internal static class NameClaims
             for (var j = i + 1; j < taken.Count; j++)
             {
                 var (first, second) = (taken[i], taken[j]);
-                var comparison = first.Comparison == SchemaNameComparison.IgnoreCase || second.Comparison == SchemaNameComparison.IgnoreCase
-                    ? StringComparison.OrdinalIgnoreCase
-                    : StringComparison.Ordinal;
-                if (!Same(first.Claim, second.Claim, comparison, dialect.DefaultSchema)) continue;
+                if (!Collide(first, second, dialect)) continue;
 
                 // Two objects that collide in two namespaces, as two exclusion constraints of one
                 // name do, are one finding.
@@ -63,8 +61,34 @@ internal static class NameClaims
         if (collisions.Count > 0) throw new SchemaValidationException(collisions);
     }
 
+    /// <summary>What a declared object takes, as its contributor says.</summary>
+    /// <param name="contributor">The object's contributor, which says what it claims.</param>
+    /// <param name="descriptor">The object.</param>
+    /// <param name="entityType">The entity type it is declared on, for the message.</param>
+    /// <param name="declaration">Its declaration, for the message and how its names compare.</param>
+    /// <param name="party">What stands for the object: claims of one party do not collide with each other.</param>
+    public static IEnumerable<Taken> Of(ISchemaContributor contributor, ISchemaDescriptor descriptor, IReadOnlyEntityType entityType, ISchemaObject declaration, object party)
+    {
+        var by = $"{declaration.Owner} {declaration.Kind} '{descriptor.Name}' on {entityType.ShortName()}";
+        return contributor.Claims(descriptor).Distinct().Select(claim => new Taken(claim, by, party, Ours: true, declaration.NameComparison));
+    }
+
+    /// <summary>
+    /// Whether two parties' claims are one name in one namespace: under the stricter comparison of
+    /// the two, unless either party's names compare without regard to case.
+    /// </summary>
+    public static bool Collide(Taken first, Taken second, ISchemaDialect dialect)
+    {
+        if (ReferenceEquals(first.Party, second.Party)) return false;
+
+        var comparison = first.Comparison == SchemaNameComparison.IgnoreCase || second.Comparison == SchemaNameComparison.IgnoreCase
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return Same(first.Claim, second.Claim, comparison, dialect.DefaultSchema);
+    }
+
     /// <summary>What EF Core's own objects take, each asked of the dialect.</summary>
-    private static IEnumerable<Taken> OfTheModel(IRelationalModel model, ISchemaDialect dialect)
+    public static IEnumerable<Taken> OfTheModel(IRelationalModel model, ISchemaDialect dialect)
     {
         foreach (var table in model.Tables)
         {

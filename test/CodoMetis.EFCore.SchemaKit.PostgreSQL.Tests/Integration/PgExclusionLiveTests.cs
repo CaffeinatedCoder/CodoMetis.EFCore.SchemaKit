@@ -555,4 +555,94 @@ public sealed class PgExclusionLiveTests
             new[] { """public.role_grants | ex_role_grant_active_period | index ex_role_grant_active_period | EXCLUDE USING gist ("Period" WITH &&)""" },
             database.Exclusions());
     }
+
+    // ── A name a rename frees or takes in the same migration (#99) ──
+    //
+    // A rename in place runs after EF Core's operations. Each pair here is applied both ways: one
+    // direction frees a name EF Core takes, the other takes a name EF Core gives up.
+
+    /// <summary>EF Core creates an index under the name the constraint gives up: the rename becomes a drop before and an add after.</summary>
+    [TestMethod]
+    public void An_index_takes_the_name_a_renamed_constraint_gives_up()
+        => AssertMigratesTo<Models.Scheduling, Models.RenamedAndItsOldNameReused>();
+
+    /// <summary>
+    /// The other way: the constraint takes the name of an index EF Core drops. EF Core's drop runs
+    /// first, so the rename finds the name free, and the constraint stays the one it was.
+    /// </summary>
+    [TestMethod]
+    public void A_renamed_constraint_takes_the_name_of_an_index_that_is_dropped()
+    {
+        AssertMigratesTo<Models.RenamedAndItsOldNameReused, Models.Scheduling>();
+
+        using var database = new LiveDatabase();
+        database.Create<Models.RenamedAndItsOldNameReused>();
+        var oid = database.ConstraintOid("ex_renamed");
+        database.Migrate<Models.RenamedAndItsOldNameReused, Models.Scheduling>();
+        Assert.AreEqual(oid, database.ConstraintOid(Models.Name));
+    }
+
+    [TestMethod]
+    public void An_index_takes_the_default_name_a_column_rename_gives_up()
+        => AssertMigratesTo<Models.Unnamed, Models.UnnamedRenamedAroundAndItsOldNameReused>();
+
+    [TestMethod]
+    public void A_column_rename_gives_a_constraint_the_default_name_of_an_index_that_is_dropped()
+        => AssertMigratesTo<Models.UnnamedRenamedAroundAndItsOldNameReused, Models.Unnamed>();
+
+    /// <summary>The constraint takes the name of an index EF Core renames: EF Core's rename runs first.</summary>
+    [TestMethod]
+    public void A_renamed_constraint_takes_the_name_of_an_index_that_is_renamed()
+    {
+        AssertMigratesTo<Models.SchedulingBesideAnIndexNamedLikeItsNextName, Models.RenamedIntoTheNameAnIndexGaveUp>();
+
+        using var database = new LiveDatabase();
+        database.Create<Models.SchedulingBesideAnIndexNamedLikeItsNextName>();
+        var oid = database.ConstraintOid(Models.Name);
+        database.Migrate<Models.SchedulingBesideAnIndexNamedLikeItsNextName, Models.RenamedIntoTheNameAnIndexGaveUp>();
+        Assert.AreEqual(oid, database.ConstraintOid("ex_renamed"));
+    }
+
+    /// <summary>EF Core renames an index into the name a renamed constraint gives up.</summary>
+    [TestMethod]
+    public void An_index_is_renamed_into_the_name_a_renamed_constraint_gives_up()
+        => AssertMigratesTo<Models.RenamedIntoTheNameAnIndexGaveUp, Models.SchedulingBesideAnIndexNamedLikeItsNextName>();
+
+    /// <summary>The names are compared as EF Core's table rename leaves them: an index on the renamed table takes the old name.</summary>
+    [TestMethod]
+    public void A_table_rename_does_not_hide_a_collision()
+    {
+        AssertMigratesTo<Models.Scheduling, Models.RenamedOnARenamedTableAndItsOldNameReused>();
+        AssertMigratesTo<Models.RenamedOnARenamedTableAndItsOldNameReused, Models.Scheduling>();
+    }
+
+    /// <summary>
+    /// The schemas are compared as EF Core's move leaves them: the old name is free in the schema
+    /// the table leaves, so the rename stays one, and held in the one it goes to. Up only: a move
+    /// back to a table without a schema does not reach the server on Npgsql (#105).
+    /// </summary>
+    [TestMethod]
+    public void A_move_to_another_schema_neither_invents_a_collision_nor_hides_one()
+    {
+        AssertMigratesTo<Models.Scheduling, Models.RenamedOnAMovedTableAndItsOldNameReusedWhereItWas>();
+        AssertMigratesTo<Models.Scheduling, Models.RenamedOnAMovedTableAndItsOldNameReusedWhereItGoes>();
+    }
+
+    /// <summary>Two constraints on two tables of a schema swap names, and a rename chain runs through them, both ways.</summary>
+    [TestMethod]
+    public void Constraints_on_two_tables_swap_names_and_pass_one_on()
+    {
+        AssertMigratesTo<Models.TwoTables<Models.AB>, Models.TwoTables<Models.BA>>();
+        AssertMigratesTo<Models.TwoTables<Models.AB>, Models.TwoTables<Models.BC>>();
+        AssertMigratesTo<Models.TwoTables<Models.BC>, Models.TwoTables<Models.AB>>();
+    }
+
+    /// <summary>The same on one table, where the review found today's order sound: it stays so.</summary>
+    [TestMethod]
+    public void Constraints_on_one_table_swap_names_and_pass_one_on()
+    {
+        AssertMigratesTo<Models.OneTable<Models.AB>, Models.OneTable<Models.BA>>();
+        AssertMigratesTo<Models.OneTable<Models.AB>, Models.OneTable<Models.BC>>();
+        AssertMigratesTo<Models.OneTable<Models.BC>, Models.OneTable<Models.AB>>();
+    }
 }

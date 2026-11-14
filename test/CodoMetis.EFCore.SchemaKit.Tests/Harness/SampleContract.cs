@@ -318,7 +318,10 @@ public sealed class TestDomainContributor(SchemaContributorDependencies dependen
 
     protected override Impact ImpactOf(TestDomainDescriptor descriptor, BaseChange change) => ImpactOverride?.Invoke(change) ?? new Impact.Unaffected();
 
-    protected override IEnumerable<NameClaim> Claims(TestDomainDescriptor descriptor) => [];
+    /// <summary>What <see cref="Claims" /> answers in place of nothing, for the tests that need a domain to hold a name.</summary>
+    public Func<TestDomainDescriptor, IEnumerable<NameClaim>>? ClaimsOverride { get; set; }
+
+    protected override IEnumerable<NameClaim> Claims(TestDomainDescriptor descriptor) => ClaimsOverride?.Invoke(descriptor) ?? [];
 }
 
 /// <summary>A second contributor for the owner <see cref="TestGuardContributor" /> has.</summary>
