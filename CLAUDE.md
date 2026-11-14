@@ -26,6 +26,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
+| `docs/moving-from-complexindexes-5x.md` | The guide for a project coming from 5.x, a first cut that covers `preview.1` (#73) |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
 
 The prototype is not the implementation. It has defects the plan lists on purpose (sections 3.4,
@@ -471,6 +472,23 @@ fail instead: an unreachable server must not retire them while the build reports
   a tag without one, and the section is the GitHub release's notes. A version with a suffix is a
   prerelease there and never Latest.
 - **Never tag or publish:** a release is the maintainer's to trigger.
+
+## The documentation
+
+`README.md`, `docs/moving-from-complexindexes-5x.md` (#73), `CHANGELOG.md` and a README per package
+under `src/*/README.md`, which is what nuget.org shows. Held by
+`test/…PostgreSQL.Tests/Documentation`:
+
+- **Every ` ```csharp ` block compiles against the shipped assemblies with nothing suppressed.** A
+  block with a type declaration is a file of its own; any other is statements, compiled in a method
+  that has `modelBuilder`, `options`, `services` and `connectionString`, beside the entity types the
+  samples name. Both are in the test, so a sample's surroundings are visible. 5.x code is fenced
+  ` ```csharp 5.x ` and is not compiled; any other marker fails.
+- **Every link resolves:** a relative one to a file and a heading that exist, an absolute one to
+  this repository's `blob/main` or `tree/main` the same way. A package README has absolute links
+  only, since nuget.org resolves no relative one.
+- **Write only what is measured.** A statement about what a migration does names the test that
+  shows it, or is left out.
 
 ## What counts as correct
 
