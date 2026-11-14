@@ -50,7 +50,37 @@ internal sealed class SchemaContributorRegistry
         return false;
     }
 
+    /// <summary>
+    /// The owner of a contributor, read from its type: <c>TDeclaration.OwnerId</c> of the base
+    /// class, which is what <see cref="SchemaContributor{TDeclaration, TDescriptor}.Owner" /> answers.
+    /// Null for a class that does not derive from it.
+    /// </summary>
+    public static string? OwnerOf(Type contributor)
+    {
+        for (var type = contributor.BaseType; type is not null; type = type.BaseType)
+        {
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(SchemaContributor<,>))
+                return (string?)typeof(SchemaContributorRegistry)
+                    .GetMethod(nameof(OwnerId), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                    .MakeGenericMethod(type.GetGenericArguments()[0])
+                    .Invoke(null, null);
+        }
+
+        return null;
+    }
+
+    private static string OwnerId<TDeclaration>() where TDeclaration : class, ISchemaDeclaration<TDeclaration>
+        => TDeclaration.OwnerId;
+
     public IReadOnlyCollection<ISchemaContributor> All => _byOwner.Values;
 
     public ISchemaContributor? Find(string owner) => _byOwner.GetValueOrDefault(owner);
 }
+
+/// <summary>
+/// That a contributor is registered, as a value: what the model's stamp is built from while the
+/// model is created, when no contributor may be resolved yet. <c>AddSchemaContributor</c> adds it.
+/// </summary>
+/// <param name="Owner">The contributor's owner.</param>
+/// <param name="Contributor">The contributor's type.</param>
+internal sealed record SchemaContributorRegistration(string Owner, Type Contributor);

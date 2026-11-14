@@ -65,11 +65,13 @@ What happens when a step is missed, as this preview has it:
 |---|---|
 | `UseSchemaKit()` | `DeclarePostgres` throws in `OnModelCreating`: "… declares a SchemaKit object, but UseSchemaKit() is not on this context's options." |
 | `UseSchemaKit()`, with a 5.x snapshot that holds exclusion constraints and a model that declares none | Nothing refuses it: no SchemaKit service reads the snapshot, so the next `migrations add` does not see the constraints. Wire it before the first `migrations add` |
-| `UseSchemaKit()` written after `UseNpgsql(…)` instead of inside it | It compiles: that is the kernel's own `UseSchemaKit()`, without the PostgreSQL package's services. The first diff is refused: "… carries a declaration of 'Pg.Exclusion', and no contributor with that owner is registered." A 5.x snapshot is refused the same way, with "call UseSchemaKit() on the options builder of UseNpgsql" |
+| `UseSchemaKit()` written after `UseNpgsql(…)` instead of inside it | It compiles: that is the kernel's own `UseSchemaKit()`, without the PostgreSQL package's services. `DeclarePostgres` throws in `OnModelCreating`: "… declares a 'Pg.Exclusion' object (…), and this context's options do not register what renders it: UseSchemaKit() is there, the registration of CodoMetis.EFCore.SchemaKit.PostgreSQL is not." A model that declares nothing over a 5.x snapshot is refused at the first diff, with "call UseSchemaKit() on the options builder of UseNpgsql" |
+| A direct reference to `CodoMetis.EFCore.SchemaKit` at another version than the PostgreSQL package's | NuGet builds it with the warning NU1608. `UseSchemaKit()` throws: "CodoMetis.EFCore.SchemaKit.PostgreSQL … is loaded beside CodoMetis.EFCore.SchemaKit …" Reference the PostgreSQL package alone; it brings the kernel |
 | `ReplaceService` of the differ or the SQL generator after `UseSchemaKit()` | The first model built is refused, and the message says to call `UseSchemaKit()` last |
 
-How a wrong wiring is refused, and where, is not settled for `11.0.0`
-([#113](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/113)).
+Each row but the second is a row of the consumer smoke test (`test/ConsumerSmokeTest/run.sh`), on
+the packed packages. Whether the kernel's own `UseSchemaKit()` keeps its name is not settled for
+`11.0.0` ([#141](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/141)).
 
 ## Exclusion constraints
 

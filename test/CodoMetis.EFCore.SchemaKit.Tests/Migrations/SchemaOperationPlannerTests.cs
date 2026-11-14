@@ -768,19 +768,60 @@ public sealed class SchemaOperationPlannerTests
 
     // ---- what the planner refuses, and what it leaves alone ---------------------------------------------
 
-    /// <summary>A declaration nothing renders would be left out of every migration, in silence.</summary>
+    /// <summary>
+    /// A declaration nothing renders would be left out of every migration, in silence. The context's
+    /// own model cannot hold one any more, since it is refused where it is written (#113); a
+    /// snapshot can, scaffolded while the package that declared it was still registered.
+    /// </summary>
     [TestMethod]
     public void A_declaration_with_no_contributor_is_refused_on_either_side()
     {
-        var builder = new DbContextOptionsBuilder<Planned<PlanModels.Guarded>>().UseProvider(Provider.Npgsql);
-        using var context = new Planned<PlanModels.Guarded>(builder.UseSchemaKit().Options);
+        using var declaring = Context<PlanModels.Guarded>();
+        var builder = new DbContextOptionsBuilder<Planned<PlanModels.Bare>>().UseProvider(Provider.Npgsql);
+        using var context = new Planned<PlanModels.Bare>(builder.UseSchemaKit().Options);
         var differ = context.GetService<IMigrationsModelDiffer>();
 
-        foreach (var (source, target) in new[] { ((IRelationalModel?)null, (IRelationalModel?)Model(context)), (Model(context), null) })
+        foreach (var (source, target) in new[] { ((IRelationalModel?)null, (IRelationalModel?)Model(declaring)), (Model(declaring), null) })
         {
             var error = Assert.ThrowsExactly<InvalidOperationException>(() => differ.GetDifferences(source, target));
             StringAssert.Contains(error.Message, "Thing carries a declaration of 'Test.Guard', and no contributor with that owner is registered");
         }
+    }
+
+    /// <summary>
+    /// The kernel's <c>UseSchemaKit()</c> stamps a model and renders nothing. A declaration whose
+    /// contributor the options do not register was stored on that stamp and refused at the first
+    /// diff; it is refused where it is written, on every provider, and names what to register (#113).
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_declaration_whose_contributor_the_options_do_not_register_is_refused_where_it_is_written(Provider provider)
+    {
+        var builder = new DbContextOptionsBuilder<Planned<PlanModels.Guarded>>().UseProvider(provider);
+        using var context = new Planned<PlanModels.Guarded>(builder.UseSchemaKit().Options);
+
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => context.Model);
+
+        StringAssert.Contains(error.Message, "Thing declares a 'Test.Guard' object");
+        StringAssert.Contains(error.Message, "UseSchemaKit() is there, the registration of CodoMetis.EFCore.SchemaKit.Tests is not");
+    }
+
+    /// <summary>The allowed twin, and what the refusal reads: one contributor is registered, and only its owner may be declared.</summary>
+    [TestMethod]
+    public void Only_the_owners_the_options_register_may_be_declared()
+    {
+        static Planned<TModel> OnlyTheGuard<TModel>() where TModel : IPlanModel
+        {
+            var builder = new DbContextOptionsBuilder<Planned<TModel>>().UseProvider(Provider.Npgsql);
+            ServicesExtension.Add(builder, "the guard alone", services => services.AddSchemaContributor<TestGuardContributor>());
+            return new Planned<TModel>(builder.UseSchemaKit().Options);
+        }
+
+        using var guarded = OnlyTheGuard<PlanModels.Guarded>();
+        Assert.AreEqual(1, guarded.Model.GetEntityTypes().Single().GetDeclarations<TestGuard>().Count);
+
+        using var domain = OnlyTheGuard<PlanModels.Domain>();
+        var error = Assert.ThrowsExactly<InvalidOperationException>(() => domain.Model);
+        StringAssert.Contains(error.Message, "declares a 'Test.Domain' object");
     }
 
     /// <summary>

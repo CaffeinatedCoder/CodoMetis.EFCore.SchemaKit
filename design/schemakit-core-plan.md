@@ -481,7 +481,8 @@ var report = await context.Database.VerifySchemaKitAsync(ct);
 
 ### 3.12 Other providers and SQLite
 
-- A declaration whose owner has no contributor in the active provider is an **error** at diff.
+- A declaration whose owner has no contributor in the active provider is an **error**: where it is
+  written in the context's own model (#113), and at diff in a snapshot.
 - The exception is explicit: `IgnoreDeclarationsOf(SchemaProvider.PostgreSql)` on the options of the
   other provider, logged once. Since the stamp already requires `UseSchemaKit()` on those options,
   a consumer testing on SQLite writes one argument. A warning by default, my first position, would

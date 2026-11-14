@@ -64,6 +64,34 @@ public sealed class NpgsqlWiringTests
         Assert.AreEqual(40, context.GetService<ISchemaDialect>().Identifier(FortyTwoByteCharacters).Name.Length);
     }
 
+    private sealed class KernelOnlyDeclaring(DbContextOptions<KernelOnlyDeclaring> options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder) => Models.Scheduling.Build(modelBuilder);
+    }
+
+    /// <summary>
+    /// <c>UseNpgsql(cs).UseSchemaKit()</c> is the kernel's method and compiles as soon as its
+    /// namespace is imported. The declaration passed on the kernel's stamp, and the refusal came at
+    /// the first diff, naming a package the consumer already references (#113).
+    /// </summary>
+    [TestMethod]
+    public void The_kernels_call_alone_is_refused_where_a_PostgreSQL_object_is_declared()
+    {
+        using var context = new KernelOnlyDeclaring(new DbContextOptionsBuilder<KernelOnlyDeclaring>()
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .UseNpgsql(Contexts.Offline).UseSchemaKit().Options);
+
+        var refusal = Assert.ThrowsExactly<InvalidOperationException>(() => context.Model);
+
+        StringAssert.Contains(refusal.Message, "declares a 'Pg.Exclusion' object");
+        StringAssert.Contains(refusal.Message, "Call the UseSchemaKit() of CodoMetis.EFCore.SchemaKit.PostgreSQL on its provider's builder");
+    }
+
+    /// <summary>The package's two registrations ask the kernel for its version first; here the two are one build.</summary>
+    [TestMethod]
+    public void The_package_is_of_the_kernels_version()
+        => SchemaKitPackages.RequireKernel(typeof(PgExclusion).Assembly);
+
     private sealed class LongName : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>()

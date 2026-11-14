@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -27,6 +28,15 @@ public static class SchemaKitNpgsqlDbContextOptionsBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(optionsBuilder);
 
+        // First, and from a method that calls nothing else of the kernel: beside a kernel of another
+        // version this is the message, where the calls below would be a MissingMethodException.
+        SchemaKitPackages.RequireKernel(typeof(SchemaKitNpgsqlDbContextOptionsBuilderExtensions).Assembly);
+        return Register(optionsBuilder);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static NpgsqlDbContextOptionsBuilder Register(NpgsqlDbContextOptionsBuilder optionsBuilder)
+    {
         var core = ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder;
         core.UseSchemaKit();
 
@@ -51,6 +61,13 @@ public static class SchemaKitNpgsqlServiceCollectionExtensions
     public static IServiceCollection AddEntityFrameworkSchemaKitNpgsql(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        SchemaKitPackages.RequireKernel(typeof(SchemaKitNpgsqlServiceCollectionExtensions).Assembly);
+        return Register(services);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static IServiceCollection Register(IServiceCollection services)
+    {
         services.AddEntityFrameworkSchemaKit();
         NpgsqlSchemaKitOptionsExtension.AddServices(services);
         return services;

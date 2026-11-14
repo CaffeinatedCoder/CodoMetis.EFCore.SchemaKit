@@ -11,6 +11,19 @@ internal static class SchemaKitStrings
            "Without it the declaration would be left out of migrations and of EnsureCreated() without an error. " +
            "Add UseSchemaKit() where the context's options are built, including in an IDesignTimeDbContextFactory.";
 
+    public static string NotWiredForOwner(string declaring, string owner, Type declaration, string package)
+        => $"{declaring} declares a '{owner}' object ({declaration.Name}), and this context's options do not register what " +
+           $"renders it: UseSchemaKit() is there, the registration of {package} is not. No migration could be scaffolded " +
+           $"or applied from this model. Call the UseSchemaKit() of {package} on its provider's builder, inside the " +
+           "provider's Use…() call, in place of UseSchemaKit() on the context's own builder; with " +
+           "UseInternalServiceProvider(), add that package's AddEntityFrameworkSchemaKit…() to the collection as well.";
+
+    public static string MixedVersions(string package, string packageVersion, string kernel, string kernelVersion)
+        => $"{package} {packageVersion} is loaded beside {kernel} {kernelVersion}. A SchemaKit package works with the kernel " +
+           "of its own version only: with another, the first call into a member that differs fails with a " +
+           $"MissingMethodException. Reference {package} and {kernel} at one version; a direct reference to {kernel} " +
+           "is not needed, since the package brings it.";
+
     public static string DisplacedByReplaceService(Type service, Type replacement)
         => $"ReplaceService<{service.Name}, {replacement.Name}>() was called after UseSchemaKit() and displaced it: " +
            "EF Core keeps one replacement per service. SchemaKit declarations would be left out of migrations without an error. " +

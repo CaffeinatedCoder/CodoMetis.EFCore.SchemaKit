@@ -54,7 +54,9 @@ public static class SchemaKitServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// Adding the same contributor twice adds it once. Two different contributors with one owner
-    /// are refused at the first diff.
+    /// are refused at the first diff. This call is also what lets a model declare the
+    /// contributor's objects: a declaration whose owner no call registered is refused where it is
+    /// written, and a contributor added to the collection another way is not counted.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// <typeparamref name="TContributor" /> does not derive from <see cref="SchemaContributor{TDeclaration, TDescriptor}" />.
@@ -74,6 +76,13 @@ public static class SchemaKitServiceCollectionExtensions
             throw new InvalidOperationException(SchemaKitStrings.ContributorNotDerived(typeof(TContributor)));
 
         services.TryAddEnumerable(ServiceDescriptor.Scoped<ISchemaContributor, TContributor>());
+
+        // What a declaration is checked against where it is written. An owner the registry will
+        // refuse is refused there; here it only has to be a value.
+        var registration = new SchemaContributorRegistration(
+            SchemaContributorRegistry.OwnerOf(typeof(TContributor)) ?? "", typeof(TContributor));
+        if (!services.Any(d => registration.Equals(d.ImplementationInstance)))
+            services.AddSingleton(registration);
         return services;
     }
 

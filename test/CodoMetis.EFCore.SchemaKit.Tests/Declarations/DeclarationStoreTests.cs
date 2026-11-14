@@ -29,7 +29,7 @@ public sealed class DeclarationStoreTests
     private static IMutableEntityType Entity(bool stamped = true)
     {
         var builder = new ModelBuilder();
-        if (stamped) builder.Model.SetAnnotation(SchemaKitModelStamp.Annotation, SchemaKitModelStamp.Value);
+        if (stamped) SchemaKitModelStamp.Stamp(builder.Model, ["Test.Guard", "Test.Loose", "Test.Domain"]);
         return builder.Entity<Thing>().Metadata;
     }
 

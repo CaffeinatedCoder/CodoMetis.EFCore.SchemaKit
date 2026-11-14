@@ -30,7 +30,8 @@ public static class SchemaDeclarationExtensions
     /// <param name="entityType">The entity type the objects belong to.</param>
     /// <param name="declarations">The declarations.</param>
     /// <exception cref="InvalidOperationException">
-    /// <c>UseSchemaKit()</c> is not on the context's options, or a declaration's key is taken.
+    /// <c>UseSchemaKit()</c> is not on the context's options, they register no contributor for a
+    /// declaration's owner, or a declaration's key is taken.
     /// </exception>
     [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
     public static void Declare(this IMutableEntityType entityType, IEnumerable<ISchemaObject> declarations)
@@ -43,6 +44,7 @@ public static class SchemaDeclarationExtensions
         foreach (var declaration in declarations)
         {
             ArgumentNullException.ThrowIfNull(declaration, nameof(declarations));
+            SchemaKitModelStamp.Require(entityType.Model, entityType.DisplayName(), declaration.Owner, declaration.GetType());
             var key = DeclarationCodec.Key(declaration);
 
             if (added.TryGetValue(key, out var earlier))
@@ -73,7 +75,7 @@ public static class SchemaDeclarationExtensions
     {
         ArgumentNullException.ThrowIfNull(entityType);
         ArgumentNullException.ThrowIfNull(amend);
-        SchemaKitModelStamp.Require(entityType.Model, entityType.DisplayName());
+        SchemaKitModelStamp.Require(entityType.Model, entityType.DisplayName(), TDeclaration.OwnerId, typeof(TDeclaration));
 
         var current = Stored<TDeclaration>(entityType).ToList();
         Dictionary<string, (TDeclaration Declaration, string Value)> result = new(StringComparer.Ordinal);
