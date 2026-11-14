@@ -134,6 +134,89 @@ jobs:
             fi
           done
 
+  # The consumer smoke test (#34, test/ConsumerSmokeTest/run.sh): both packages restored into a
+  # consumer outside the checkout, every path a consumer has driven through the real dotnet-ef and
+  # the real runtime, each judged by the server's catalog and by a row it must refuse. It runs in
+  # its two invocation modes, one per server: packing from this checkout, and testing a folder of
+  # packages packed beforehand, which is how a release passes the packages it is about to push.
+  # The image digest and the server's version are checked as in the integration lane.
+  smoke:
+    name: Consumer smoke test (PostgreSQL ${{ matrix.postgres }}, ${{ matrix.packages }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - postgres: 16
+            packages: packed by the script
+          - postgres: 18
+            packages: packed beforehand
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: schemakit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      SCHEMAKIT_TEST_PG: Host=localhost;Port=5432;Username=postgres;Password=schemakit;Database=postgres
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+
+      - name: Image digest
+        env:
+          IMAGE: postgres:${{ matrix.postgres }}
+          MAJOR: ${{ matrix.postgres }}
+        run: |
+          version="$(docker exec "${{ job.services.postgres.id }}" psql -U postgres -At -c 'SHOW server_version')"
+          {
+            echo "| Image | Digest | server_version |"
+            echo "|---|---|---|"
+            echo "| \`$IMAGE\` | \`$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')\` | $version |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${version%%.*}" != "$MAJOR" ]]; then
+            echo "::error::The service answers as PostgreSQL $version, and this lane is for $MAJOR."
+            exit 1
+          fi
+
+      # As release.yml packs: Release, every project under src/, into one folder.
+      - name: Pack
+        if: matrix.packages == 'packed beforehand'
+        run: |
+          for project in src/*/*.csproj; do
+            dotnet pack "$project" -c Release -o "$RUNNER_TEMP/dist"
+          done
+
+      # The work folder is under RUNNER_TEMP, and kept when a path fails, for the upload below.
+      - name: Smoke test
+        env:
+          FEED: ${{ matrix.packages == 'packed beforehand' && 'dist' || '' }}
+        run: |
+          export TMPDIR="$RUNNER_TEMP"
+          test/ConsumerSmokeTest/run.sh ${FEED:+"$RUNNER_TEMP/$FEED"}
+
+      - name: Logs of the failed run
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: smoke-logs-postgres-${{ matrix.postgres }}
+          path: ${{ runner.temp }}/schemakit-smoke.*/logs
+          if-no-files-found: ignore
+
   # Compile probes for design/schemakit-api.md: each "does not compile" claim of the design,
   # compiled with Roslyn against the prototype and checked for its diagnostic, plus the prototype's
   # behaviour tests. Until the kernel exists this is the only code in the repository.
@@ -263,7 +346,7 @@ jobs:
   ci:
     name: CI
     runs-on: ubuntu-latest
-    needs: [ test, integration, probes, spikes ]
+    needs: [ test, integration, smoke, probes, spikes ]
     if: always()
 
     steps:

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- The context's assembly. Its migrations are in Data.Migrations, which references it. -->
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="../../App/Model.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CodoMetis.EFCore.SchemaKit.PostgreSQL" Version="$(SchemaKitVersion)" />
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(NpgsqlEfVersion)" />
+    </ItemGroup>
+
+</Project>

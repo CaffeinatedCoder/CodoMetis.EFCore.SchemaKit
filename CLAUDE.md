@@ -26,6 +26,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer) and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
+| `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing |
 | `docs/moving-from-complexindexes-5x.md` | The guide for a project coming from 5.x, a first cut that covers `preview.1` (#73) |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
 
@@ -57,7 +58,10 @@ dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tes
 # The probes and the prototype's behaviour tests (outside the solution: they pin their own compiler)
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 
-# Spike B, the stand-in for the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
+# The consumer smoke test, on the server SCHEMAKIT_TEST_PG names; a folder of .nupkg as the argument tests those
+SCHEMAKIT_TEST_PG="Host=localhost;Username=postgres;Password=…;Database=postgres" test/ConsumerSmokeTest/run.sh
+
+# Spike B, the first version of the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
 spikes/B.DesignTime/run.sh
 
 # Spike E, the impact table; SPIKE_E_PG16, SPIKE_E_PG18 and SPIKE_E_MSSQL are connection strings (its README)
