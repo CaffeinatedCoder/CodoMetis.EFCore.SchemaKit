@@ -192,6 +192,19 @@ npgsql_ef_version=$(dependency "$pg_package" Npgsql.EntityFrameworkCore.PostgreS
 [[ -n $ef_version && -n $npgsql_ef_version ]] || { log=; fail "the packages" "cannot read EF Core's and Npgsql EF's versions from the nuspecs"; }
 echo "    EF Core $ef_version, Npgsql EF $npgsql_ef_version"
 
+# SMOKE_EF_VERSION: the consumer on another EF Core than the packages were built with, as one is
+# that references EF Core directly. Every consumer then references
+# Microsoft.EntityFrameworkCore.Relational at that version, and the design package, the host and
+# dotnet-ef follow it. Where a package pins EF Core exactly, as a prerelease of Npgsql EF does,
+# NuGet answers with NU1608 and builds: the run then says what such a consumer gets, not that the
+# packages may reference that version.
+ef_direct=
+if [[ -n ${SMOKE_EF_VERSION:-} && $SMOKE_EF_VERSION != "$ef_version" ]]; then
+  echo "    the consumer references EF Core $SMOKE_EF_VERSION directly, over the packages' $ef_version"
+  ef_version=$SMOKE_EF_VERSION
+  ef_direct="<ItemGroup Condition=\"'\$(MSBuildProjectName)' != 'Judge'\"><PackageReference Include=\"Microsoft.EntityFrameworkCore.Relational\" Version=\"$ef_version\" /></ItemGroup>"
+fi
+
 # From here on, nothing restores into the machine's package folder.
 export NUGET_PACKAGES=$work/packages
 
@@ -224,6 +237,7 @@ write_props() { # Npgsql's version, once the consumer has restored it
     <NpgsqlEfVersion>$npgsql_ef_version</NpgsqlEfVersion>
     <NpgsqlVersion>$1</NpgsqlVersion>
   </PropertyGroup>
+  $ef_direct
 </Project>
 EOF
 }
@@ -240,6 +254,14 @@ if [[ $restored == "$version" ]] && has "$work/App/obj/project.assets.json" "$fe
   ok "restore" "CodoMetis.EFCore.SchemaKit.PostgreSQL $version from the feed, into a private package folder"
 else
   fail "restore" "the consumer did not restore $version from $feed (found: ${restored:-nothing})"
+fi
+
+if [[ -n $ef_direct ]]; then
+  if has "$work/App/obj/project.assets.json" "\"Microsoft.EntityFrameworkCore.Relational/$ef_version\"" "\"Microsoft.EntityFrameworkCore/$ef_version\""; then
+    ok "EF Core $ef_version" "the consumer resolved it, over the version the packages reference"
+  else
+    fail "EF Core $ef_version" "the consumer did not resolve EF Core $ef_version"
+  fi
 fi
 
 # The judge takes the Npgsql the consumer took.

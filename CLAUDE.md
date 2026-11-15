@@ -61,6 +61,9 @@ dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 # The consumer smoke test, on the server SCHEMAKIT_TEST_PG names; a folder of .nupkg as the argument tests those
 SCHEMAKIT_TEST_PG="Host=localhost;Username=postgres;Password=…;Database=postgres" test/ConsumerSmokeTest/run.sh
 
+# The same with the consumer on another EF Core than the packages reference (NU1608 where a package pins it)
+SMOKE_EF_VERSION=11.0.0 SCHEMAKIT_TEST_PG="…" test/ConsumerSmokeTest/run.sh
+
 # Spike B, the first version of the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
 spikes/B.DesignTime/run.sh
 
@@ -532,6 +535,10 @@ A guard is not done until it has been shown to fail without what it guards.
 Npgsql EF `11.0.0-rc.3` depends on EF Core `[11.0.0-rc.3.26522.148]`, exactly. Every EF reference
 in the repository stays on rc.3 until Npgsql ships 11.0.0, although EF Core 11.0.0 is out. A stable
 package cannot depend on a prerelease, so SchemaKit ships previews until then.
+
+A consumer that references EF Core 11.0.0 directly gets NU1608 for Npgsql's pin and a build. The
+smoke test passed every row that way on 2026-11-14 (`SMOKE_EF_VERSION=11.0.0`, PostgreSQL 18.4,
+#143): it says such a consumer works, not that the pins may move.
 
 The probes drive Roslyn `5.12.0-1.26504.105` from the dotnet-tools feed
 (`test/SchemaKit.ApiProbes/nuget.config` says why).
