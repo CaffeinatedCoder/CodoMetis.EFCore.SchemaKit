@@ -88,6 +88,36 @@ public sealed class CiInputConventionTests
             + "so it builds with an SDK that can change under it overnight.");
     }
 
+    /// <summary>
+    /// Every action is used at a commit, with its version in a comment behind it. A tag can be
+    /// moved, and then the action a workflow runs has changed with no diff here; in
+    /// <c>release.yml</c> that is the job that can mint a token. The comment is what Dependabot
+    /// reads to propose the next commit. A workflow of this repository that is called
+    /// (<c>./.github/workflows/dotnet.yml</c>) is at the commit that calls it.
+    /// </summary>
+    [TestMethod(DisplayName = "Every action is used at a commit, with its version in a comment")]
+    public void Every_action_is_used_at_a_commit()
+    {
+        var used = WorkflowFile.All()
+            .SelectMany(fileName => File.ReadLines(Path.Combine(RepositoryLayout.Workflows, fileName))
+                .Select((line, index) => (fileName, Number: index + 1, Uses: Regex.Match(line, @"^\s*(?:- )?uses:\s*(?<action>\S+)(?<rest>.*)$")))
+                .Where(use => use.Uses.Success && !use.Uses.Groups["action"].Value.StartsWith("./", StringComparison.Ordinal)))
+            .ToList();
+
+        Assert.AreNotEqual(0, used.Count, "No action was found in any workflow, so none was read.");
+
+        var floating = used
+            .Where(use => !Regex.IsMatch(use.Uses.Groups["action"].Value, @"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+                          || !Regex.IsMatch(use.Uses.Groups["rest"].Value, @"^\s+# v\d+(?:\.\d+)*\s*$"))
+            .Select(use => $"{use.fileName}:{use.Number}: {use.Uses.Groups["action"].Value}{use.Uses.Groups["rest"].Value}")
+            .ToList();
+
+        Assert.AreEqual(
+            0, floating.Count,
+            "These actions are not used as `owner/name@<40 hex digits> # vX.Y.Z`. A tag or a branch can move under the "
+            + "workflow, and without the comment Dependabot proposes nothing:\n" + string.Join("\n", floating));
+    }
+
     [TestMethod(DisplayName = "The nightly run calls every lane on a schedule")]
     public void The_nightly_run_calls_every_lane_on_a_schedule()
     {
@@ -158,16 +188,16 @@ public sealed class CiInputConventionTests
                 """;
 
             var calls = Path.Combine(folder, "calls.txt");
-            var result = Bash.Run(
-                gh + WorkflowFile.Load(NightlyWorkflow).Run(ReportJob, "Open or update the nightly failure issue"),
-                folder,
+            var result = WorkflowFile.Load(NightlyWorkflow).RunStep(
+                ReportJob, "Open or update the nightly failure issue", folder,
                 new Dictionary<string, string>
                 {
                     ["NEEDS"] = needs,
                     ["OPEN_ISSUE"] = openIssue,
                     ["GH_CALLS"] = calls,
                     ["RUN_URL"] = "https://example.invalid/run",
-                });
+                },
+                before: gh);
 
             var made = File.Exists(calls) ? File.ReadAllText(calls) : "";
 

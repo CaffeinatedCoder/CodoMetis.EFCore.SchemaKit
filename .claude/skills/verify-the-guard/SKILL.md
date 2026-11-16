@@ -34,10 +34,10 @@ Copy the file aside, take the change out, run, copy back:
 
 ```bash
 SCRATCH=$(mktemp -d)
-cp src/CodoMetis.EFCore.SchemaKit/SomeFile.cs "$SCRATCH/"
+cp "<the file>" "$SCRATCH/"
 # take out the new guard alone, then:
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "TestCategory!=Integration"
-cp "$SCRATCH/SomeFile.cs" src/CodoMetis.EFCore.SchemaKit/
+cp "$SCRATCH/<its name>" "<the file>"
 ```
 
 Take back the **source**, never the test. `git checkout --` on a file that holds other work loses
@@ -61,18 +61,27 @@ checkout**:
 
 ```bash
 SCRATCH=$(mktemp -d)
-rsync -a --exclude .git --exclude bin --exclude obj ./ "$SCRATCH/"
+git archive HEAD | tar -x -C "$SCRATCH"
 cd "$SCRATCH" && git init -q && git add -A && git commit -qm pristine
 dotnet build test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj
 # one break at a time: edit a workflow, the changelog, a README, a project file
+git add -A
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --no-build --filter "ClassName~ReleaseWiringConventionTests"
 git reset -q --hard HEAD && git clean -fdq
 ```
 
+`git archive` copies the commit and nothing else. A copy of the folder would bring the build
+outputs and, from a checkout that has worktrees inside it, each of those as well, which is a
+whole repository apiece; for work that is not committed yet, commit it to a branch first.
+
 The convention tests find the repository from their own output folder, so in the copy they read
-the copy. A break of a file that is not compiled needs no build. `git reset --hard`, and not
-`git checkout -- .`: a break made with `git mv` or `git rm` is in the index, and a checkout leaves
-it there for every break that follows.
+the copy, and they read the files git tracks there: a break that adds a file is seen once it is
+added, which is what the `git add -A` is for. A break of a file that is not compiled needs no
+build. `git reset --hard`, and not `git checkout -- .`: a break made with `git mv` or `git rm` is
+in the index, and a checkout leaves it there for every break that follows.
+
+A copy has no `origin`, so the one test that reads Source Link from a packed PDB fails in it
+(`PackagingConventionTests`); that is the copy and not the commit.
 
 For the packages, `test/ConsumerSmokeTest/run.sh` has the break built in: `SMOKE_BREAK` takes one
 registration away from every path that expects SchemaKit (`no-schemakit`, `kernel-only`,

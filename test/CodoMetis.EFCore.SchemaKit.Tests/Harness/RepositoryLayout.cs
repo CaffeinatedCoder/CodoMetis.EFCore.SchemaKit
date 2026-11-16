@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Xml.Linq;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Harness;
@@ -29,24 +30,36 @@ internal static class RepositoryLayout
             .Order(StringComparer.Ordinal)];
 
     /// <summary>
-    /// Every file of the checkout that is no build output: nothing under <c>bin</c>, <c>obj</c>,
-    /// <c>.git</c>, <c>.idea</c>, <c>TestResults</c> or <c>dist</c>, and nothing of another
-    /// worktree, which holds a copy of every file and would answer for one that is gone here.
+    /// Every file of the repository: what git tracks, and is on the disk. Not what the folder
+    /// holds: a build output, a file of the contributor's own that was never added, and another
+    /// worktree under <c>.claude/worktrees</c>, which is a whole copy of the repository, are on
+    /// the disk and in no commit, so a test that read them would answer otherwise here than in CI.
+    /// A file that is new has to be added (<c>git add</c>) before a test sees it.
     /// </summary>
-    public static IEnumerable<string> Files()
+    public static IReadOnlyList<string> Files() => Tracked.Value;
+
+    private static readonly Lazy<IReadOnlyList<string>> Tracked = new(() =>
     {
-        var pending = new Stack<string>([Root]);
-
-        while (pending.TryPop(out var directory))
+        var start = new ProcessStartInfo("git", "ls-files -z")
         {
-            foreach (var file in Directory.EnumerateFiles(directory))
-                yield return file;
+            WorkingDirectory = Root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
 
-            foreach (var child in Directory.EnumerateDirectories(directory))
-                if (Path.GetFileName(child) is not ("bin" or "obj" or ".git" or ".idea" or "TestResults" or "dist" or "worktrees"))
-                    pending.Push(child);
-        }
-    }
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start git.");
+        var error = process.StandardError.ReadToEndAsync();
+        var output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"`git ls-files` failed in {Root}, so the repository's files are not known:{Environment.NewLine}{error.Result}");
+
+        return [.. output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(file => Path.Combine(Root, file.Replace('/', Path.DirectorySeparatorChar)))
+            .Where(File.Exists)];
+    });
 
     /// <summary>A path below the root as the messages write it, with forward slashes.</summary>
     public static string Relative(string path) => Path.GetRelativePath(Root, path).Replace(Path.DirectorySeparatorChar, '/');

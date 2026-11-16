@@ -30,13 +30,17 @@ namespace CodoMetis.EFCore.SchemaKit.Tests.Conventions;
 [TestClass]
 public sealed class SecurityPolicyConsistencyTests
 {
-    // "| 11.0.x | ✅ |": the minor that receives fixes.
-    private static readonly Regex SupportedRow =
-        new(@"^\|\s*(?<major>\d+)\.(?<minor>\d+)\.x\s*\|\s*✅\s*\|", RegexOptions.Multiline | RegexOptions.Compiled);
+    // "| 11.0.x | ✅ |": a minor and what the policy says of it. The mark is read after the row is
+    // found, so a row with another mark is a row all the same: GitHub shows `:white_check_mark:` as
+    // the same tick, and a row found by the emoji alone would not be there for this test.
+    private static readonly Regex MinorRow =
+        new(@"^\|\s*(?<major>\d+)\.(?<minor>\d+)\.x\s*\|\s*(?<mark>[^|]*?)\s*\|", RegexOptions.Multiline | RegexOptions.Compiled);
 
     // "| < 11.0 | ❌ |": everything before it.
     private static readonly Regex UnsupportedRow =
-        new(@"^\|\s*<\s*(?<major>\d+)\.(?<minor>\d+)\s*\|\s*❌\s*\|", RegexOptions.Multiline | RegexOptions.Compiled);
+        new(@"^\|\s*<\s*(?<major>\d+)\.(?<minor>\d+)\s*\|\s*(?:❌|:x:)\s*\|", RegexOptions.Multiline | RegexOptions.Compiled);
+
+    private static readonly string[] Supported = ["✅", ":white_check_mark:"];
 
     // "**11.x** targets **EF Core 11**": the platform the line's support is tied to.
     private static readonly Regex LineTargets =
@@ -100,10 +104,19 @@ public sealed class SecurityPolicyConsistencyTests
     public void The_policy_supports_what_is_released()
     {
         var text = Policy;
-        var rows = SupportedRow.Matches(text)
+        var minors = MinorRow.Matches(text)
             .Select(match => (Major: int.Parse(match.Groups["major"].Value, CultureInfo.InvariantCulture),
-                              Minor: int.Parse(match.Groups["minor"].Value, CultureInfo.InvariantCulture)))
+                              Minor: int.Parse(match.Groups["minor"].Value, CultureInfo.InvariantCulture),
+                              Mark: match.Groups["mark"].Value))
             .ToList();
+        var unmarked = minors.Where(row => !Supported.Contains(row.Mark)).ToList();
+
+        Assert.AreEqual(
+            0, unmarked.Count,
+            $"SECURITY.md has rows for {string.Join(", ", unmarked.Select(row => $"{row.Major}.{row.Minor}.x ('{row.Mark}')"))} that do not say "
+            + "✅. A minor that is in the table is the one that receives fixes; everything before it is the row '| < x.y | ❌ |'.");
+
+        var rows = minors.Select(row => (row.Major, row.Minor)).ToList();
         var latest = ChangelogConsistencyTests.Released().Where(version => !version.IsPrerelease).DefaultIfEmpty().Max();
 
         if (latest is null)

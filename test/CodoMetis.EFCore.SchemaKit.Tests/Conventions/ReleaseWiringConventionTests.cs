@@ -1,6 +1,6 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 using CodoMetis.EFCore.SchemaKit.Tests.Harness;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Conventions;
@@ -51,8 +51,6 @@ public sealed class ReleaseWiringConventionTests
 
     // A YAML key at any indentation, and not the word in a comment: verify's comment says
     // "id-token" to explain why it asks for none.
-    private static readonly Regex WritePermission = new(@"(?m)^\s*(?<scope>[a-z-]+)\s*:\s*write\b", RegexOptions.Compiled);
-
     private static readonly Regex IdTokenKey = new(@"(?m)^\s*id-token\s*:", RegexOptions.Compiled);
 
     private static WorkflowFile Release => WorkflowFile.Load(ReleaseWorkflow);
@@ -114,11 +112,7 @@ public sealed class ReleaseWiringConventionTests
     {
         var release = Release;
 
-        var granted = release.Jobs
-            .SelectMany(job => WritePermission.Matches(job.Value).Select(match => $"{job.Key}: {match.Groups["scope"].Value}"))
-            .Concat(WritePermission.Matches(release.Triggers).Select(match => $"(the workflow): {match.Groups["scope"].Value}"))
-            .Order(StringComparer.Ordinal)
-            .ToList();
+        var granted = release.WritePermissions().ToList();
 
         CollectionAssert.AreEqual(
             new[] { $"{PublishJob}: id-token", $"{ReleaseJob}: contents" }, granted,
@@ -128,6 +122,34 @@ public sealed class ReleaseWiringConventionTests
         StringAssert.Matches(
             release.Triggers, new Regex(@"(?m)^permissions:\s*\n  contents:\s*read\s*$"),
             $"{ReleaseWorkflow}'s own permissions are not `contents: read`, so a job that states none gets the repository's default.");
+    }
+
+    /// <summary>
+    /// No other workflow writes anything but the issue the nightly run reports with. The build
+    /// workflow is what a pull request from a fork runs, and what <c>release.yml</c> and
+    /// <c>nightly.yml</c> call; a write permission there is one every caller hands on.
+    /// </summary>
+    [TestMethod(DisplayName = "No other workflow can write, but the nightly run its issue")]
+    public void No_other_workflow_can_write_but_the_nightly_its_issue()
+    {
+        var others = WorkflowFile.All().Where(fileName => fileName != ReleaseWorkflow).ToList();
+
+        Assert.AreNotEqual(0, others.Count, "No workflow but the release's was found, so none was read.");
+
+        foreach (var fileName in others)
+        {
+            var workflow = WorkflowFile.Load(fileName);
+            string[] expected = fileName == "nightly.yml" ? ["report: issues"] : [];
+
+            CollectionAssert.AreEqual(
+                expected, workflow.WritePermissions().ToList(),
+                $"{fileName} grants write as: {string.Join("; ", workflow.WritePermissions())}. It may write "
+                + (expected.Length == 0 ? "nothing." : $"{string.Join("; ", expected)}, and nothing else."));
+
+            StringAssert.Matches(
+                workflow.Triggers, new Regex(@"(?m)^permissions:\s*\n  contents:\s*read\s*$"),
+                $"{fileName}'s own permissions are not `contents: read`, so a job that states none gets the repository's default.");
+        }
     }
 
     /// <summary>
@@ -268,8 +290,8 @@ public sealed class ReleaseWiringConventionTests
             release.Run(VerifyJob, "Resolve version"), "-getProperty:Version",
             "The version is not MSBuild's evaluation of the Version property, so it is not what the build stamps onto the packages.");
 
-        var result = InScratch(folder => Bash.Run(
-            release.Run(VerifyJob, step), folder,
+        var result = InScratch(folder => release.RunStep(
+            VerifyJob, step, folder,
             new Dictionary<string, string> { ["GITHUB_REF_NAME"] = tag, ["VERSION"] = version }));
 
         Assert.AreEqual(expected, result.ExitCode, $"tag {tag}, version {version}\n{result}");
@@ -317,6 +339,11 @@ public sealed class ReleaseWiringConventionTests
         Assert.AreEqual(1, unreleased.ExitCode, $"A tag for a version whose heading says 'unreleased' went on:\n{unreleased}");
         StringAssert.Contains(unreleased.Output, "is not '## [11.0.0] — yyyy-mm-dd'", unreleased.ToString());
 
+        // The step reads the heading's line to its end: a space behind the date is no date.
+        var (padded, _) = Notes("11.0.0", "refs/tags/v11.0.0", SeededChangelog("2026-11-20 "));
+
+        Assert.AreEqual(1, padded.ExitCode, $"A tag for a version whose heading has a space behind its date went on:\n{padded}");
+
         var (missing, _) = Notes("11.0.2", "refs/tags/v11.0.2", SeededChangelog("2026-11-20"));
 
         Assert.AreEqual(1, missing.ExitCode, $"A tag for a version the changelog does not have went on:\n{missing}");
@@ -327,6 +354,36 @@ public sealed class ReleaseWiringConventionTests
         Assert.AreEqual(0, dryRun.ExitCode, $"A run from a branch stopped at a version the changelog does not have yet:\n{dryRun}");
         StringAssert.Contains(dryRun.Output, "::warning::", dryRun.ToString());
         StringAssert.Contains(notes, "dry run", "A run without a section wrote notes that do not say so.");
+    }
+
+    /// <summary>
+    /// The repository's own changelog, read by the step that reads it on the day of the release,
+    /// with the one edit the tagged commit makes: the date in place of <c>unreleased</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>ChangelogConsistencyTests</c> reads the changelog with a reader of its own, and two
+    /// readers can disagree: its first version trimmed a heading's line, and the step's
+    /// <c>grep</c> does not, so a heading with a space behind it passed every test there and
+    /// stopped the tag. Whatever the two disagree about next, the step is the one that decides,
+    /// so it is asked.
+    /// </remarks>
+    [TestMethod(DisplayName = "The notes step takes the changelog as it stands, once the shipped version has its date")]
+    public void The_notes_step_takes_the_changelog_as_it_stands()
+    {
+        var version = RepositoryLayout.ShippedVersion.ToString();
+        var changelog = File.ReadAllText(RepositoryLayout.Changelog)
+            .Replace($"## [{version}] — unreleased", $"## [{version}] — 2026-01-01", StringComparison.Ordinal);
+
+        var (result, notes) = Notes(version, $"refs/tags/v{version}", changelog);
+
+        Assert.AreEqual(
+            0, result.ExitCode,
+            $"{ReleaseWorkflow}'s step 'Release notes from the changelog' refuses CHANGELOG.md for a tag of {version}, "
+            + $"with the date in place of 'unreleased':\n{result}");
+        Assert.IsFalse(string.IsNullOrWhiteSpace(notes), $"The step wrote no notes for {version}.");
+        Assert.IsFalse(
+            notes.Contains($"{Repository}/blob/main/", StringComparison.Ordinal) || notes.Contains($"{Repository}/tree/main/", StringComparison.Ordinal),
+            $"The notes of {version} link this repository at main:\n{notes}");
     }
 
     /// <summary>
@@ -414,6 +471,11 @@ public sealed class ReleaseWiringConventionTests
     /// tool in the manifest, at one version; what it writes has to be in the artifact, or the
     /// <c>release</c> job finds nothing to attach, after the packages are on nuget.org.
     /// </summary>
+    /// <remarks>
+    /// Where the steps stand is part of it. The SBOMs are written before the artifact is uploaded,
+    /// or it has none; before the pack checks, so that nothing is written into <c>dist/</c> after
+    /// it was checked; and they are attached once the release exists.
+    /// </remarks>
     [TestMethod(DisplayName = "The SBOM tool is pinned in the tool manifest, and the SBOMs travel to the release")]
     public void The_sbom_tool_is_pinned_and_the_sboms_travel_to_the_release()
     {
@@ -435,6 +497,20 @@ public sealed class ReleaseWiringConventionTests
 
         Assert.IsTrue(restore >= 0 && run > restore, "The step 'Generate SBOMs' does not restore the tools before it runs `dotnet cyclonedx`.");
 
+        var verifying = release.Steps(VerifyJob).ToList();
+
+        Assert.IsTrue(
+            InOrder(verifying, "Pack", "Generate SBOMs", "Pack checks", "Collect packages", "Upload packages"),
+            $"The steps of `verify` run as: {string.Join(", ", verifying)}. The SBOMs are written after the pack and before "
+            + "the pack checks, so that dist/ is uploaded as it was checked, and before the upload, or the artifact has none.");
+
+        var releasing = release.Steps(ReleaseJob).ToList();
+
+        Assert.IsTrue(
+            InOrder(releasing, "Download packages", "Create the release if it does not exist", "Attach the SBOMs"),
+            $"The steps of `release` run as: {string.Join(", ", releasing)}. The SBOMs are attached once the artifact is "
+            + "there and the release exists.");
+
         StringAssert.Matches(
             release.Step(VerifyJob, "Upload packages"), new Regex(@"(?m)^            dist/\*\.cdx\.json\s*$"),
             "The artifact of `verify` does not hold dist/*.cdx.json, so the SBOMs never reach the `release` job.");
@@ -451,18 +527,21 @@ public sealed class ReleaseWiringConventionTests
     /// brings, so it is one no project references in any other way.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// No project under <c>src/</c> has such a reference today, and the step has no filter. In
     /// <c>EFCore.ComplexIndexes</c> the one for <c>Microsoft.EntityFrameworkCore.Design</c> kept
     /// about 45 MSBuild and Roslyn components out of an SBOM whose nuspec declared one dependency.
+    /// </para>
+    /// <para>
+    /// The references are MSBuild's, as it evaluates each project, and not the project file's
+    /// text: one that <c>Directory.Build.props</c> gives every project is in no project file, and
+    /// the SBOM tool lists it all the same.
+    /// </para>
     /// </remarks>
     [TestMethod(DisplayName = "The SBOMs leave out what never reaches a consumer, and nothing else")]
     public void The_sboms_leave_out_what_never_reaches_a_consumer_and_nothing_else()
     {
-        var references = RepositoryLayout.ShippingProjects()
-            .SelectMany(project => XDocument.Load(project).Descendants("PackageReference"))
-            .Where(reference => reference.Attribute("Include") is not null)
-            .Select(reference => (Id: reference.Attribute("Include")!.Value, BuildOnly: IsPrivate(reference)))
-            .ToList();
+        var references = RepositoryLayout.ShippingProjects().SelectMany(project => References(project).Packages).ToList();
 
         // The premise: the projects and their references are found.
         Assert.AreNotEqual(0, references.Count, "No package reference was found under src/, so none was checked.");
@@ -509,8 +588,8 @@ public sealed class ReleaseWiringConventionTests
 
         try
         {
-            var result = Bash.Run(
-                Release.Run(VerifyJob, "Generate SBOMs"), RepositoryLayout.Root,
+            var result = Release.RunStep(
+                VerifyJob, "Generate SBOMs", RepositoryLayout.Root,
                 new Dictionary<string, string> { ["VERSION"] = version, ["DIST"] = output, ["DOTNET_NOLOGO"] = "true" });
 
             // The loop writes "==> id" before each package: without one, the tool was not restored.
@@ -541,14 +620,19 @@ public sealed class ReleaseWiringConventionTests
 
                 var components = sbom.RootElement.GetProperty("components").EnumerateArray()
                     .ToDictionary(c => c.GetProperty("name").GetString()!, c => c.GetProperty("version").GetString(), StringComparer.OrdinalIgnoreCase);
-                var csproj = XDocument.Load(project);
+                var (packages, projectReferences) = References(project);
 
                 // What the nuspec depends on: each package reference, and a referenced project of
-                // this repository as the package it is, at this version.
-                foreach (var reference in csproj.Descendants("PackageReference").Where(r => !IsPrivate(r)).Select(r => r.Attribute("Include")!.Value))
-                    Assert.IsTrue(components.ContainsKey(reference), $"{id}: the SBOM does not list {reference}, which the project references.");
+                // this repository as the package it is, at this version. What never reaches a
+                // consumer is not in it.
+                foreach (var reference in packages)
+                    Assert.AreEqual(
+                        !reference.BuildOnly, components.ContainsKey(reference.Id),
+                        reference.BuildOnly
+                            ? $"{id}: the SBOM lists {reference.Id}, which is referenced with PrivateAssets=all and never reaches a consumer."
+                            : $"{id}: the SBOM does not list {reference.Id}, which the project references.");
 
-                foreach (var reference in csproj.Descendants("ProjectReference").Select(r => Path.GetFileNameWithoutExtension(r.Attribute("Include")!.Value.Replace('\\', '/'))))
+                foreach (var reference in projectReferences)
                     Assert.AreEqual(
                         version, components.GetValueOrDefault(reference),
                         $"{id}: the SBOM does not list {reference} at {version}, which the package depends on at exactly that version.");
@@ -606,8 +690,37 @@ public sealed class ReleaseWiringConventionTests
             + "by the OIDC login; the one secret is the profile name, which is no credential.");
     }
 
-    private static bool IsPrivate(XElement reference)
-        => string.Equals(reference.Element("PrivateAssets")?.Value ?? reference.Attribute("PrivateAssets")?.Value, "all", StringComparison.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, (List<(string Id, bool BuildOnly)> Packages, List<string> Projects)> Evaluated = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What a project references, as MSBuild evaluates it: its packages, each with whether it is
+    /// build-only (<c>PrivateAssets="all"</c>), and the projects of this repository, by their names.
+    /// </summary>
+    private static (List<(string Id, bool BuildOnly)> Packages, List<string> Projects) References(string project)
+        => Evaluated.GetOrAdd(project, static path =>
+        {
+            var result = Bash.Run(
+                "dotnet msbuild \"$PROJECT\" -getItem:PackageReference -getItem:ProjectReference", RepositoryLayout.Root,
+                new Dictionary<string, string> { ["PROJECT"] = path, ["DOTNET_NOLOGO"] = "true" }, pipefail: true);
+
+            Assert.AreEqual(0, result.ExitCode, $"MSBuild could not evaluate {RepositoryLayout.Relative(path)}:\n{result}");
+
+            using var document = JsonDocument.Parse(result.Output);
+            var items = document.RootElement.GetProperty("Items");
+
+            return (
+                [.. items.GetProperty("PackageReference").EnumerateArray().Select(item => (
+                    item.GetProperty("Identity").GetString()!,
+                    item.TryGetProperty("PrivateAssets", out var assets) && string.Equals(assets.GetString(), "all", StringComparison.OrdinalIgnoreCase)))],
+                [.. items.GetProperty("ProjectReference").EnumerateArray().Select(item => item.GetProperty("Filename").GetString()!)]);
+        });
+
+    /// <summary>Whether the names stand in the list, in this order.</summary>
+    private static bool InOrder(List<string> steps, params string[] names)
+    {
+        var at = names.Select(name => steps.IndexOf(name)).ToList();
+        return at.All(index => index >= 0) && at.SequenceEqual(at.Order());
+    }
 
     /// <summary>A changelog with the section of 11.0.0 between a newer and an older one.</summary>
     private static string SeededChangelog(string date) => string.Join("\n",
@@ -641,8 +754,8 @@ public sealed class ReleaseWiringConventionTests
         {
             File.WriteAllText(Path.Combine(folder, "CHANGELOG.md"), changelog);
 
-            var result = Bash.Run(
-                Release.Run(VerifyJob, "Release notes from the changelog"), folder,
+            var result = Release.RunStep(
+                VerifyJob, "Release notes from the changelog", folder,
                 new Dictionary<string, string>
                 {
                     ["VERSION"] = version,

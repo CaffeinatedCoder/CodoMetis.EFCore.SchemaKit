@@ -18,7 +18,10 @@ namespace CodoMetis.EFCore.SchemaKit.Tests.Conventions;
 /// <para>
 /// The heading is asserted and not only parsed: <c>release.yml</c> takes the notes from
 /// <c>## [x.y.z] — </c> up to the next <c>##</c>, and every test below reads a section the same
-/// way. <see cref="Every_level_two_heading_is_a_version_heading" /> is what ties the two together.
+/// way. <see cref="Every_level_two_heading_is_a_version_heading" /> is what ties the two together,
+/// so it reads a heading's line as the step's <c>grep</c> does, to its last character: a space
+/// or a carriage return behind the date is no date to either. And since two readers can still
+/// disagree, <c>ReleaseWiringConventionTests</c> hands this changelog to the step itself.
 /// </para>
 /// </remarks>
 [TestClass]
@@ -58,6 +61,12 @@ public sealed class ChangelogConsistencyTests
     }
 
     /// <summary>
+    /// The changelog's lines as <c>grep</c> and <c>awk</c> get them: split at the line feed and at
+    /// nothing else, so a carriage return stays on its line.
+    /// </summary>
+    private static string[] Lines() => File.ReadAllText(RepositoryLayout.Changelog).Split('\n');
+
+    /// <summary>
     /// Each version section: the lines after its heading up to the next <c>##</c> heading, with
     /// their line numbers. What stands above the first heading is the file's own header.
     /// </summary>
@@ -65,11 +74,12 @@ public sealed class ChangelogConsistencyTests
     {
         var sections = new List<Section>();
         Section? current = null;
-        var all = File.ReadAllLines(RepositoryLayout.Changelog);
+        var all = Lines();
 
         for (var index = 0; index < all.Length; index++)
         {
-            var line = all[index].TrimEnd();
+            // A heading's line is read whole; a line of a section without what trails it.
+            var line = all[index].StartsWith("## ", StringComparison.Ordinal) ? all[index] : all[index].TrimEnd();
 
             if (line.StartsWith("## ", StringComparison.Ordinal))
             {
@@ -139,16 +149,17 @@ public sealed class ChangelogConsistencyTests
     [TestMethod(DisplayName = "Every '##' heading of the changelog is a version heading")]
     public void Every_level_two_heading_is_a_version_heading()
     {
-        var offenders = File.ReadAllLines(RepositoryLayout.Changelog)
-            .Select((line, index) => (Line: line.TrimEnd(), Number: index + 1))
+        var offenders = Lines()
+            .Select((line, index) => (Line: line, Number: index + 1))
             .Where(entry => entry.Line.StartsWith("## ", StringComparison.Ordinal) && !VersionHeading.IsMatch(entry.Line))
-            .Select(entry => $"CHANGELOG.md:{entry.Number}: '{entry.Line}'")
+            .Select(entry => $"CHANGELOG.md:{entry.Number}: '{Visible(entry.Line)}'")
             .ToList();
 
         Assert.AreEqual(
             0, offenders.Count,
-            $"These headings are not '## [x.y.z] — yyyy-mm-dd' (or '— {Unreleased}' for the version being prepared). "
-            + "release.yml takes the release's notes from that heading, and the other changelog tests read nothing else:\n"
+            $"These headings are not '## [x.y.z] — yyyy-mm-dd' (or '— {Unreleased}' for the version being prepared), to the "
+            + "line's last character: release.yml takes the release's notes from that heading and refuses a tag whose "
+            + "heading has anything behind the date, and the other changelog tests read nothing else:\n"
             + string.Join("\n", offenders));
     }
 
@@ -334,4 +345,10 @@ public sealed class ChangelogConsistencyTests
     }
 
     private static string Truncate(string line) => line.Length <= 60 ? line : line[..57] + "...";
+
+    /// <summary>A line with what cannot be seen at its end written out: a carriage return, a space, a tab.</summary>
+    private static string Visible(string line)
+        => line.Replace("\r", "\\r", StringComparison.Ordinal) is var shown && shown.TrimEnd() != shown
+            ? shown.TrimEnd() + new string('·', shown.Length - shown.TrimEnd().Length)
+            : shown;
 }

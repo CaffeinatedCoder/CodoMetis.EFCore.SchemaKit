@@ -164,22 +164,6 @@ jobs:
       - name: Pack
         run: dotnet pack CodoMetis.EFCore.SchemaKit.slnx -c Release --no-build -o dist
 
-      # The pack checks, on the packages that are about to be published and not on a second pack
-      # of the same commit: the kernel dependency exact, a README and symbols in each, license,
-      # repository, commit and framework. SCHEMAKIT_PACKAGES makes PackagingConventionTests read
-      # the folder. A filter that matches nothing passes, so the count is read back.
-      - name: Pack checks
-        env:
-          SCHEMAKIT_PACKAGES: ${{ github.workspace }}/dist
-        run: |
-          dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj \
-            -c Release --no-build \
-            --filter "ClassName~PackagingConventionTests" | tee pack-checks.log
-          if ! grep -Eq 'Passed:[[:space:]]+[1-9]' pack-checks.log; then
-            echo "::error::No pack check ran."
-            exit 1
-          fi
-
       # One CycloneDX SBOM per package, saying what a consumer of it takes on: the package's own
       # dependencies, and for the PostgreSQL package the kernel at this version, as its nuspec
       # states it (--include-project-references). The tool is pinned in .config/dotnet-tools.json.
@@ -189,6 +173,9 @@ jobs:
       # it would list its whole subtree as theirs. ReleaseWiringConventionTests holds that, and
       # runs these lines as they are, into a folder of its own: that is why the folder is a
       # variable. A step that first ran on release day would fail there.
+      #
+      # Before the pack checks, so that nothing is written into dist/ after it was checked: what
+      # is uploaded is what the checks and the count below read.
       - name: Generate SBOMs
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -212,6 +199,22 @@ jobs:
               exit 1
             fi
           done
+
+      # The pack checks, on the packages that are about to be published and not on a second pack
+      # of the same commit: the kernel dependency exact, a README and symbols in each, license,
+      # repository, commit and framework. SCHEMAKIT_PACKAGES makes PackagingConventionTests read
+      # the folder. A filter that matches nothing passes, so the count is read back.
+      - name: Pack checks
+        env:
+          SCHEMAKIT_PACKAGES: ${{ github.workspace }}/dist
+        run: |
+          dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj \
+            -c Release --no-build \
+            --filter "ClassName~PackagingConventionTests" | tee pack-checks.log
+          if ! grep -Eq 'Passed:[[:space:]]+[1-9]' pack-checks.log; then
+            echo "::error::No pack check ran."
+            exit 1
+          fi
 
       # One package and one symbols package per project under src/, at the version, and nothing
       # else: what is uploaded here is what `publish` pushes.

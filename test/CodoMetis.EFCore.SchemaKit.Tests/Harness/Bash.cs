@@ -3,9 +3,11 @@ using System.Diagnostics;
 namespace CodoMetis.EFCore.SchemaKit.Tests.Harness;
 
 /// <summary>
-/// Runs a script the way a workflow step with <c>shell: bash</c> runs it, <c>bash -eo pipefail</c>,
-/// in a folder and with the variables the test gives it. For the convention tests that run a
-/// step's own lines.
+/// Runs a script the way a runner runs a workflow step, in a folder and with the variables the
+/// test gives it: <c>bash --noprofile --norc -eo pipefail</c> for a step that is given the shell
+/// <c>bash</c>, and <c>bash -e</c> for one that is given none, which is what a runner on Linux
+/// does. Which of the two a step gets is <see cref="WorkflowFile.Pipefail" />'s to say. For the
+/// convention tests that run a step's own lines.
 /// </summary>
 internal static class Bash
 {
@@ -14,7 +16,7 @@ internal static class Bash
         public override string ToString() => $"exit {ExitCode}\n{Output}\n{Error}";
     }
 
-    public static Result Run(string script, string workingDirectory, IReadOnlyDictionary<string, string> environment)
+    public static Result Run(string script, string workingDirectory, IReadOnlyDictionary<string, string> environment, bool pipefail)
     {
         var start = new ProcessStartInfo("bash")
         {
@@ -23,10 +25,8 @@ internal static class Bash
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        start.ArgumentList.Add("-eo");
-        start.ArgumentList.Add("pipefail");
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add(script);
+        foreach (var argument in pipefail ? new[] { "--noprofile", "--norc", "-eo", "pipefail", "-c", script } : ["-e", "-c", script])
+            start.ArgumentList.Add(argument);
 
         // What a runner sets and a step may read is given by the test, never taken from the machine.
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("GITHUB_", StringComparison.Ordinal)).ToList())

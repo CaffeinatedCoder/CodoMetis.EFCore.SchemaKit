@@ -93,6 +93,42 @@ public sealed class WorkflowGateConventionTests
     }
 
     /// <summary>
+    /// No job says <c>continue-on-error</c>. It lets a workflow run pass when the job fails, which
+    /// is the one thing the gate is there to stop: a lane that carries it can fail and be no
+    /// failure to anything that reads its result. The jobs of <c>release.yml</c> and
+    /// <c>nightly.yml</c> are held to it as well, since <c>publish</c> and the report rest on
+    /// their jobs' results the same way.
+    /// </summary>
+    /// <remarks>
+    /// A step may say it, for a step whose failure the job handles itself. A job may not, whatever
+    /// the value: one that reads it from the matrix goes on for some rows.
+    /// </remarks>
+    [TestMethod(DisplayName = "No job of any workflow goes on after an error")]
+    public void No_job_goes_on_after_an_error()
+    {
+        var jobs = 0;
+        var offenders = new List<string>();
+
+        foreach (var fileName in WorkflowFile.All())
+        {
+            var workflow = WorkflowFile.Load(fileName);
+
+            foreach (var job in workflow.Jobs.Keys)
+            {
+                jobs++;
+                if (workflow.Key(job, "continue-on-error") is { } value && value != "false")
+                    offenders.Add($"{fileName}: {job} (continue-on-error: {value})");
+            }
+        }
+
+        Assert.AreNotEqual(0, jobs, "No job of any workflow was found, so none was read.");
+        Assert.AreEqual(
+            0, offenders.Count,
+            $"{string.Join(", ", offenders)}. A job with continue-on-error lets the run pass when it fails, which is what "
+            + "the gate, the release's `needs` and the nightly report are there to stop.");
+    }
+
+    /// <summary>
     /// The gate's script, run with the results a runner hands it: the two tests above match its
     /// text, and a comparison that is written and never reached matches too.
     /// </summary>
@@ -108,9 +144,8 @@ public sealed class WorkflowGateConventionTests
 
         try
         {
-            var result = Bash.Run(
-                Build.Run(GateJob, "Every lane succeeded"),
-                folder,
+            var result = Build.RunStep(
+                GateJob, "Every lane succeeded", folder,
                 new Dictionary<string, string> { ["NEEDS"] = needs, ["GITHUB_STEP_SUMMARY"] = Path.Combine(folder, "summary.md") });
 
             Assert.AreEqual(expected, result.ExitCode, $"needs = {needs}\n{result}");

@@ -519,15 +519,30 @@ here yet are listed in #152, each with what has to exist first.
   prerelease there and never Latest.
 - **`— unreleased` stands for the date of the version being prepared,** and of no other section
   (`ChangelogConsistencyTests`). The commit that is tagged puts the date there; `release.yml`
-  refuses a tag while it stands. A dry run stops at it too, which is #151.
+  refuses a tag while it stands. A dry run stops at it too, from the commit that opens a version
+  to the one that dates it (#151). The heading is read to its line's last character, as the
+  step's `grep` reads it, and the step is handed the changelog itself, with the date put in.
 - **`verify` writes one CycloneDX SBOM per package** with the tool `.config/dotnet-tools.json`
-  pins, and `release` attaches them to the GitHub release. A reference with `PrivateAssets="all"`
-  under `src/` is named in the step's `--exclude-filter`, and nothing else is.
-- **A rule about what a step does is held by running the step.** `WorkflowFile.Run` takes a
-  step's `run:` block out of the workflow and `Harness/Bash.cs` runs it as a runner would, in a
+  pins, before the pack checks, so that the packed folder is uploaded as it was checked, and
+  `release` attaches them once the release exists. A reference with `PrivateAssets="all"` is named in the
+  step's `--exclude-filter`, and nothing else is; the references are read as MSBuild evaluates
+  a project, since `Directory.Build.props` can give every project one.
+- **A rule about what a step does is held by running the step.** `WorkflowFile.RunStep` takes a
+  step's `run:` block out of the workflow and `Harness/Bash.cs` runs it as a runner does, in a
   folder of the test's: the tag check, the release's notes, the SBOMs, `dotnet.yml`'s gate, the
   nightly report. A rule matched against the text passes with the lines rewritten into something
   that never matches. A step that writes into the checkout takes its folder from a variable.
+  The script runs with `pipefail` only where the step, its job or its workflow says
+  `shell: bash`; with no shell a runner runs `bash -e`.
+- **`WorkflowFile` sees every job or fails.** Each line at two spaces under `jobs:` is a job's
+  key, with a comment behind it or in quotes; a job written on its key's line fails the test
+  that loads the file. A job the reader passed over would be a lane no rule is asked of.
+- **No job says `continue-on-error`,** every action is used at a commit with its version in a
+  comment, and no workflow but `release.yml` writes anything but the nightly's issue
+  (`WorkflowGateConventionTests`, `CiInputConventionTests`, `ReleaseWiringConventionTests`).
+- **A test that reads the repository reads what git tracks** (`RepositoryLayout.Files`), not
+  the folder: a file that was never added and another worktree's copy are on the disk and in no
+  commit. Add a new file before a test is asked about it.
 - **`nightly.yml` calls `dotnet.yml` every night** and opens an issue, or comments on the open
   one, for every result but success (`CiInputConventionTests`). Nothing may depend on it: GitHub
   turns a schedule off after 60 days without activity.
@@ -554,9 +569,13 @@ under `src/*/README.md`, which is what nuget.org shows. Held by
   `Type.Member` in inline code is public API of this repository, or on the test's list of EF Core,
   Npgsql and BCL calls. The first column of a table headed `5.x` is 5.x's API and is not read.
   A package's README names no call only another provider's package has.
-- **What CLAUDE.md and the skills cite exists** (`ClaudeMdConsistencyTests`): a path, a file
-  name, an annotation key under `CodoMetis:` or `Custom…:`, a member written with its type. Write
-  them in backticks as they are; a rename that leaves one behind fails.
+- **What CLAUDE.md and the skills cite exists** (`ClaudeMdConsistencyTests`): a path, in
+  backticks or in a command of a code block; a file name; an annotation key under `CodoMetis:`
+  or `Custom…:`; a member written with its type; a test class; what a command's `--filter`
+  names. A name written alone, be it a type, a member or a call, has to occur in a C# or
+  project file, which is less: nothing says whose member it is, and a name that lingers in a
+  comment counts. Write each as it is, a placeholder of a command in angle brackets, and a
+  name that is another library's and that the source does not use on the test's short list.
 - **Write only what is measured.** A statement about what a migration does names the test that
   shows it, or is left out.
 - **The voice of a page a consumer reads is the skill `plain-docs`.** The README and the guide
