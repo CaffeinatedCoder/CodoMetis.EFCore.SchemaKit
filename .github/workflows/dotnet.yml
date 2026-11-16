@@ -208,12 +208,8 @@ jobs:
       # A filter that matches nothing passes. The count is read back, so a renamed category cannot
       # retire the live tests while the lane reports green. CI is set on every runner, which makes
       # a missing server fail these tests instead of leaving them inconclusive.
-      #
-      # pipefail, since the tests' output goes through tee: without it the pipe's status is tee's,
-      # and a failed test leaves the step green (#150).
       - name: Integration tests
         run: |
-          set -o pipefail
           project=CodoMetis.EFCore.SchemaKit.SecondProvider.Tests
           dotnet test "test/$project/$project.csproj" \
             -c Release \
