@@ -507,10 +507,17 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
 - **Nothing under `src/` was changed for it, and nothing may be.** Where the contract cannot say
   what SQL Server or SQLite needs, the contributor goes around it and says so, or a test holds
   the failure. `PublicContractTests` holds that the kernel grants the assembly no internals.
-- **Every rule of a contributor has a test that breaks it.** `ImpactOverride` and
-  `CreateAsAPlainStatement` are there for that: `Answered_as_…` and `Written_as_…` apply the
-  migration with one answer changed and assert the server's message number. A rule added without
-  such a test is not held.
+- **A rule is held when a test fails with the rule changed, and that was measured by hand, once.**
+  Each line of the two contributors, dialects and declarations was changed in turn and the
+  project run on the server: 102 changes, of which 94 fail a test and 8 are no rules (#119 says
+  why for each: the answer to `TableDropped`, an answer to a change the provider never makes,
+  which of `Plan`'s descriptors names the table, and on SQLite `WithName` and a `Lost` beside
+  the rebuild's). Nothing repeats that run: a rule added later is held once its change is shown
+  to fail. `ImpactOverride` and `CreateAsAPlainStatement` change a rule inside the suite:
+  `Answered_as_…` and `Written_as_…` apply the migration with one answer changed and assert the
+  server's message number. `ClaimedAs` lets the index stand in for an object of the schema,
+  which this contributor has none of, so that the dialect's claims for EF Core's tables,
+  constraints and sequences are compared with something.
 - **SQL Server's impact table is not PostgreSQL's.** A dropped or altered column is refused under
   an index (Msg 5074, Msg 4922), so both are `RebuildAround`; `Lost` is for a dropped table alone.
   The rename of a key or an included column follows, the rename of a column the filter reads is
@@ -525,7 +532,10 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
   literals. The only way from composed SQL to a literal is `SqlFragment.ToString()`.
 - **The scripts are EF Core's own Migrator's.** `Harness/Scripted.cs` is a context with three
   migrations in the test assembly; each holds what the differ scaffolds for its step and the
-  compiled snapshot of its target model.
+  compiled snapshot of its target model. They are applied batch by batch on SqlClient, whose
+  session has `QUOTED_IDENTIFIER` on. With it off, which is how `sqlcmd` starts without `-I`,
+  SQL Server refuses to create a filtered index, EF Core's own too (Msg 1934): the script tests
+  say the batches compile, not that `sqlcmd` applies them.
 - **The live tests take a database each** (`SqlServerDatabase`, also with a collation of its own)
   and compare the indexes a migration leaves with what `EnsureCreated()` builds. An index that
   was renamed is told from one that was rebuilt by its storage (`hobt_id`); a change of
