@@ -251,8 +251,9 @@ as it went would leave the half-built constraint in the model when the chain sto
 
 ### P3. Operands and options are typed by the CLR type, where the CLR type decides the store type
 
-`Overlaps` has overloads for `NpgsqlRange<T>`, `NpgsqlRange<T>?`, `T[]` and `List<T>` (ranges,
-multiranges and arrays) and nothing else. `Collate` is an extension on `PgKey<string>` and
+`Overlaps` has overloads for `NpgsqlRange<T>`, `NpgsqlRange<T>?`, `NpgsqlRange<T>[]` and
+`List<NpgsqlRange<T>>` (ranges and multiranges) and nothing else. A plain array is left out: GiST
+has no operator class for one, and PostgreSQL refuses the constraint at apply (42704, #104). `Collate` is an extension on `PgKey<string>` and
 `PgKey<char>` only.
 
 ```csharp

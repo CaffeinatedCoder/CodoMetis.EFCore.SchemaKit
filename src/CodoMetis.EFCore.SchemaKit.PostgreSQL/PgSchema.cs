@@ -38,15 +38,20 @@ public readonly struct PgSchema<TEntity>
     public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, NpgsqlRange<T>?>> range)
         => new([Exclusions.Element(range, ExclusionOperator.Overlaps)]);
 
-    /// <summary>Starts the elements of an exclusion constraint with an array or a multirange compared by <c>&amp;&amp;</c>.</summary>
-    /// <param name="arrayOrMultirange">An array or multirange property.</param>
-    /// <typeparam name="T">The element type.</typeparam>
-    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, T[]>> arrayOrMultirange)
-        => new([Exclusions.Element(arrayOrMultirange, ExclusionOperator.Overlaps)]);
+    /// <summary>Starts the elements of an exclusion constraint with a multirange compared by <c>&amp;&amp;</c>.</summary>
+    /// <remarks>
+    /// A multirange is an array or a list of ranges on the CLR side, which Npgsql maps to a
+    /// multirange column. A plain array does not compile here: GiST has no operator class for it,
+    /// and PostgreSQL would refuse the constraint when the migration is applied (#104).
+    /// </remarks>
+    /// <param name="multirange">A multirange property.</param>
+    /// <typeparam name="T">The ranges' element type.</typeparam>
+    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, NpgsqlRange<T>[]>> multirange)
+        => new([Exclusions.Element(multirange, ExclusionOperator.Overlaps)]);
 
-    /// <inheritdoc cref="Overlaps{T}(Expression{Func{TEntity, T[]}})" />
-    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, List<T>>> arrayOrMultirange)
-        => new([Exclusions.Element(arrayOrMultirange, ExclusionOperator.Overlaps)]);
+    /// <inheritdoc cref="Overlaps{T}(Expression{Func{TEntity, NpgsqlRange{T}[]}})" />
+    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, List<NpgsqlRange<T>>>> multirange)
+        => new([Exclusions.Element(multirange, ExclusionOperator.Overlaps)]);
 
     /// <summary>
     /// An exclusion constraint backed by a GiST index: no two rows may satisfy every element's
@@ -132,15 +137,20 @@ public sealed class ExclusionDraft<TEntity>
     public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, NpgsqlRange<T>?>> range)
         => new([.. Elements, Exclusions.Element(range, ExclusionOperator.Overlaps)]);
 
-    /// <summary>Adds an array or a multirange compared by <c>&amp;&amp;</c>, which makes these a constraint's elements.</summary>
-    /// <param name="arrayOrMultirange">An array or multirange property.</param>
-    /// <typeparam name="T">The element type.</typeparam>
-    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, T[]>> arrayOrMultirange)
-        => new([.. Elements, Exclusions.Element(arrayOrMultirange, ExclusionOperator.Overlaps)]);
+    /// <summary>Adds a multirange compared by <c>&amp;&amp;</c>, which makes these a constraint's elements.</summary>
+    /// <remarks>
+    /// A multirange is an array or a list of ranges on the CLR side, which Npgsql maps to a
+    /// multirange column. A plain array does not compile here: GiST has no operator class for it,
+    /// and PostgreSQL would refuse the constraint when the migration is applied (#104).
+    /// </remarks>
+    /// <param name="multirange">A multirange property.</param>
+    /// <typeparam name="T">The ranges' element type.</typeparam>
+    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, NpgsqlRange<T>[]>> multirange)
+        => new([.. Elements, Exclusions.Element(multirange, ExclusionOperator.Overlaps)]);
 
-    /// <inheritdoc cref="Overlaps{T}(Expression{Func{TEntity, T[]}})" />
-    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, List<T>>> arrayOrMultirange)
-        => new([.. Elements, Exclusions.Element(arrayOrMultirange, ExclusionOperator.Overlaps)]);
+    /// <inheritdoc cref="Overlaps{T}(Expression{Func{TEntity, NpgsqlRange{T}[]}})" />
+    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, List<NpgsqlRange<T>>>> multirange)
+        => new([.. Elements, Exclusions.Element(multirange, ExclusionOperator.Overlaps)]);
 
     /// <summary>
     /// Adds an element compared by any operator. Unchecked: the compiler does not know whether the
@@ -182,15 +192,20 @@ public sealed class ExclusionElements<TEntity>
     public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, NpgsqlRange<T>?>> range)
         => new([.. Elements, Exclusions.Element(range, ExclusionOperator.Overlaps)]);
 
-    /// <summary>Adds an array or a multirange compared by <c>&amp;&amp;</c>.</summary>
-    /// <param name="arrayOrMultirange">An array or multirange property.</param>
-    /// <typeparam name="T">The element type.</typeparam>
-    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, T[]>> arrayOrMultirange)
-        => new([.. Elements, Exclusions.Element(arrayOrMultirange, ExclusionOperator.Overlaps)]);
+    /// <summary>Adds a multirange compared by <c>&amp;&amp;</c>.</summary>
+    /// <remarks>
+    /// A multirange is an array or a list of ranges on the CLR side, which Npgsql maps to a
+    /// multirange column. A plain array does not compile here: GiST has no operator class for it,
+    /// and PostgreSQL would refuse the constraint when the migration is applied (#104).
+    /// </remarks>
+    /// <param name="multirange">A multirange property.</param>
+    /// <typeparam name="T">The ranges' element type.</typeparam>
+    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, NpgsqlRange<T>[]>> multirange)
+        => new([.. Elements, Exclusions.Element(multirange, ExclusionOperator.Overlaps)]);
 
-    /// <inheritdoc cref="Overlaps{T}(Expression{Func{TEntity, T[]}})" />
-    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, List<T>>> arrayOrMultirange)
-        => new([.. Elements, Exclusions.Element(arrayOrMultirange, ExclusionOperator.Overlaps)]);
+    /// <inheritdoc cref="Overlaps{T}(Expression{Func{TEntity, NpgsqlRange{T}[]}})" />
+    public ExclusionElements<TEntity> Overlaps<T>(Expression<Func<TEntity, List<NpgsqlRange<T>>>> multirange)
+        => new([.. Elements, Exclusions.Element(multirange, ExclusionOperator.Overlaps)]);
 
     /// <inheritdoc cref="ExclusionDraft{TEntity}.WithUncheckedOperator" />
     public ExclusionElements<TEntity> WithUncheckedOperator<TValue>(Expression<Func<TEntity, TValue>> key, string @operator)

@@ -298,6 +298,58 @@ public sealed class PgExclusionLiveTests
         Assert.AreEqual(6, read.Grants.Count());
     }
 
+    /// <summary>
+    /// A multirange, as an array of ranges and as a list of them, reaches the catalog as one, and
+    /// the constraint refuses rows whose ranges overlap anywhere (#104). The equality element on
+    /// the integer brings btree_gist; the multirange needs nothing.
+    /// </summary>
+    [TestMethod]
+    public void A_constraint_on_a_multirange_refuses_overlapping_rows()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.Multiranges>();
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                """public.rosters | ex_leave | index ex_leave | EXCLUDE USING gist ("Leave" WITH &&)""",
+                """public.rosters | ex_shifts | index ex_shifts | EXCLUDE USING gist ("WorkerId" WITH =, "Shifts" WITH &&)""",
+            },
+            database.Exclusions());
+        using (var connection = database.Open())
+        {
+            CollectionAssert.AreEqual(
+                new[] { "Leave datemultirange", "Shifts datemultirange" },
+                connection.Column("""SELECT attname || ' ' || format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = 'rosters'::regclass AND attname IN ('Shifts', 'Leave') ORDER BY 1"""));
+        }
+
+        void Save(int worker, NpgsqlRange<DateOnly>[] shifts, params NpgsqlRange<DateOnly>[] leave)
+        {
+            using var context = Contexts.Of<Models.Multiranges>(database.ConnectionString);
+            context.Set<Roster>().Add(new Roster { WorkerId = worker, Shifts = shifts, Leave = [.. leave] });
+            context.SaveChanges();
+        }
+
+        void Refused(string constraint, Action save)
+        {
+            var refusal = Assert.ThrowsExactly<DbUpdateException>(save);
+            Assert.AreEqual(PostgresErrorCodes.ExclusionViolation, ((PostgresException)refusal.InnerException!).SqlState);
+            Assert.AreEqual(constraint, ((PostgresException)refusal.InnerException!).ConstraintName);
+        }
+
+        Save(1, [Days(1, 5), Days(10, 15)], Days(1, 2));
+
+        // The second range of the first row overlaps: a multirange is compared as a whole.
+        Refused("ex_shifts", () => Save(1, [Days(12, 13)], Days(20, 21)));
+        Refused("ex_leave", () => Save(2, [], Days(1, 3), Days(25, 26)));
+
+        Save(2, [Days(12, 13)], Days(20, 21));      // another worker
+        Save(1, [Days(5, 10)], Days(2, 3));         // the gap between the shifts, adjacent on both sides
+
+        using var read = Contexts.Of<Models.Multiranges>(database.ConnectionString);
+        Assert.AreEqual(3, read.Set<Roster>().Count());
+    }
+
     /// <summary><c>INITIALLY DEFERRED</c>: rows may overlap inside a transaction, and not when it commits.</summary>
     [TestMethod]
     public void A_deferred_constraint_is_checked_at_commit()

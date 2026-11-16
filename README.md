@@ -61,7 +61,7 @@ SQL for fails in `OnModelCreating`, not in a migration.
 ## What this preview does
 
 - **Exclusion constraints on PostgreSQL,** declared with `DeclarePostgres`: elements compared by
-  `=` (`Equal`), by `&&` on a range, an array or a multirange (`Overlaps`), or by any other operator
+  `=` (`Equal`), by `&&` on a range or a multirange (`Overlaps`), or by any other operator
   (`WithUncheckedOperator`, checked by the database when the migration is applied); a condition;
   a deferral; a name, or a default one. An element may be a property, a path through a complex
   type, or an expression the translator renders, such as `x.Code.ToLower()`.
@@ -97,8 +97,6 @@ SQL for fails in `OnModelCreating`, not in a migration.
 
 Known defects of this preview, each with what it costs:
 
-- `Overlaps` over a plain array compiles, and the migration fails at apply: GiST has no operator
-  class for arrays ([#104](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/104)).
 - A table moved back to the default schema stays in its old schema on Npgsql, with its constraints
   ([#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105)).
 
