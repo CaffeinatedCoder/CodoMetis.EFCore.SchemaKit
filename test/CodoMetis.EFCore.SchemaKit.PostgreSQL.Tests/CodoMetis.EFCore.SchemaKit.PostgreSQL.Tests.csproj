@@ -20,9 +20,12 @@
         <PackageReference Include="MSTest" Version="4.5.2" />
     </ItemGroup>
 
-    <!-- One copy of each: what scaffolds and compiles a model snapshot, and what finds the server. -->
+    <!-- One copy of each: what scaffolds and compiles a model snapshot, what finds the server, and
+         what finds the checkout and its files (with the version type it reads). -->
     <ItemGroup>
         <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/Snapshots.cs" Link="Harness/Snapshots.cs" />
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/RepositoryLayout.cs" Link="Harness/RepositoryLayout.cs" />
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/ReleaseVersion.cs" Link="Harness/ReleaseVersion.cs" />
         <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Integration/PostgresServer.cs" Link="Integration/PostgresServer.cs" />
     </ItemGroup>
 

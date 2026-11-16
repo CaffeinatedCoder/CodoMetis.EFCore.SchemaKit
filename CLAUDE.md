@@ -22,7 +22,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` with its factory `PgSchema<T>` and `DeclarePostgres`, and its contributor. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
 | `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
 | `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedOtherKinds/` of one with the kinds nothing reads yet (indexes, a temporal constraint). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
-| `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone |
+| `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
@@ -492,8 +492,9 @@ fail instead: an unreachable server must not retire them while the build reports
 
 ## Packaging and the release
 
-`.github/workflows/release.yml`, `Conventions/PackagingConventionTests.cs` (#35 lists what of the
-5.x port is still missing: the SBOMs, `nightly.yml`, the other convention tests).
+`.github/workflows/release.yml`, `nightly.yml`, and the tests under `Conventions/` of the kernel's
+test project that hold them, ported from 5.x (#35). The guards of 5.x whose subject does not exist
+here yet are listed in #152, each with what has to exist first.
 
 - **The PostgreSQL package depends on the kernel at exactly its own version,** `[11.0.0-preview.1]`.
   Pack writes a project reference as a lower bound; the target `ExactKernelVersion` in the
@@ -516,6 +517,38 @@ fail instead: an unreachable server must not retire them while the build reports
 - **The version needs its section in `CHANGELOG.md`,** `## [x.y.z] — yyyy-mm-dd`: `verify` fails
   a tag without one, and the section is the GitHub release's notes. A version with a suffix is a
   prerelease there and never Latest.
+- **`— unreleased` stands for the date of the version being prepared,** and of no other section
+  (`ChangelogConsistencyTests`). The commit that is tagged puts the date there; `release.yml`
+  refuses a tag while it stands. A dry run stops at it too, from the commit that opens a version
+  to the one that dates it (#151). The heading is read to its line's last character, as the
+  step's `grep` reads it, and the step is handed the changelog itself, with the date put in.
+- **`verify` writes one CycloneDX SBOM per package** with the tool `.config/dotnet-tools.json`
+  pins, before the pack checks, so that the packed folder is uploaded as it was checked, and
+  `release` attaches them once the release exists. A reference with `PrivateAssets="all"` is named in the
+  step's `--exclude-filter`, and nothing else is; the references are read as MSBuild evaluates
+  a project, since `Directory.Build.props` can give every project one.
+- **A rule about what a step does is held by running the step.** `WorkflowFile.RunStep` takes a
+  step's `run:` block out of the workflow and `Harness/Bash.cs` runs it as a runner does, in a
+  folder of the test's: the tag check, the release's notes, the SBOMs, `dotnet.yml`'s gate, the
+  nightly report. A rule matched against the text passes with the lines rewritten into something
+  that never matches. A step that writes into the checkout takes its folder from a variable.
+  The script runs with `pipefail` only where the step, its job or its workflow says
+  `shell: bash`; with no shell a runner runs `bash -e`.
+- **`WorkflowFile` sees every job or fails.** Each line at two spaces under `jobs:` is a job's
+  key, with a comment behind it or in quotes; a job written on its key's line fails the test
+  that loads the file. A job the reader passed over would be a lane no rule is asked of.
+- **No job says `continue-on-error`,** every action is used at a commit with its version in a
+  comment, and no workflow but `release.yml` writes anything but the nightly's issue
+  (`WorkflowGateConventionTests`, `CiInputConventionTests`, `ReleaseWiringConventionTests`).
+- **A test that reads the repository reads what git tracks** (`RepositoryLayout.Files`), not
+  the folder: a file that was never added and another worktree's copy are on the disk and in no
+  commit. Add a new file before a test is asked about it.
+- **`nightly.yml` calls `dotnet.yml` every night** and opens an issue, or comments on the open
+  one, for every result but success (`CiInputConventionTests`). Nothing may depend on it: GitHub
+  turns a schedule off after 60 days without activity.
+- **SECURITY.md supports what is released** (`SecurityPolicyConsistencyTests`): no row before a
+  version without a suffix has its date in the changelog, then one row for the latest minor. The
+  commit that dates `11.0.0` fails until the policy has its table.
 - **Never tag or publish:** a release is the maintainer's to trigger.
 
 ## The documentation
@@ -532,8 +565,21 @@ under `src/*/README.md`, which is what nuget.org shows. Held by
 - **Every link resolves:** a relative one to a file and a heading that exist, an absolute one to
   this repository's `blob/main` or `tree/main` the same way. A package README has absolute links
   only, since nuget.org resolves no relative one.
+- **Every API a page names in its prose exists** (`DocumentationApiTests`): a `Name(` or a
+  `Type.Member` in inline code is public API of this repository, or on the test's list of EF Core,
+  Npgsql and BCL calls. The first column of a table headed `5.x` is 5.x's API and is not read.
+  A package's README names no call only another provider's package has.
+- **What CLAUDE.md and the skills cite exists** (`ClaudeMdConsistencyTests`): a path, in
+  backticks or in a command of a code block; a file name; an annotation key under `CodoMetis:`
+  or `Custom…:`; a member written with its type; a test class; what a command's `--filter`
+  names. A name written alone, be it a type, a member or a call, has to occur in a C# or
+  project file, which is less: nothing says whose member it is, and a name that lingers in a
+  comment counts. Write each as it is, a placeholder of a command in angle brackets, and a
+  name that is another library's and that the source does not use on the test's short list.
 - **Write only what is measured.** A statement about what a migration does names the test that
   shows it, or is left out.
+- **The voice of a page a consumer reads is the skill `plain-docs`.** The README and the guide
+  were written before it (#153).
 
 ## What counts as correct
 
@@ -568,5 +614,14 @@ epic; spikes and slices are its sub-issues.
 ## Coming from the 5.x repository
 
 Its `CLAUDE.md` is the record of what went wrong there and why each guard exists. The convention
-tests, `MigrationHarness`, the translator parity sweep and the skills are ported from it as files
-when the first `src/` project needs them, not before.
+tests, the workflows, the translator parity sweep and the skills are ported from it as files,
+each adapted to what is true here (#35). The skills are under `.claude/skills`:
+`migration-safety-review` for a change that can make a migration answer wrongly,
+`verify-the-guard` for showing that a test fails without its subject, `plain-docs` for the pages
+a consumer reads.
+
+`MigrationHarness` is not ported. It built a differ subclass from five EF-internal services and
+rendered with or without the package's generator; here the differ is a decorator the context
+hands out, and no object depends on a generator when a migration is applied. `Contexts` in the
+PostgreSQL tests' `Harness/Models.cs` builds a context wired as a consumer wires it and diffs two
+models through it, and `LiveDatabase` applies the diff to a server.

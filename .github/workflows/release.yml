@@ -164,6 +164,42 @@ jobs:
       - name: Pack
         run: dotnet pack CodoMetis.EFCore.SchemaKit.slnx -c Release --no-build -o dist
 
+      # One CycloneDX SBOM per package, saying what a consumer of it takes on: the package's own
+      # dependencies, and for the PostgreSQL package the kernel at this version, as its nuspec
+      # states it (--include-project-references). The tool is pinned in .config/dotnet-tools.json.
+      #
+      # No project under src/ has a reference with PrivateAssets=all today. One that gets such a
+      # reference names it in an --exclude-filter here: it never reaches a consumer, and left in
+      # it would list its whole subtree as theirs. ReleaseWiringConventionTests holds that, and
+      # runs these lines as they are, into a folder of its own: that is why the folder is a
+      # variable. A step that first ran on release day would fail there.
+      #
+      # Before the pack checks, so that nothing is written into dist/ after it was checked: what
+      # is uploaded is what the checks and the count below read.
+      - name: Generate SBOMs
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST: dist
+        run: |
+          dotnet tool restore
+          for directory in src/*/; do
+            id="$(basename "$directory")"
+            echo "==> $id"
+            dotnet cyclonedx "$directory$id.csproj" \
+              --output "$DIST" \
+              --filename "$id.$VERSION.cdx.json" \
+              --output-format Json \
+              --set-type Library \
+              --set-nuget-purl \
+              --set-name "$id" \
+              --set-version "$VERSION" \
+              --include-project-references
+            if [[ ! -s "$DIST/$id.$VERSION.cdx.json" ]]; then
+              echo "::error::No SBOM was written for $id."
+              exit 1
+            fi
+          done
+
       # The pack checks, on the packages that are about to be published and not on a second pack
       # of the same commit: the kernel dependency exact, a README and symbols in each, license,
       # repository, commit and framework. SCHEMAKIT_PACKAGES makes PackagingConventionTests read
@@ -220,6 +256,7 @@ jobs:
           path: |
             dist/*.nupkg
             dist/*.snupkg
+            dist/*.cdx.json
             dist/release-notes.md
 
   publish:
@@ -315,10 +352,10 @@ jobs:
   # changelog. A release written by hand before the tag was pushed is left as it is. Either way
   # the packages are on nuget.org by now: a failure here is loud and costs a manual step.
   #
-  # No package is attached. nuget.org signs every package on ingestion, so the one downloaded
-  # from there differs byte for byte from the one built here, and attaching ours would invite a
-  # hash comparison that fails for no fault. The SBOMs EFCore.ComplexIndexes attaches come with the
-  # rest of the port (issue 35).
+  # Only the SBOMs are attached. Workflow artifacts expire after 90 days and nuget.org has no
+  # place for an SBOM, so the release is where they stay. No package is attached: nuget.org signs
+  # every package on ingestion, so the one downloaded from there differs byte for byte from the
+  # one built here, and attaching ours would invite a hash comparison that fails for no fault.
   #
   # Apart from `publish` on purpose: that job holds id-token: write, this one contents: write,
   # and no job holds both.
@@ -387,3 +424,19 @@ jobs:
           fi
 
           gh release create "$tag" --verify-tag --title "$tag" --notes-file release-notes.md "${flags[@]}"
+
+      # After the push, so what is attached describes what is on nuget.org. A release that was
+      # written by hand gets them too.
+      - name: Attach the SBOMs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          shopt -s nullglob
+          sboms=(dist/*."$VERSION".cdx.json)
+          if [[ ${#sboms[@]} -eq 0 ]]; then
+            echo "::error::No *.$VERSION.cdx.json in the downloaded artifact: the SBOM step of verify did not run, or the artifact's paths changed."
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${sboms[@]}" --clobber

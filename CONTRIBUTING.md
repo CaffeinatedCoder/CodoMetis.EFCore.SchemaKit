@@ -61,19 +61,21 @@ label, a bug with no severity, or no closing reference.
 ## Changelog
 
 One section per version, newest first, headed `## [x.y.z] — yyyy-mm-dd`. The release workflow and
-`pr-hygiene.sh` find a section by that heading, so a heading in another style is no section.
+`pr-hygiene.sh` find a section by that heading, so a heading in another style is no section. The
+version being prepared is headed `## [x.y.z] — unreleased` until the commit that is tagged, which
+puts the date there; `release.yml` refuses a tag while it stands.
 
 Inside a section: at most one introductory line, then `### Changed answers`, `### Breaking`,
 `### Added`, `### Changed`, `### Fixed`, in that order, one line per change, absolute links. What
 the first `migrations add` after an upgrade does goes in `docs/upgrading.md`, not in the changelog
-line.
+line. `ChangelogConsistencyTests` holds the form.
 
-## What is not here yet
+## What holds this page
 
-Most of the convention tests that enforce the above in `EFCore.ComplexIndexes` (changelog form,
-workflow gate, release wiring) are not ported yet. Held by tests already: no EF-internal API in a
-shipping project, the kernel's public surface, what a packed package carries
-(`PackagingConventionTests`), every C# sample of the READMEs and of `docs/` compiled against the
-shipped assemblies (`DocumentationSampleTests`), and every link of those pages
-(`DocumentationLinkTests`). The release workflow checks the tag against the version and the
-changelog's section itself. The rest of this page is held by review until the port (#35).
+The convention tests under `test/CodoMetis.EFCore.SchemaKit.Tests/Conventions` hold the
+changelog's form, the CI gate and the SDK pin, the release workflow's jobs and steps, what a packed
+package carries, SECURITY.md's supported versions, the public surface and the use of EF-internal
+API. The documentation tests of the PostgreSQL test project compile every C# sample, resolve every
+link, and check the API a page names and what CLAUDE.md and the skills cite. `nightly.yml` runs
+every lane each night and opens an issue when one fails. The guards of `EFCore.ComplexIndexes`
+whose subject is not here yet are listed in #152.
