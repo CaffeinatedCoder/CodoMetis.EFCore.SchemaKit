@@ -23,6 +23,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
 | `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedOtherKinds/` of one with the kinds nothing reads yet (indexes, a temporal constraint). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
+| `test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests` | The second provider (#119): two contributors nobody ships, written against the kernel's public contract alone, since the kernel grants the assembly no `InternalsVisibleTo`. A filtered nonclustered index with included columns on SQL Server and an index on an expression on SQLite, each with a dialect, and their tests: the SQL Server one on a live SQL Server 2022 (`Integration/`), the SQLite one on a database file. A comment that begins `Audit:` marks what the contract could not say |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
@@ -54,6 +55,10 @@ SCHEMAKIT_TEST_PG="Host=localhost;Username=postgres;Password=…;Database=postgr
 # One class, one method
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "ClassName~WiringConditionTests"
 dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj --filter "FullyQualifiedName~C05_replace_service_before"
+
+# The second provider's contributors: SQLite always, SQL Server when SCHEMAKIT_TEST_MSSQL is a SqlClient connection string
+dotnet test test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.csproj
+SCHEMAKIT_TEST_MSSQL="Server=localhost,1433;User Id=sa;Password=…;TrustServerCertificate=True" dotnet test test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.csproj --filter "TestCategory=Integration"
 
 # The probes and the prototype's behaviour tests (outside the solution: they pin their own compiler)
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
@@ -347,7 +352,10 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   `BaseChanges.RebuiltOnSqlite` is a copy of it, held against the provider's generator by a test.
 - **On SQLite a create after a rebuild does not work yet.** SQLite's generator moves the rebuild
   to the end of the migration, so the planner's create runs first and fails on the object that is
-  still there: the migration fails to apply, where before it applied and lost the object. The
+  still there: the migration fails to apply, where before it applied and lost the object. That
+  is so only while the object's name is held. A create under a name that is free then (an object
+  declared in the same migration, a renamed one, one answered `RebuildAround`) succeeds on the old
+  table and is dropped with it: the migration applies and the object is gone (#145). The
   generator decorator has to place it (plan, section 3.12). Do not ship a contributor for SQLite
   before that.
 
@@ -489,6 +497,45 @@ what is still missing).
 
 Locally the integration tests go inconclusive without `SCHEMAKIT_TEST_PG`. When `CI` is set they
 fail instead: an unreachable server must not retire them while the build reports green.
+
+## The second provider
+
+`test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests` (#119; its epic is #111). Evidence for the
+contract's shape, measured before the contract freezes. It is not the beginning of the SQL Server
+package (#29): nothing moves from it to `src/` without its `Audit:` comments being read.
+
+- **Nothing under `src/` was changed for it, and nothing may be.** Where the contract cannot say
+  what SQL Server or SQLite needs, the contributor goes around it and says so, or a test holds
+  the failure. `PublicContractTests` holds that the kernel grants the assembly no internals.
+- **Every rule of a contributor has a test that breaks it.** `ImpactOverride` and
+  `CreateAsAPlainStatement` are there for that: `Answered_as_…` and `Written_as_…` apply the
+  migration with one answer changed and assert the server's message number. A rule added without
+  such a test is not held.
+- **SQL Server's impact table is not PostgreSQL's.** A dropped or altered column is refused under
+  an index (Msg 5074, Msg 4922), so both are `RebuildAround`; `Lost` is for a dropped table alone.
+  The rename of a key or an included column follows, the rename of a column the filter reads is
+  refused. The contributor finds a changed column by its name, never as
+  `new Dependency.Column(change.Table, change.From)`: the change names the table as the target
+  has it and the descriptor as the source has it.
+- **A filtered index is created through `EXEC`, always.** EF Core writes a migration into a
+  script as one batch, and SQL Server binds a filter's columns when it compiles the batch: after
+  a rename of the column in the same migration the plain statement fails with Msg 207, in the
+  migrations script and in the idempotent one, while the same migration applies by commands.
+- **A rename is `sp_rename`,** with the index's delimited name and the new name as it is, both as
+  literals. The only way from composed SQL to a literal is `SqlFragment.ToString()`.
+- **The scripts are EF Core's own Migrator's.** `Harness/Scripted.cs` is a context with three
+  migrations in the test assembly; each holds what the differ scaffolds for its step and the
+  compiled snapshot of its target model.
+- **The live tests take a database each** (`SqlServerDatabase`, also with a collation of its own)
+  and compare the indexes a migration leaves with what `EnsureCreated()` builds. An index that
+  was renamed is told from one that was rebuilt by its storage (`hobt_id`); a change of
+  nullability rebuilds the storage by itself, so that oracle is not for an altered column.
+- **On SQLite the three tests named `Today_…` hold #145 as it is.** Each asserts the loss, and
+  fails when the migration is refused or the index is there: it is to be turned over with the fix.
+- **`SCHEMAKIT_TEST_MSSQL` is a SqlClient connection string** to a server the tests may create
+  databases on. Without it the tests of category `Integration` go inconclusive, and fail when
+  `CI` is set. The lane `integration-sqlserver` starts SQL Server 2022 in a step, with a password
+  it makes there, since a service's environment would have to be in the file.
 
 ## Packaging and the release
 
