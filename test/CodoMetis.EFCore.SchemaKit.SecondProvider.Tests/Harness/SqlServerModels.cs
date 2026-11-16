@@ -70,6 +70,77 @@ public static class Sales
         public static void Build(ModelBuilder modelBuilder) => Orders(modelBuilder).DeclareProbe(Open with { Name = null });
     }
 
+    // ── The index changes under its name: SQL Server alters none of this, so each is a drop and a create ──
+
+    public sealed class IndexedOnTheShipped : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("{ShippedAt} IS NOT NULL") });
+    }
+
+    public sealed class IndexedWithTheNoteIncluded : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Orders(modelBuilder).DeclareProbe(Open with { Include = ["Total", "Note"] });
+    }
+
+    public sealed class IndexedUniquely : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Orders(modelBuilder).DeclareProbe(Open with { IsUnique = true });
+    }
+
+    // ── More than one key and more than one included column: their order is the index's ──
+
+    public static readonly ProbeIndex ByCustomerAndNumber = new(["CustomerId", "Number"]) { Include = ["Total", "Note"] };
+
+    public sealed class IndexedByCustomerAndNumber : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Orders(modelBuilder).DeclareProbe(ByCustomerAndNumber);
+    }
+
+    public sealed class IndexedByNumberAndCustomer : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder).DeclareProbe(new ProbeIndex(["Number", "CustomerId"]) { Include = ["Note", "Total"] });
+    }
+
+    // ── A filter that names its column itself, with no placeholder: it is taken to read every column ──
+
+    public sealed class FilteredByRawSql : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("[ShippedAt] IS NULL") });
+    }
+
+    public sealed class FilteredByRawSqlAndTheNoteRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("[ShippedAt] IS NULL") }).Property(x => x.Note).HasColumnName("Remark");
+    }
+
+    public sealed class FilteredByRawSqlAndItsColumnRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("[SentAt] IS NULL") }).Property(x => x.ShippedAt).HasColumnName("SentAt");
+    }
+
+    // ── A table in a schema of its own: every statement has to say the schema ──
+
+    public sealed class MovedBare : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Orders(modelBuilder, schema: "sales");
+    }
+
+    public sealed class MovedAndRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Orders(modelBuilder, schema: "sales").DeclareProbe(Open with { Name = "IX_orders_unshipped" });
+    }
+
+    public sealed class MovedAndKeyColumnWidened : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder, schema: "sales").DeclareProbe(Open).Property(x => x.CustomerId).HasColumnType("bigint");
+    }
+
     // ── EF Core renames what the index reads ──
 
     public sealed class KeyColumnRenamed : ITestModel
@@ -292,6 +363,56 @@ public static class Sales
         {
             Orders(modelBuilder);
             Invoices(modelBuilder).DeclareProbe(Unpaid);
+        }
+    }
+
+    private static EntityTypeBuilder<Invoice> ArchivedOrders(ModelBuilder modelBuilder)
+    {
+        var archived = modelBuilder.Entity<Invoice>().ToTable("Orders", "archive");
+        archived.Property(x => x.Total).HasPrecision(18, 2);
+        return archived;
+    }
+
+    /// <summary>Two tables of one name in two schemas, each with an index of one name: only the schema tells the two apart.</summary>
+    public sealed class TwoSchemas : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Orders(modelBuilder).DeclareProbe(Open);
+            ArchivedOrders(modelBuilder).DeclareProbe(Unpaid);
+        }
+    }
+
+    public sealed class TwoSchemasOneIndex : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Orders(modelBuilder).DeclareProbe(Open);
+            ArchivedOrders(modelBuilder);
+        }
+    }
+
+    public sealed class TwoSchemasAndTheArchivesIndexRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Orders(modelBuilder).DeclareProbe(Open);
+            ArchivedOrders(modelBuilder).DeclareProbe(Unpaid with { Name = "IX_orders_unpaid" });
+        }
+    }
+
+    // ── Objects of the schema, which the dialect answers for ──
+
+    /// <summary>A table in <c>dbo</c> by name, a foreign key to it, a check constraint and a sequence: one of each kind SQL Server keeps in the schema.</summary>
+    public sealed class WithObjectsOfTheSchema : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.HasSequence<int>("Numbers");
+            modelBuilder.Entity<Customer>().ToTable("Customers", "dbo");
+            Orders(modelBuilder).DeclareProbe(Open)
+                .ToTable(t => t.HasCheckConstraint("CK_Orders_Total", "[Total] >= 0"))
+                .HasOne<Customer>().WithMany().HasForeignKey(x => x.CustomerId);
         }
     }
 

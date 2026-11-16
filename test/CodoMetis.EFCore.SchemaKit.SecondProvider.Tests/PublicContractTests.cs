@@ -46,12 +46,14 @@ public sealed class PublicContractTests
         => Assert.AreEqual(0, value.GetConstructors(BindingFlags.Public | BindingFlags.Instance).Length);
 
     /// <summary>
-    /// The base's operator grammar is PostgreSQL's, so a dialect of another provider can refuse
-    /// more than the base does and can accept nothing the base refuses. SQL Server's and SQLite's
-    /// operators that are words do not get through, and PostgreSQL's that neither has do.
+    /// The operator grammar of every dialect is the base's, which is PostgreSQL's: neither probe
+    /// overrides it, and on both providers PostgreSQL's operators get through and the operators
+    /// that are words do not. An override could refuse more. It could accept nothing the base
+    /// refuses, since only the base can make the value
+    /// (<see cref="A_value_of_a_statement_has_no_public_constructor" />).
     /// </summary>
     [TestMethod]
-    public void A_dialect_can_narrow_the_operator_grammar_and_cannot_widen_it()
+    public void The_operator_grammar_of_both_providers_is_PostgreSQLs()
     {
         using var sqlServer = Contexts.SqlServer<Sales.Bare>();
         using var sqlite = Contexts.Sqlite<People.Bare>();
@@ -96,17 +98,25 @@ public sealed class PublicContractTests
         Assert.AreEqual(new KeyTarget.Template("""btrim({Name}, E' \t\n\r')"""), KeyTarget.Of((Flagged x) => x.Name.Trim(), SqlSpelling.PostgreSql));
     }
 
+    /// <summary>
+    /// Two things in it are PostgreSQL's, and SQLite refuses each by itself: the string that
+    /// begins with <c>E</c> is a syntax error, and with a string of its own SQLite has no function
+    /// called <c>btrim</c>. Its own word is <c>trim</c>.
+    /// </summary>
     [TestMethod]
     public void SQLite_refuses_what_the_one_spelling_writes_for_Trim()
     {
-        var trimmed = (KeyTarget.Template)KeyTarget.Of((Person x) => x.Name.Trim(), SqlSpelling.PostgreSql);
+        var trimmed = ((KeyTarget.Template)KeyTarget.Of((Person x) => x.Name.Trim(), SqlSpelling.PostgreSql)).Sql.Replace("{Name}", "\"Name\"");
+        Assert.AreEqual("""btrim("Name", E' \t\n\r')""", trimmed);
 
         using var database = new SqliteDatabase();
         database.Execute("""CREATE TABLE "People" ("Id" INTEGER PRIMARY KEY, "Name" TEXT)""");
-        var refused = Assert.ThrowsExactly<SqliteException>(() =>
-            database.Execute($"""CREATE INDEX "IX_trimmed" ON "People" ({trimmed.Sql.Replace("{Name}", "\"Name\"")})"""));
+        string Refused(string key) => Assert.ThrowsExactly<SqliteException>(() => database.Execute($"""CREATE INDEX "IX_trimmed" ON "People" ({key})""")).Message;
 
-        StringAssert.Contains(refused.Message, "E");
+        StringAssert.Contains(Refused(trimmed), """near "' \t\n\r'": syntax error""");
+        StringAssert.Contains(Refused("""btrim("Name", ' ')"""), "no such function: btrim");
+
+        database.Execute("""CREATE INDEX "IX_trimmed" ON "People" (trim("Name"))""");
     }
 
     // ── Dependency.SchemaObject, QualifiedName, SchemaScope ──

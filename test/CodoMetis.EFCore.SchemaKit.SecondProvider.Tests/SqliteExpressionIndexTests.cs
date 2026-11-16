@@ -201,6 +201,26 @@ public sealed class SqliteExpressionIndexTests
         AssertRefusedAndUnchanged<People.Indexed, People.TableRenamed>();
     }
 
+    /// <summary>
+    /// The column the index reads is dropped, and the index of that name moves to another column.
+    /// SQLite's provider rebuilds the table for the drop, so it is the same case: the create
+    /// meets the index that is still there. Were the dropped column answered as a reason to take
+    /// the index away first, the create would find the name free and the rebuild would take the
+    /// new index (#145).
+    /// </summary>
+    [TestMethod]
+    public void A_dropped_column_under_the_index_fails_the_migration_as_a_rebuild_does()
+    {
+        using var database = new SqliteDatabase();
+        database.Create<People.IndexedByEmail>();
+        var before = database.Indexes();
+
+        var refused = Assert.ThrowsExactly<SqliteException>(() => database.Migrate<People.IndexedByEmail, People.IndexedWithoutTheEmail>());
+
+        StringAssert.Contains(refused.Message, "index IX_people_lower_name already exists");
+        CollectionAssert.AreEqual(before, database.Indexes());
+    }
+
     private static void AssertRefusedAndUnchanged<TFrom, TTo>()
         where TFrom : ITestModel
         where TTo : ITestModel
@@ -335,6 +355,21 @@ public sealed class SqliteExpressionIndexTests
             + "the relations of the default schema (tables, indexes, sequences, and the indexes behind constraints). The database keeps a "
             + "name once there: give one of them another name.",
             index!.Message);
+    }
+
+    /// <summary>
+    /// A key's name and a check constraint's are kept in the table's own statement and compared
+    /// with nothing: an index may be called either, the dialect claims neither, and the database
+    /// creates all of it.
+    /// </summary>
+    [TestMethod]
+    public void An_index_named_like_a_key_or_a_check_constraint_of_its_table_is_let_through_and_created()
+    {
+        Assert.IsNull(Collision<People.NamedLikeItsPrimaryKey>());
+        Assert.IsNull(Collision<People.NamedLikeACheckConstraint>());
+
+        CollectionAssert.AreEqual(new[] { Index.Replace(People.Name, "PK_People") }, Created<People.NamedLikeItsPrimaryKey>());
+        CollectionAssert.AreEqual(new[] { Index.Replace(People.Name, "CK_People_Name") }, Created<People.NamedLikeACheckConstraint>());
     }
 
     /// <summary>

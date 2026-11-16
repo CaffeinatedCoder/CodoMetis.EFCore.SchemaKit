@@ -173,6 +173,74 @@ public sealed class SqlServerIndexLiveTests
         Assert.AreNotEqual(before, rebuilt.StorageOf(Sales.Name), "The oracle: an index that was dropped and created has another storage.");
     }
 
+    // ── The index changes under its name ──
+    //
+    // Nothing of EF Core's is in these migrations, so nothing but the contributor's own answer
+    // decides them. Written as a rename to the name the index has, each would be taken by the
+    // server and leave the index as it was.
+
+    [TestMethod]
+    public void Changing_the_filter_under_the_same_name() => AssertMigratesTo<Sales.Indexed, Sales.IndexedOnTheShipped>(
+        Leaves(Open.Replace("IS NULL", "IS NOT NULL")));
+
+    [TestMethod]
+    public void Adding_an_included_column_under_the_same_name() => AssertMigratesTo<Sales.Indexed, Sales.IndexedWithTheNoteIncluded>(
+        Leaves(Open.Replace("INCLUDE (Total)", "INCLUDE (Total, Note)")));
+
+    [TestMethod]
+    public void Making_the_index_unique_under_the_same_name() => AssertMigratesTo<Sales.Indexed, Sales.IndexedUniquely>(
+        Leaves(Open.Replace("NONCLUSTERED (", "NONCLUSTERED UNIQUE (")));
+
+    // ── Keys and included columns in their order ──
+
+    private const string ByCustomerAndNumber = "dbo.Orders | IX_Orders_CustomerId_Number | NONCLUSTERED (CustomerId, Number) INCLUDE (Total, Note)";
+
+    [TestMethod]
+    public void Two_keys_and_two_included_columns_reach_the_catalog_in_their_order()
+        => AssertMigratesTo<Sales.Bare, Sales.IndexedByCustomerAndNumber>(Leaves(ByCustomerAndNumber));
+
+    [TestMethod]
+    public void Changing_the_order_of_the_keys() => AssertMigratesTo<Sales.IndexedByCustomerAndNumber, Sales.IndexedByNumberAndCustomer>(
+        Leaves("dbo.Orders | IX_Orders_Number_CustomerId | NONCLUSTERED (Number, CustomerId) INCLUDE (Note, Total)"));
+
+    // ── A table in a schema of its own ──
+
+    private const string OpenInSales = "sales.Orders | IX_orders_open | NONCLUSTERED (CustomerId) INCLUDE (Total) WHERE ([ShippedAt] IS NULL)";
+
+    [TestMethod]
+    public void Dropping_the_index_of_a_table_in_a_schema() => AssertMigratesTo<Sales.TableMoved, Sales.MovedBare>(Leaves());
+
+    [TestMethod]
+    public void Rebuilding_the_index_of_a_table_in_a_schema() => AssertMigratesTo<Sales.TableMoved, Sales.MovedAndKeyColumnWidened>(Leaves(OpenInSales));
+
+    [TestMethod]
+    public void Renaming_the_index_of_a_table_in_a_schema_keeps_the_index()
+    {
+        using var database = new SqlServerDatabase();
+        database.Create<Sales.TableMoved>();
+        var storage = database.StorageOf(Sales.Name);
+
+        database.Migrate<Sales.TableMoved, Sales.MovedAndRenamed>();
+
+        Assert.AreEqual(storage, database.StorageOf("IX_orders_unshipped"));
+        CollectionAssert.AreEqual(new[] { OpenInSales.Replace(Sales.Name, "IX_orders_unshipped") }, database.Declared());
+    }
+
+    private const string Archived = "archive.Orders | IX_orders_open | NONCLUSTERED (CustomerId) INCLUDE (Total) WHERE ([PaidAt] IS NULL)";
+
+    /// <summary>
+    /// Two tables of one name in two schemas, each with an index of one name, and the archive's
+    /// dropped: the other is still there. Without the schema the statement would name the table
+    /// in <c>dbo</c> and take that one's index.
+    /// </summary>
+    [TestMethod]
+    public void Dropping_an_index_leaves_its_namesake_in_another_schema()
+        => AssertMigratesTo<Sales.TwoSchemas, Sales.TwoSchemasOneIndex>(Leaves(Open));
+
+    [TestMethod]
+    public void Renaming_an_index_leaves_its_namesake_in_another_schema()
+        => AssertMigratesTo<Sales.TwoSchemas, Sales.TwoSchemasAndTheArchivesIndexRenamed>(Leaves(Archived.Replace(Sales.Name, "IX_orders_unpaid"), Open));
+
     // ── EF Core renames what the index reads ──
 
     /// <summary>The index follows the rename by itself: the catalog names the new column, and SchemaKit wrote nothing.</summary>
@@ -202,6 +270,18 @@ public sealed class SqlServerIndexLiveTests
         => CollectionAssert.Contains(
             Refusal<Sales.Indexed, Sales.FilterColumnRenamed>(change => change is BaseChange.ColumnRenamed ? new Impact.Follows() : null),
             5074);
+
+    /// <summary>
+    /// A filter written as SQL, with no placeholder, says nothing of what it reads. The
+    /// contributor takes it to read every column, so the index is out of the way of the rename
+    /// of the column it does read, and of one it does not.
+    /// </summary>
+    [TestMethod]
+    public void Renaming_a_column_under_a_filter_written_as_SQL()
+    {
+        AssertMigratesTo<Sales.FilteredByRawSql, Sales.FilteredByRawSqlAndItsColumnRenamed>(Leaves(Open.Replace("[ShippedAt]", "[SentAt]")));
+        AssertMigratesTo<Sales.FilteredByRawSql, Sales.FilteredByRawSqlAndTheNoteRenamed>(Leaves(Open));
+    }
 
     [TestMethod]
     public void Renaming_the_table() => AssertMigratesTo<Sales.Indexed, Sales.TableRenamed>(

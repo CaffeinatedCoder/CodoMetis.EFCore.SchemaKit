@@ -68,15 +68,19 @@ public sealed class SqlServerNameLiveTests
     }
 
     /// <summary>
-    /// What the dialect says of EF Core's own objects, and why <c>NameClaim.Constraint</c> and
-    /// <c>NameClaim.Trigger</c> have no reading on SQL Server: a constraint and a trigger are
-    /// objects of the schema, as a table is. One name, one object, whatever table it is on
-    /// (Msg 2714).
+    /// What the dialect says of EF Core's own objects
+    /// (<c>SqlServerIndexMigrationTests.The_dialect_says_where_SQL_Server_keeps_each_name</c>), and
+    /// why <c>NameClaim.Constraint</c> and <c>NameClaim.Trigger</c> have no reading on SQL Server:
+    /// a constraint and a trigger are objects of the schema, as a table and a sequence are. One
+    /// name, one object, whatever table it is on (Msg 2714).
     /// </summary>
     [TestMethod]
     [DataRow("ALTER TABLE Orders ADD CONSTRAINT CK_other CHECK (Total >= 0)", DisplayName = "a check constraint named like one of another table")]
     [DataRow("ALTER TABLE Orders ADD CONSTRAINT PK_Invoices UNIQUE (Total)", DisplayName = "a unique constraint named like the key of another table")]
     [DataRow("ALTER TABLE Orders ADD CONSTRAINT Numbers CHECK (Total >= 0)", DisplayName = "a check constraint named like a sequence")]
+    [DataRow("ALTER TABLE Orders ADD CONSTRAINT Invoices CHECK (Total >= 0)", DisplayName = "a check constraint named like a table")]
+    [DataRow("ALTER TABLE Invoices ADD CONSTRAINT FK_own CHECK (CustomerId > 0)", DisplayName = "a check constraint named like a foreign key of another table")]
+    [DataRow("ALTER TABLE Invoices ADD CONSTRAINT AK_own CHECK (CustomerId > 0)", DisplayName = "a check constraint named like a unique constraint of another table")]
     [DataRow("CREATE TABLE CK_own (Id int)", DisplayName = "a table named like a check constraint")]
     [DataRow("CREATE TRIGGER TR_other ON Orders AFTER INSERT AS RETURN", DisplayName = "a trigger named like one of another table")]
     [DataRow("CREATE TRIGGER Invoices ON Orders AFTER INSERT AS RETURN", DisplayName = "a trigger named like a table")]

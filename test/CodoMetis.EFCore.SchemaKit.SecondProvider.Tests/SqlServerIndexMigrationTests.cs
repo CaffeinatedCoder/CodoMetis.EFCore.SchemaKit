@@ -63,6 +63,75 @@ public sealed class SqlServerIndexMigrationTests
             new[] { "EXEC sp_rename N'[Orders].[IX_orders_open]', N'IX_orders_unshipped', N'INDEX';" },
             Shape<Sales.Indexed, Sales.Renamed>());
 
+    /// <summary>
+    /// SQL Server alters nothing of an index but its name. Whatever else differs under one name
+    /// is a drop and a create: without this, the change would be written as a rename to the name
+    /// the index has, which the server takes, and the index would stay as it was.
+    /// </summary>
+    [TestMethod]
+    public void Another_filter_under_the_same_name_is_a_drop_and_a_create()
+        => CollectionAssert.AreEqual(new[] { Drop, Create.Replace("IS NULL", "IS NOT NULL") }, Shape<Sales.Indexed, Sales.IndexedOnTheShipped>());
+
+    [TestMethod]
+    public void Another_included_column_under_the_same_name_is_a_drop_and_a_create()
+        => CollectionAssert.AreEqual(
+            new[] { Drop, Create.Replace("INCLUDE ([Total])", "INCLUDE ([Total], [Note])") },
+            Shape<Sales.Indexed, Sales.IndexedWithTheNoteIncluded>());
+
+    [TestMethod]
+    public void Uniqueness_under_the_same_name_is_a_drop_and_a_create()
+        => CollectionAssert.AreEqual(
+            new[] { Drop, Create.Replace("CREATE NONCLUSTERED", "CREATE UNIQUE NONCLUSTERED") },
+            Shape<Sales.Indexed, Sales.IndexedUniquely>());
+
+    /// <summary>The keys and the included columns in the order they are declared in, and a default name of all the keys, as EF Core names its own.</summary>
+    [TestMethod]
+    public void Keys_and_included_columns_are_written_in_their_order()
+        => CollectionAssert.AreEqual(
+            new[] { "CREATE NONCLUSTERED INDEX [IX_Orders_CustomerId_Number] ON [Orders] ([CustomerId], [Number]) INCLUDE ([Total], [Note]);" },
+            Shape<Sales.Bare, Sales.IndexedByCustomerAndNumber>());
+
+    [TestMethod]
+    public void Another_order_of_the_keys_is_another_index()
+        => CollectionAssert.AreEqual(
+            new[]
+            {
+                "DROP INDEX [IX_Orders_CustomerId_Number] ON [Orders];",
+                "CREATE NONCLUSTERED INDEX [IX_Orders_Number_CustomerId] ON [Orders] ([Number], [CustomerId]) INCLUDE ([Note], [Total]);",
+            },
+            Shape<Sales.IndexedByCustomerAndNumber, Sales.IndexedByNumberAndCustomer>());
+
+    /// <summary>
+    /// Every statement names the table with its schema: the drop, the create and the procedure's
+    /// first argument. Without it each would look for the table in the schema of the user who
+    /// runs the migration.
+    /// </summary>
+    [TestMethod]
+    public void An_index_of_a_table_in_a_schema_is_dropped_renamed_and_rebuilt_under_the_schema()
+    {
+        const string DropInSales = "DROP INDEX [IX_orders_open] ON [sales].[Orders];";
+
+        CollectionAssert.AreEqual(new[] { DropInSales }, Shape<Sales.TableMoved, Sales.MovedBare>());
+
+        CollectionAssert.AreEqual(
+            new[] { "EXEC sp_rename N'[sales].[Orders].[IX_orders_open]', N'IX_orders_unshipped', N'INDEX';" },
+            Shape<Sales.TableMoved, Sales.MovedAndRenamed>());
+
+        CollectionAssert.AreEqual(
+            new[] { DropInSales, nameof(AlterColumnOperation), Create.Replace("ON [Orders]", "ON [sales].[Orders]") },
+            Shape<Sales.TableMoved, Sales.MovedAndKeyColumnWidened>());
+    }
+
+    /// <summary>
+    /// A filter that names its column itself tells nothing of what it reads, so it is taken to
+    /// read every column: the rename of any column of the table has the index out of its way.
+    /// </summary>
+    [TestMethod]
+    public void A_filter_without_a_placeholder_is_taken_to_read_every_column()
+        => CollectionAssert.AreEqual(
+            new[] { Drop, nameof(RenameColumnOperation), Create },
+            Shape<Sales.FilteredByRawSql, Sales.FilteredByRawSqlAndTheNoteRenamed>());
+
     /// <summary>The index follows the rename of a key and of an included column, so SchemaKit writes nothing.</summary>
     [TestMethod]
     public void A_renamed_key_or_included_column_is_EF_Cores_rename_alone()
@@ -260,6 +329,90 @@ public sealed class SqlServerIndexMigrationTests
         Assert.IsNull(Collision<Sales.NamedLikeItsForeignKey>());
         Assert.IsNull(Collision<Sales.NamedLikeACheckConstraint>());
     }
+
+    // ── The dialect's answers for EF Core's own objects ──
+
+    /// <summary>
+    /// Where SQL Server keeps the name of each kind of object EF Core creates, as the dialect says
+    /// it. Each row has its row on the server (<c>SqlServerNameLiveTests</c>): an index is named
+    /// within its table (Msg 1913), everything else within its schema (Msg 2714), and a key is
+    /// both, since it is built on an index of its name.
+    /// </summary>
+    [TestMethod]
+    public void The_dialect_says_where_SQL_Server_keeps_each_name()
+    {
+        using var context = Contexts.SqlServer<Sales.Bare>();
+        var dialect = context.GetService<ISchemaDialect>();
+        var (table, name) = (new TableRef(dialect.Identifier("sales"), dialect.Identifier("Orders")), dialect.Identifier("N"));
+        NameClaim inTheSchema = new NameClaim.Relation(table.Schema, name);
+        NameClaim amongTheTablesIndexes = new NameClaim.TableIndex(table, name);
+
+        void Claims(SchemaModelObject kind, params NameClaim[] expected)
+            => CollectionAssert.AreEqual(expected, dialect.Claims(kind, table, name).ToList(), kind.ToString());
+
+        Claims(SchemaModelObject.Table, inTheSchema);
+        Claims(SchemaModelObject.Sequence, inTheSchema);
+        Claims(SchemaModelObject.ForeignKey, inTheSchema);
+        Claims(SchemaModelObject.CheckConstraint, inTheSchema);
+        Claims(SchemaModelObject.Index, amongTheTablesIndexes);
+        Claims(SchemaModelObject.PrimaryKey, inTheSchema, amongTheTablesIndexes);
+        Claims(SchemaModelObject.UniqueConstraint, inTheSchema, amongTheTablesIndexes);
+    }
+
+    /// <summary>
+    /// The collisions of a name claimed among the objects of the schema, in a model that has one
+    /// object of each kind SQL Server keeps there. No index is such an object and this
+    /// contributor has no other, so the index stands in for one: its claim is replaced
+    /// (<c>ClaimedAs</c>), and what is compared is the dialect's answer for EF Core's object.
+    /// </summary>
+    private static SchemaValidationException? CollisionOfAnObjectOfTheSchemaNamed(string name, bool dialect = true)
+    {
+        using var context = Contexts.SqlServer<Sales.WithObjectsOfTheSchema>(dialect: dialect);
+        var identifier = context.GetService<ISchemaDialect>().Identifier(name);
+        context.Contributor<ProbeIndexContributor>().ClaimedAs = index => [new NameClaim.Relation(index.Table.Schema, identifier)];
+        return context.Collisions();
+    }
+
+    /// <summary>The diff's side of Msg 2714: an object of the schema may not be called what a table, a sequence or a constraint of any table is called.</summary>
+    [TestMethod]
+    [DataRow("Numbers", DisplayName = "a sequence")]
+    [DataRow("FK_Orders_Customers_CustomerId", DisplayName = "a foreign key")]
+    [DataRow("CK_Orders_Total", DisplayName = "a check constraint")]
+    [DataRow("PK_Orders", DisplayName = "a primary key")]
+    [DataRow("Orders", DisplayName = "a table without a schema")]
+    public void An_object_of_the_schema_is_refused_at_the_diff_when_it_is_named_like(string name)
+        => Assert.AreEqual("SK1001", CollisionOfAnObjectOfTheSchemaNamed(name)?.Diagnostics.Single().Id);
+
+    /// <summary>An index of EF Core's is named within its table: the schema does not hold its name.</summary>
+    [TestMethod]
+    public void An_object_of_the_schema_may_be_named_like_an_index()
+        => Assert.IsNull(CollisionOfAnObjectOfTheSchemaNamed("IX_Orders_CustomerId"));
+
+    /// <summary>
+    /// What the dialect's default schema decides. The object is claimed for a table without a
+    /// schema and <c>Customers</c> is mapped to <c>dbo</c> by name: one schema on the server
+    /// (<c>A_table_created_without_a_schema_is_in_dbo</c>), and one to the check because the
+    /// dialect says so. The kernel's own dialect does not guess, and lets the name through.
+    /// </summary>
+    [TestMethod]
+    public void A_name_taken_in_dbo_is_taken_for_a_table_without_a_schema()
+    {
+        Assert.AreEqual("SK1001", CollisionOfAnObjectOfTheSchemaNamed("Customers")?.Diagnostics.Single().Id);
+        Assert.AreEqual("SK1001", CollisionOfAnObjectOfTheSchemaNamed("PK_Customers")?.Diagnostics.Single().Id);
+
+        Assert.IsNull(CollisionOfAnObjectOfTheSchemaNamed("Customers", dialect: false));
+    }
+
+    /// <summary>
+    /// What the consumer is told then (#119): SQL Server's objects of a schema, in PostgreSQL's
+    /// words. On SQL Server no index is among them, and no constraint has an index the schema
+    /// knows of.
+    /// </summary>
+    [TestMethod]
+    public void A_collision_in_the_schema_is_described_as_PostgreSQL_would()
+        => StringAssert.Contains(
+            CollisionOfAnObjectOfTheSchemaNamed("Numbers")!.Diagnostics.Single().Message,
+            "both claim the name 'Numbers' among the relations of the default schema (tables, indexes, sequences, and the indexes behind constraints)");
 
     /// <summary>
     /// The kernel's own dialect, which a provider without a package gets, names a constraint

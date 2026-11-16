@@ -7,9 +7,9 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Integration;
 
 /// <summary>
-/// The generated scripts, applied as <c>sqlcmd</c> applies one: batch by batch. A script is where
-/// a statement meets what EF Core puts around it: a batch of its own, a transaction, and in an
-/// idempotent script an <c>IF NOT EXISTS (…) BEGIN … END</c> around every command.
+/// The generated scripts, applied batch by batch on a connection of SqlClient. A script is where
+/// a statement meets what EF Core puts around it: the batch of its migration, a transaction, and
+/// in an idempotent script an <c>IF NOT EXISTS (…) BEGIN … END</c> around every command.
 /// </summary>
 [TestClass]
 [TestCategory("Integration")]
@@ -150,6 +150,29 @@ public sealed class SqlServerScriptLiveTests
         using var plain = new SqlServerDatabase();
         plain.Create<Sales.Bare>();
         Assert.AreEqual(207, Assert.ThrowsExactly<SqlException>(() => plain.Execute(Batch(MigrationsSqlGenerationOptions.Script))).Number);
+    }
+
+    /// <summary>
+    /// What these tests do not show: the scripts under <c>sqlcmd</c>'s own settings. It runs with
+    /// <c>QUOTED_IDENTIFIER</c> off unless it is given <c>-I</c>, and SQL Server creates no
+    /// filtered index in such a session (Msg 1934). The migrations script stops at its second
+    /// migration; EF Core's own filtered index is refused the same way, and an index without a
+    /// filter is not. It is the server's rule for the object, and no statement of a contributor's
+    /// goes around it: <c>SET QUOTED_IDENTIFIER ON</c> would have to stand in the batch.
+    /// </summary>
+    [TestMethod]
+    public void With_QUOTED_IDENTIFIER_off_a_filtered_index_is_refused()
+    {
+        const string AsSqlcmdStarts = "SET QUOTED_IDENTIFIER OFF;\nGO\n";
+
+        using var database = new SqlServerDatabase();
+        var refused = Assert.ThrowsExactly<SqlException>(() => database.ExecuteScript(AsSqlcmdStarts + Script()));
+        Assert.AreEqual(1934, refused.Number, refused.Message);
+        CollectionAssert.AreEqual(new[] { Scripted.Orders }, database.Column("SELECT MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId"));
+
+        Assert.AreEqual(1934, Assert.ThrowsExactly<SqlException>(() =>
+            database.ExecuteScript(AsSqlcmdStarts + "CREATE INDEX [IX_own] ON [Orders] ([CustomerId]) WHERE [ShippedAt] IS NULL;")).Number);
+        database.ExecuteScript(AsSqlcmdStarts + "CREATE INDEX [IX_unfiltered] ON [Orders] ([CustomerId]);");
     }
 
     /// <summary>The runtime's path: <c>Migrate()</c> applies the three migrations and records them.</summary>

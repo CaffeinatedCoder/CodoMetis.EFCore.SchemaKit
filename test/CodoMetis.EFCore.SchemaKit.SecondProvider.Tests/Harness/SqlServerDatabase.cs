@@ -91,10 +91,17 @@ internal sealed class SqlServerDatabase : IDisposable
     }
 
     /// <summary>
-    /// Runs a script as <c>sqlcmd</c> and Management Studio run one: batch by batch, a line that
-    /// says <c>GO</c> ending each. A statement that cannot share a batch with its neighbour, or a
-    /// batch that does not compile, fails here.
+    /// Runs a script batch by batch, a line that says <c>GO</c> ending each, on one connection of
+    /// SqlClient. A statement that cannot share a batch with its neighbour, or a batch that does
+    /// not compile, fails here.
     /// </summary>
+    /// <remarks>
+    /// The batches are <c>sqlcmd</c>'s, the session is not. SqlClient connects with
+    /// <c>QUOTED_IDENTIFIER</c> on, as Management Studio does; <c>sqlcmd</c> has it off unless it
+    /// is started with <c>-I</c>, and then SQL Server refuses to create a filtered index, this
+    /// contributor's and EF Core's own alike
+    /// (<c>SqlServerScriptLiveTests.With_QUOTED_IDENTIFIER_off_a_filtered_index_is_refused</c>).
+    /// </remarks>
     public void ExecuteScript(string script)
     {
         using var connection = Open();

@@ -102,6 +102,19 @@ public static class People
             => Persons(modelBuilder).DeclareProbe(ByLowerName with { Name = "IX_people_name_ci" }).Property(x => x.Email).IsRequired();
     }
 
+    /// <summary>The index on the address, under the name the other models use.</summary>
+    public sealed class IndexedByEmail : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template("lower({Email})")) { Name = Name });
+    }
+
+    /// <summary>The address is gone, and the index of that name is on the person's name.</summary>
+    public sealed class IndexedWithoutTheEmail : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Persons(modelBuilder).DeclareProbe(ByLowerName).Ignore(x => x.Email);
+    }
+
     // ── Names: one namespace for the tables and indexes of a database ──
 
     /// <summary>The index named like an index of EF Core's own on another table.</summary>
@@ -112,6 +125,19 @@ public static class People
             modelBuilder.Entity<Pet>().ToTable("Pets").HasIndex(x => x.Name).HasDatabaseName("IX_shared");
             Persons(modelBuilder).DeclareProbe(ByLowerName with { Name = "IX_shared" });
         }
+    }
+
+    /// <summary>A key's name and a check constraint's are taken nowhere in SQLite.</summary>
+    public sealed class NamedLikeItsPrimaryKey : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Persons(modelBuilder).DeclareProbe(ByLowerName with { Name = "PK_People" });
+    }
+
+    public sealed class NamedLikeACheckConstraint : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Persons(modelBuilder).DeclareProbe(ByLowerName with { Name = "CK_People_Name" })
+                .ToTable(t => t.HasCheckConstraint("CK_People_Name", "\"Name\" <> ''"));
     }
 
     public sealed class NamedLikeATable : ITestModel

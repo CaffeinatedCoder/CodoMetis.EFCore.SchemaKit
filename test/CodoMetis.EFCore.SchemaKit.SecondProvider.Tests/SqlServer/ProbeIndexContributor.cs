@@ -60,6 +60,14 @@ internal sealed class ProbeIndexContributor(SchemaContributorDependencies depend
     /// <summary>For the same: the create written as the statement it is, not through <c>EXEC</c>.</summary>
     public bool CreateAsAPlainStatement { get; set; }
 
+    /// <summary>
+    /// For the tests of the dialect's answers alone: the namespaces this index's name is claimed
+    /// in, in place of its own. No index is an object of the schema, and this contributor has no
+    /// other object, so one stands in for an object that is when the dialect's claims for EF
+    /// Core's tables, constraints and sequences are compared with something.
+    /// </summary>
+    public Func<ProbeIndexDescriptor, IEnumerable<NameClaim>>? ClaimedAs { get; set; }
+
     /// <summary>Every descriptor this contributor resolved, in order: what the kernel compares.</summary>
     public List<ProbeIndexDescriptor> Resolved { get; } = [];
 
@@ -162,5 +170,5 @@ internal sealed class ProbeIndexContributor(SchemaContributorDependencies depend
 
     // An index is named within its table. Audit: the one case of NameClaim that is SQL Server's.
     protected override IEnumerable<NameClaim> Claims(ProbeIndexDescriptor descriptor)
-        => [new NameClaim.TableIndex(descriptor.Table, descriptor.Name.Name)];
+        => ClaimedAs?.Invoke(descriptor) ?? [new NameClaim.TableIndex(descriptor.Table, descriptor.Name.Name)];
 }
