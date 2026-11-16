@@ -1,0 +1,23 @@
+# Throwaway, for #150 and never for main: dotnet.yml called as release.yml calls it, from a
+# workflow that sets release.yml's own `defaults`, so that the lanes a tag is checked by are seen
+# with a failing test in them without release.yml being run. It leaves the branch with the two
+# failing tests.
+
+name: "#150: dotnet.yml as release.yml calls it"
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/dotnet.yml
+    permissions:
+      contents: read
