@@ -8,7 +8,8 @@ The successor of `EFCore.ComplexIndexes` 5.x, with a new API.
 > **`11.0.0-preview.1` is a preview.** It declares one kind of object, the PostgreSQL exclusion
 > constraint. Any API may change before `11.0.0`. The stored form of a declaration, which lands in
 > your model snapshot, is not final either: a later preview may ask you to scaffold your migrations
-> again. The permanent promise for the snapshot starts at `11.0.0`.
+> again. Scaffolding again does not change a database you already built, so try a preview on a
+> database you can build again. The permanent promise for the snapshot starts at `11.0.0`.
 
 ```csharp
 using Microsoft.EntityFrameworkCore;
