@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        Spike D's consumer. run.sh copies this folder to a directory OUTSIDE the repository, once for
+        each provider and statement, and writes a Directory.Build.props there with SpikeProvider
+        (NPGSQL, SQLSERVER, SQLITE), SpikeObject (CONCURRENT_INDEX, ONLINE_INDEX, TRIGGER,
+        TRIGGER_EXEC, ANNOTATED) and the versions: SchemaKit's from the packages it packed, EF Core's
+        and Npgsql's from those packages' own dependencies. It is never built in place.
+
+        The statement is a compile-time constant on purpose. A bundle builds the model again when it
+        runs, to check for pending changes, so a statement chosen by an environment variable would
+        have to be chosen again wherever the bundle is run.
+    -->
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Consumer</RootNamespace>
+        <DefineConstants>$(DefineConstants);$(SpikeProvider);$(SpikeObject)</DefineConstants>
+        <!-- SK9001: this consumer implements the contributor contract, as a package would.
+             EF1001: the generator that records what arrives derives from the provider's. -->
+        <NoWarn>$(NoWarn);SK9001;EF1001</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CodoMetis.EFCore.SchemaKit.PostgreSQL" Version="$(SchemaKitVersion)" Condition="'$(SpikeProvider)' == 'NPGSQL'" />
+        <PackageReference Include="CodoMetis.EFCore.SchemaKit" Version="$(SchemaKitVersion)" Condition="'$(SpikeProvider)' != 'NPGSQL'" />
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(NpgsqlEfVersion)" Condition="'$(SpikeProvider)' == 'NPGSQL'" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="$(EfVersion)" Condition="'$(SpikeProvider)' == 'SQLSERVER'" />
+        <!-- Not used by this project: as in spike B's consumer, Microsoft.EntityFrameworkCore.SqlServer
+             brings a System.Security.Cryptography.Pkcs with two advisories (issue 67). -->
+        <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.23" Condition="'$(SpikeProvider)' == 'SQLSERVER'" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(EfVersion)" Condition="'$(SpikeProvider)' == 'SQLITE'" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EfVersion)" PrivateAssets="all" />
+    </ItemGroup>
+
+</Project>
