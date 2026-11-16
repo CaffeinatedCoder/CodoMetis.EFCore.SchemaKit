@@ -243,9 +243,29 @@ internal static class LambdaTranslator
         }
 
         protected override System.Linq.Expressions.Expression VisitUnary(UnaryExpression node)
-            => node.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked && !IsSilentConversion(node.Operand.Type, node.Type)
+            => Converted(node) is not null && !IsSilentConversion(node.Operand.Type, node.Type)
                    ? throw new NotSupportedException(SchemaKitStrings.ConversionNotTranslated(node, node.Operand.Type, node.Type))
                    : base.VisitUnary(node);
+    }
+
+    // A conversion, and what is under it. In a checked context, a project's
+    // <CheckForOverflowUnderflow> or a checked(…), the compiler writes every numeric conversion
+    // of an expression tree as ConvertChecked, the ones it adds unasked included: x.Small == 5 is
+    // ConvertChecked(x.Small, Int32) == 5 there. Matched as Convert alone, every promoted
+    // comparison of such a project was refused (#126). The two nodes mean the same wherever one
+    // is taken off: of what the lambda reads from the entity only a conversion that keeps every
+    // value passed the check above, and that one cannot overflow. Every place that takes a
+    // conversion off asks here, so that none knows one node and not the other.
+    private static System.Linq.Expressions.Expression? Converted(System.Linq.Expressions.Expression node)
+        => node is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } conversion ? conversion.Operand : null;
+
+    /// <summary>What is under every conversion around the node.</summary>
+    private static System.Linq.Expressions.Expression Unconverted(System.Linq.Expressions.Expression node)
+    {
+        while (Converted(node) is { } operand)
+            node = operand;
+
+        return node;
     }
 
     // C# compares with two-valued logic: `x.Kind != "a"` is true for a null Kind. SQL's `<>` is
@@ -260,8 +280,8 @@ internal static class LambdaTranslator
     {
         switch (node)
         {
-            case UnaryExpression { NodeType: ExpressionType.Convert } convert:
-                return VisitPredicate(convert.Operand, root, negated);
+            case var _ when Converted(node) is { } operand:
+                return VisitPredicate(operand, root, negated);
 
             case UnaryExpression { NodeType: ExpressionType.Not } not when LogicalOperators.Contains(not.NodeType):
                 return ComparesNullable(not.Operand, root) || IsHasValue(not.Operand, root)
@@ -354,9 +374,7 @@ internal static class LambdaTranslator
 
     private static void RefuseEnum(System.Linq.Expressions.Expression node)
     {
-        var stripped = node;
-        while (stripped is UnaryExpression { NodeType: ExpressionType.Convert } convert)
-            stripped = convert.Operand;
+        var stripped = Unconverted(node);
 
         if ((Nullable.GetUnderlyingType(stripped.Type) ?? stripped.Type).IsEnum)
             throw new NotSupportedException(SchemaKitStrings.EnumNotTranslated(node));
@@ -379,8 +397,8 @@ internal static class LambdaTranslator
     }
 
     private static bool IsConvertedChar(System.Linq.Expressions.Expression node)
-        => node is UnaryExpression { NodeType: ExpressionType.Convert } convert
-        && (Nullable.GetUnderlyingType(convert.Operand.Type) ?? convert.Operand.Type) == typeof(char);
+        => Converted(node) is { } operand
+        && (Nullable.GetUnderlyingType(operand.Type) ?? operand.Type) == typeof(char);
 
     private static char? CharCode(System.Linq.Expressions.Expression node, ParameterExpression root)
         => !DependsOnParameter(node, root) && Evaluate(node) is int code ? (char)code : null;
@@ -396,8 +414,7 @@ internal static class LambdaTranslator
     // A literal null or a captured value that evaluates to null.
     private static bool IsNullValue(System.Linq.Expressions.Expression node, ParameterExpression root)
     {
-        while (node is UnaryExpression { NodeType: ExpressionType.Convert } convert)
-            node = convert.Operand;
+        node = Unconverted(node);
 
         return node is ConstantExpression { Value: null }
             || (!DependsOnParameter(node, root) && Evaluate(node) is null);
@@ -407,8 +424,10 @@ internal static class LambdaTranslator
     // NOT (…) could leave NULL where C# has true. Null checks themselves never produce NULL.
     private static bool ComparesNullable(System.Linq.Expressions.Expression node, ParameterExpression root) => node switch
     {
-        UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.Not } unary
-            => ComparesNullable(unary.Operand, root),
+        _ when Converted(node) is { } operand
+            => ComparesNullable(operand, root),
+        UnaryExpression { NodeType: ExpressionType.Not } not
+            => ComparesNullable(not.Operand, root),
         BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse } logical
             => ComparesNullable(logical.Left, root) || ComparesNullable(logical.Right, root),
         BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } equality
@@ -433,8 +452,7 @@ internal static class LambdaTranslator
     // HasValue never.
     private static string? NullCheck(System.Linq.Expressions.Expression node, ParameterExpression root, bool isNull)
     {
-        while (node is UnaryExpression { NodeType: ExpressionType.Convert } convert)
-            node = convert.Operand;
+        node = Unconverted(node);
 
         if (!CanBeNull(node, root))
             return null;
@@ -479,8 +497,7 @@ internal static class LambdaTranslator
     // only through its fallback, and a concatenation never is (its operands are coalesced).
     private static bool CanBeNull(System.Linq.Expressions.Expression node, ParameterExpression root)
     {
-        while (node is UnaryExpression { NodeType: ExpressionType.Convert } convert)
-            node = convert.Operand;
+        node = Unconverted(node);
 
         if (!DependsOnParameter(node, root))
             return Evaluate(node) is null;
@@ -560,8 +577,8 @@ internal static class LambdaTranslator
             // Of what the lambda reads from the entity, and so one of SilentConversions: the check
             // in front of the dispatch refused every other. A conversion of a value alone is C#'s
             // to do, below: (int)limit with a limit of 2.5 is 2, and was written as 2.5.
-            case UnaryExpression { NodeType: ExpressionType.Convert } convert when DependsOnParameter(convert, root):
-                return Visit(convert.Operand, root);
+            case var _ when Converted(node) is { } operand && DependsOnParameter(node, root):
+                return Visit(operand, root);
 
             case MemberExpression { Expression: { } target } member
                 when DependsOnParameter(target, root) && TryGetValueMember(member, out var render):
@@ -604,9 +621,7 @@ internal static class LambdaTranslator
         if (!DependsOnParameter(node, root))
             return "''";
 
-        var stripped = node;
-        while (stripped is UnaryExpression { NodeType: ExpressionType.Convert } convert)
-            stripped = convert.Operand;
+        var stripped = Unconverted(node);
 
         var operand = Visit(stripped, root);
         return stripped.Type == typeof(string) ? $"coalesce({operand}, '')" : $"coalesce({operand}::text, '')";

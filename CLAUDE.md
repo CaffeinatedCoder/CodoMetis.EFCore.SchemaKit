@@ -378,6 +378,12 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
   `ParityCatalogue.JsonMembers` until a provider renders them.
 - **A literal is written as it is.** 5.x doubled a brace inside a literal for a second template
   grammar it had; the resolver has one grammar and takes nothing inside quotes for a placeholder.
+- **`ConvertChecked` is `Convert` wherever a conversion is taken off** (#126). A project compiled
+  with `CheckForOverflowUnderflow` has every numeric conversion of a tree as that node, the ones
+  the compiler adds unasked included, so `x.Small == 5` was refused there. Every place asks one
+  helper (`Converted`, `Unconverted`): match a conversion through it, never by its node type.
+  The sweep compiles its rows a second time with overflow checks and holds each template, and
+  each refusal, to the unchecked one (`A_checked_context_changes_no_row`).
 - **Refused where the lambda is written:** an enum comparison, a `DateTime` or `Guid` literal, a
   member of a scalar, a method outside the tables.
 

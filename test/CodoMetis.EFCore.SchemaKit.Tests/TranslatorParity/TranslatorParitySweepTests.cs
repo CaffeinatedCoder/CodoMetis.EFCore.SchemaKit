@@ -82,6 +82,28 @@ public class TranslatorParitySweepTests
         Assert.IsFalse(outcomes.ContainsKey(ParityOutcome.FailedAtMigrationsAdd), "A template was accepted at the declaration and refused by the resolver.");
     }
 
+    /// <summary>
+    /// A project that sets <c>CheckForOverflowUnderflow</c> compiles the same lambda into another
+    /// tree: every numeric conversion is <c>ConvertChecked</c>. The translator knew <c>Convert</c>,
+    /// so such a project could not compare a <c>short</c> column with a number (#126).
+    /// </summary>
+    [TestMethod(DisplayName = "A row compiled in a checked context is translated as it is unchecked")]
+    public void A_checked_context_changes_no_row()
+    {
+        var rows = ParitySweep.InACheckedContext();
+        var differing = rows.Where(row => row.Unchecked != row.Checked).ToList();
+
+        Assert.IsEmpty(differing,
+            $"{differing.Count} rows are translated differently when the project is compiled with overflow checks:\n\n" +
+            string.Join("\n\n", differing.Take(20).Select(row => $"{row.Id}\n    unchecked: {row.Unchecked}\n    checked:   {row.Checked}")));
+
+        // Not hollow: the second compilation is a checked one, and its conversions reach templates.
+        var converted = rows.Where(row => row.HasCheckedConversion).ToList();
+        Assert.IsTrue(converted.Count >= 1200, $"Rows whose checked tree holds a ConvertChecked: {converted.Count}");
+        Assert.IsTrue(converted.Count(row => !row.Checked.StartsWith("refused: ", StringComparison.Ordinal)) >= 1100,
+            "Rows with a ConvertChecked that are translated: " + converted.Count(row => !row.Checked.StartsWith("refused: ", StringComparison.Ordinal)));
+    }
+
     // ── The canonical form the comparison rests on ──
 
     [TestMethod(DisplayName = "The canonical form keeps what PostgreSQL's parser keeps")]
