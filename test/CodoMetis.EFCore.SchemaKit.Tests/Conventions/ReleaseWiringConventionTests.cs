@@ -357,6 +357,31 @@ public sealed class ReleaseWiringConventionTests
     }
 
     /// <summary>
+    /// A run from a branch whose version is headed <c>— unreleased</c> goes on with a warning and
+    /// notes that say it is a dry run, as it does for a version with no section (#151).
+    /// </summary>
+    /// <remarks>
+    /// <c>main</c> is in that state from the commit that opens a version to the one that dates it,
+    /// so a dry run that stopped here could not rehearse the build, the pack checks and the SBOMs
+    /// on it, nor reach <c>publish</c>'s approval. The tag's refusal of the same heading is
+    /// <see cref="A_tag_whose_version_has_no_dated_section_stops"/>.
+    /// </remarks>
+    [TestMethod(DisplayName = "A dry run whose version is unreleased in the changelog goes on with a warning")]
+    public void A_dry_run_whose_version_is_unreleased_goes_on()
+    {
+        var (dryRun, notes) = Notes("11.0.0", "refs/heads/main", SeededChangelog("unreleased"));
+
+        Assert.AreEqual(0, dryRun.ExitCode, $"A run from a branch stopped at a version whose heading says 'unreleased':\n{dryRun}");
+        StringAssert.Contains(dryRun.Output, "::warning::", dryRun.ToString());
+        StringAssert.Contains(dryRun.Output, "A tag for 11.0.0 would stop here", dryRun.ToString());
+        Assert.IsNotNull(notes, "A dry run with an 'unreleased' heading wrote no notes.");
+        StringAssert.StartsWith(notes, "(dry run:", $"The notes of a dry run with an 'unreleased' heading do not say so first:\n{notes}");
+        StringAssert.Contains(
+            notes, $"[the guide]({Repository}/blob/v11.0.0/docs/moving-from-complexindexes-5x.md#conditions)",
+            $"The notes of a dry run with an 'unreleased' heading are not the version's section:\n{notes}");
+    }
+
+    /// <summary>
     /// The repository's own changelog, read by the step that reads it on the day of the release,
     /// with the one edit the tagged commit makes: the date in place of <c>unreleased</c>.
     /// </summary>

@@ -119,8 +119,10 @@ jobs:
       # The release's notes are the version's section of CHANGELOG.md: the lines after its
       # `## [x.y.z] — yyyy-mm-dd` heading up to the next `## `, from the first line with text.
       # They are written here, before anything is published, and travel with the packages: a tag
-      # whose version has no section fails now and not after the push. A dry run from a branch
-      # whose changelog has no section yet goes on with a warning, so the rest can be exercised.
+      # whose version has no section, or whose heading has no date (`— unreleased`), fails now and
+      # not after the push. A dry run from a branch goes on with a warning in both cases, so the
+      # rest can be exercised up to `publish`'s approval: main is headed `— unreleased` from the
+      # commit that opens a version to the one that dates it (issue 151).
       #
       # index() and not a regex, so the dots of the version match only dots. The changelog links
       # this repository at main, which moves on after the tag; the notes link it at the tag.
@@ -151,8 +153,13 @@ jobs:
             echo "::warning::$message A tag for $VERSION would stop here."
             notes="(dry run: no changelog section for $VERSION)"
           elif ! grep -Eq "^## \[${VERSION//./\\.}\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
-            echo "::error::The heading of $VERSION in CHANGELOG.md is not '## [$VERSION] — yyyy-mm-dd'."
-            exit 1
+            message="The heading of $VERSION in CHANGELOG.md is not '## [$VERSION] — yyyy-mm-dd'."
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "::error::$message"
+              exit 1
+            fi
+            echo "::warning::$message A tag for $VERSION would stop here."
+            notes="$(printf '(dry run: the changelog section of %s has no date)\n\n%s' "$VERSION" "$notes")"
           fi
 
           printf '%s\n' "$notes" > dist/release-notes.md
