@@ -31,6 +31,9 @@ public static class Forms
     /// <summary>SQL Server: the same, with the trigger's body on several lines, as a real one is written.</summary>
     public const string TriggerExecLines = "trigger-exec-lines";
 
+    /// <summary>SQL Server: the same again, the line breaks inside one string constant the contributor wrote out itself.</summary>
+    public const string TriggerExecRaw = "trigger-exec-raw";
+
     /// <summary>A plain <c>CREATE INDEX</c>: the control, and what the annotations are put on.</summary>
     public const string PlainIndex = "plain-index";
 
@@ -44,6 +47,8 @@ public static class Forms
     public const string Current = TriggerExec;
 #elif TRIGGER_EXEC_LINES
     public const string Current = TriggerExecLines;
+#elif TRIGGER_EXEC_RAW
+    public const string Current = TriggerExecRaw;
 #else
     public const string Current = PlainIndex;
 #endif
@@ -169,6 +174,21 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
                     END
                     """);
                 sql.Statement($"EXEC({sql.Literal(lines.ToString())})");
+                break;
+
+            // One string constant with the line breaks in it, which T-SQL allows. The contract has
+            // no way to say it: the only text it turns into a constant goes through Literal. So the
+            // quotes are doubled by hand here, and a name with a quote in it would end the
+            // constant. It shows what the server takes, not how a contributor may write it.
+            case Forms.TriggerExecRaw:
+                sql.Statement($"""
+                    EXEC(N'CREATE TRIGGER {descriptor.Name} ON {descriptor.Table} AFTER INSERT, UPDATE AS
+                    BEGIN
+                        SET NOCOUNT ON;
+                        IF EXISTS (SELECT 1 FROM inserted WHERE {descriptor.Column} = N''refused'')
+                            THROW 51000, N''spike D: the row is refused'', 1;
+                    END')
+                    """);
                 break;
 #endif
 

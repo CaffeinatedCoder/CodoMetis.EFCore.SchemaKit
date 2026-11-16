@@ -28,6 +28,9 @@
 # told otherwise; where the first run met an error, the path is run again in a new database with
 # the tools' stop-at-the-first-error switch.
 #
+# The judge stands in for psql and sqlcmd. Where the machine has the tool itself, every script is
+# applied through it as well, and what it leaves must be what the judge's way left.
+#
 # `expected` below is the table as measured. A cell that answers otherwise fails the run.
 #
 # SPIKE_ONLY="npgsql-trigger sqlserver-annotated" runs those consumers only.
@@ -48,7 +51,9 @@ results=$work/results.md          # CI's summary: consumer, path, mark, outcome
 table=$work/table.md              # question 1, as the README holds it
 annotations=$work/annotations.md  # question 2
 errors=$work/errors.md            # each error with the SQL that caused it
-: > "$results"; : > "$table"; : > "$annotations"; : > "$errors"
+tools=$work/tools.md              # what psql and sqlcmd themselves said
+bodies_table=$work/bodies.md      # a trigger's body as the catalog keeps it, by path
+: > "$results"; : > "$table"; : > "$annotations"; : > "$errors"; : > "$tools"; : > "$bodies_table"
 failures=0
 prefix="spike_d_$(date +%s)_$$_"
 dbn=0
@@ -104,10 +109,6 @@ dependency() { # package, id: the version the nuspec names, without brackets
 ef_version=$(dependency "$feed/CodoMetis.EFCore.SchemaKit.$version.nupkg" Microsoft.EntityFrameworkCore.Relational)
 npgsql_ef_version=$(dependency "$feed/CodoMetis.EFCore.SchemaKit.PostgreSQL.$version.nupkg" Npgsql.EntityFrameworkCore.PostgreSQL)
 [[ -n $ef_version && -n $npgsql_ef_version ]] || { echo "Cannot read EF Core's and Npgsql EF's versions from the packed nuspecs." >&2; exit 1; }
-# SPIKE_D_EF_VERSION: the consumers on another EF Core than the packages reference, as the smoke
-# test's SMOKE_EF_VERSION. The design package, the SQL Server and SQLite providers and dotnet-ef
-# follow it; Npgsql EF keeps its own version, whose pin NuGet answers with NU1608.
-ef_version=${SPIKE_D_EF_VERSION:-$ef_version}
 echo "CodoMetis.EFCore.SchemaKit $version, EF Core $ef_version, Npgsql EF $npgsql_ef_version"
 echo "Work directory: $work"
 echo
@@ -135,7 +136,7 @@ EOF
 
 # ---- one consumer ---------------------------------------------------------------------------------
 
-dir= ; name= ; dll= ; step=0 ; log= ; code=0
+dir= ; name= ; provider= ; dll= ; step=0 ; log= ; code=0
 
 # `dotnet ef` never builds here: the project is built after each change of its migrations, so a
 # compile error is reported as one.
@@ -145,7 +146,7 @@ build() { step=$((step + 1)); log=$dir/logs/$(printf '%02d' "$step")-build.txt; 
 migration() { find "$dir/Migrations" -name "*_$1.cs" ! -name '*.Designer.cs' 2>/dev/null | head -n 1; }
 
 consumer() { # name, provider, object
-  name=$1; dir=$work/$1; dll=$dir/bin/Debug/net11.0/Consumer.dll; step=0
+  name=$1; provider=$2; dir=$work/$1; dll=$dir/bin/Debug/net11.0/Consumer.dll; step=0
   rm -rf "$dir"; mkdir -p "$dir/logs"
   cp "$here"/consumer/* "$dir/"
   cat > "$dir/Directory.Build.props" <<EOF
@@ -201,7 +202,7 @@ apply()  { app apply "$dir/$1" "$2"; applied=$log; applied_code=$code; }
 bundle() {
   step=$((step + 1)); log=$dir/logs/$(printf '%02d' "$step")-bundle.txt
   (cd "$dir" && ./efbundle --connection "$SPIKE_D_CONNECTION") > "$log" 2>&1
-  applied=$log; applied_code=$?
+  applied_code=$?; applied=$log
 }
 
 # Sets err (ok, or the server's code for the first error), errline (its message) and state (what
@@ -220,7 +221,51 @@ after() {
   fi
   app check
   state=$(grep -m1 '^STATE: ' "$log" | cut -c8-)
-  [[ -n $state ]] || state="table=? history=? object=unreadable id=-"
+  [[ -n $state ]] || state="table=? history=? object=unreadable id=- body=-"
+}
+
+# ---- the provider's own client -------------------------------------------------------------------
+
+psql_version=$(psql --version 2> /dev/null | head -n 1)
+sqlcmd_version=$(sqlcmd '-?' 2> /dev/null | grep -m1 -i 'version' | sed -E 's/^[[:space:]]+//')
+
+with_tool() { # script, stop|continue: applies it to the current database through psql or sqlcmd
+  local host port user password db
+  IFS=$'\t' read -r host port user password db <<< "$(dotnet "$dll" client "$database")"
+  step=$((step + 1)); log=$dir/logs/$(printf '%02d' "$step")-tool-$2.txt
+  if [[ $provider == NPGSQL ]]; then
+    local stop=(); [[ $2 == stop ]] && stop=(-v ON_ERROR_STOP=1)
+    PGPASSWORD=$password PGCLIENTENCODING=UTF8 psql -X -h "$host" -p "$port" -U "$user" -d "$db" ${stop[@]+"${stop[@]}"} -f "$dir/$1" > "$log" 2>&1
+  else
+    local stop=(); [[ $2 == stop ]] && stop=(-b)
+    sqlcmd -S "$host" -U "$user" -P "$password" -d "$db" -C ${stop[@]+"${stop[@]}"} -i "$dir/$1" > "$log" 2>&1
+  fi
+  code=$?
+}
+
+triple() { echo "$(field object "$1")/$(field table "$1")/$(field history "$1")"; }
+
+# The same script through the tool, into a database of its own, as often as the judge applied it.
+tool_agrees() { # label, script, stop|continue, the state the judge's way left after each run...
+  local label=$1 script=$2 mode=$3 tool said= run=0 want got codes=
+  shift 3
+  if [[ $provider == NPGSQL ]]; then tool=$psql_version; else tool=$sqlcmd_version; fi
+  [[ -n $tool ]] || return 0
+  fresh || return 0
+
+  for want in "$@"; do
+    run=$((run + 1))
+    with_tool "$script" "$mode"; codes="$codes $code"
+    [[ -n $said ]] || said=$(grep -m1 -A1 -E 'ERROR:|^Msg ' "$log" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/ $//')
+    app check
+    got=$(grep -m1 '^STATE: ' "$log" | cut -c8-)
+    if [[ $(triple "$got") != "$(triple "$want")" ]]; then
+      row "$name on $label" "$script through the tool itself, $mode" 1 "run $run left '$(triple "$got")' through $tool, and '$(triple "$want")' through the judge"
+      return 0
+    fi
+  done
+  row "$name on $label" "$script through the tool itself, $mode" 0 "$tool leaves what the judge's way left (exit$codes)${said:+; it says: $said}"
+  printf '| %s | %s | %s | %s | %s |\n' "$label" "$name" "$script, $mode" "$tool, exit$codes" "${said:--}" >> "$tools"
 }
 
 # The error with the SQL that caused it, once for each consumer and path.
@@ -236,6 +281,13 @@ explain() { # server, statement, path
       echo
       echo '```sql'
       sed -n '/^STATEMENT:/,/^END-STATEMENT/p' "$applied" | sed -e '/^STATEMENT:/d' -e '/^END-STATEMENT/d' -e 's/^    //' | head -n 40
+      echo '```'
+    fi
+    # A bundle names the command it failed on, and then the exception.
+    if grep -q '^Failed executing DbCommand' "$applied"; then
+      echo
+      echo '```sql'
+      sed -n '/^Failed executing DbCommand/,/Exception/p' "$applied" | sed -e '1d' -e '$d' | head -n 40
       echo '```'
     fi
     echo
@@ -289,10 +341,19 @@ expected() { # consumer, path
     # dialect's Literal as CONCAT(…, nchar(10), …), which EXEC does not take, on any path.
     sqlserver-trigger-exec-lines/script)      echo "102/missing/missing/0 -" ;;
     sqlserver-trigger-exec-lines/idempotent*) echo "102/missing/missing/0 102/same" ;;
-    sqlserver-trigger-exec-lines/bundle)      echo "102/missing/missing/missing 102/same" ;;
+    sqlserver-trigger-exec-lines/bundle)      echo "102/missing/missing/0 102/same" ;;
 
     */script)                          echo "ok/ok/present/1 -" ;;
     *)                                 echo "ok/ok/present/1 ok/same" ;;
+  esac
+}
+
+# The idempotent script indents every line of a statement to stand inside its IF, and the lines of
+# a body are lines of the statement: the catalog keeps the body with that indentation.
+expected_body() { # consumer
+  case $1 in
+    npgsql-trigger|sqlserver-trigger-exec-raw) echo idempotent-differs ;;
+    *)                                         echo same ;;
   esac
 }
 
@@ -330,7 +391,7 @@ cell() { # label, server, statement, path id, path words, e1, s1, l1, e2, s2, l2
 
 # One server, every path of this consumer.
 measure() { # label, the server's connection string, the statement as the table names it
-  local label=$1 statement=$3 server e1 s1 l1 e2 s2 l2
+  local label=$1 statement=$3 server e1 s1 l1 e2 s2 l2 b_script b_idempotent b_bundle
   if [[ -z $2 ]]; then
     skipped "$name on $label" "every path" "no connection string for $label in the environment"
     return
@@ -347,6 +408,8 @@ measure() { # label, the server's connection string, the statement as the table 
   fresh || { row "$name on $label" "a database for the run" 1 "see $log"; return; }
   apply script.sql continue; after; explain "$server" "$statement" "migrations script"
   cell "$label" "$server" "$statement" script "\`migrations script\`, applied once" "$err" "$state" "$errline" - - ""
+  b_script=$(field body "$state")
+  tool_agrees "$label" script.sql continue "$state"
 
   # The idempotent script, twice, as psql and sqlcmd apply a file by default.
   fresh || return
@@ -354,6 +417,8 @@ measure() { # label, the server's connection string, the statement as the table 
   explain "$server" "$statement" "migrations script --idempotent"
   apply idempotent.sql continue; after; e2=$err; s2=$state; l2=$errline
   cell "$label" "$server" "$statement" idempotent "\`migrations script --idempotent\`, applied twice" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
+  b_idempotent=$(field body "$s1")
+  tool_agrees "$label" idempotent.sql continue "$s1" "$s2"
 
   # Where that met an error: the same with the tools' switch that stops at the first one.
   if [[ $e1 != ok ]]; then
@@ -362,6 +427,7 @@ measure() { # label, the server's connection string, the statement as the table 
     apply idempotent.sql stop; after; e2=$err; s2=$state; l2=$errline
     [[ $e2 == ok ]] || explain "$server" "$statement" "migrations script --idempotent, stopping at the first error, second run"
     cell "$label" "$server" "$statement" idempotent-stop "\`migrations script --idempotent\`, applied twice, stopping at the first error" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
+    tool_agrees "$label" idempotent.sql stop "$s1" "$s2"
   fi
 
   # The bundle, twice.
@@ -372,6 +438,20 @@ measure() { # label, the server's connection string, the statement as the table 
   bundle; after; e2=$err; s2=$state; l2=$errline
   unset SPIKE_D_SEEN
   cell "$label" "$server" "$statement" bundle "\`migrations bundle\`, run twice" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
+  b_bundle=$(field body "$s1")
+
+  # A trigger that every path created: is the body the catalog keeps the same on each?
+  if [[ $b_script != - && $b_idempotent != - && $b_bundle != - ]]; then
+    local bodies=same
+    [[ $b_script == "$b_bundle" && $b_idempotent != "$b_bundle" ]] && bodies=idempotent-differs
+    [[ $b_script != "$b_bundle" ]] && bodies="all-differ"
+    if [[ $bodies == "$(expected_body "$name")" ]]; then
+      row "$name on $label" "the body the catalog keeps, by path" 0 "$bodies: script ${b_script%%:*} characters, idempotent script ${b_idempotent%%:*}, bundle ${b_bundle%%:*}"
+    else
+      row "$name on $label" "the body the catalog keeps, by path" 1 "measured '$bodies', the table says '$(expected_body "$name")': script $b_script, idempotent script $b_idempotent, bundle $b_bundle"
+    fi
+    printf '| %s | %s | %s | %s | %s |\n' "$server" "$statement" "${b_script%%:*}" "${b_idempotent%%:*}" "${b_bundle%%:*}" >> "$bodies_table"
+  fi
 }
 
 # ---- question 2: an annotation on a SqlOperation --------------------------------------------------
@@ -510,6 +590,13 @@ if wanted sqlserver-trigger-exec-lines && consumer sqlserver-trigger-exec-lines 
   fi
 fi
 
+if wanted sqlserver-trigger-exec-raw && consumer sqlserver-trigger-exec-raw SQLSERVER TRIGGER_EXEC_RAW; then
+  thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
+  if scaffold "EXEC(N'CREATE TRIGGER" 'BEGIN'; then
+    measure mssql "$mssql" "\`EXEC(N'CREATE TRIGGER …')\`, the line breaks inside the string constant"
+  fi
+fi
+
 if wanted sqlserver-annotated && consumer sqlserver-annotated SQLSERVER ANNOTATED; then
   thing=index; thing_ok="the index is in the catalog"
   unknown_literal "SQL Server"
@@ -562,6 +649,18 @@ echo "| Provider | Path | What happens to the annotations |"
 echo "|---|---|---|"
 cat "$annotations"
 echo
+if [[ -s $bodies_table ]]; then
+  echo "| Server | Statement | Body after the script | after the idempotent script | after the bundle |"
+  echo "|---|---|---|---|---|"
+  cat "$bodies_table"
+  echo
+fi
+if [[ -s $tools ]]; then
+  echo "| Server | Consumer | Script | Tool | What it said |"
+  echo "|---|---|---|---|---|"
+  cat "$tools"
+  echo
+fi
 if [[ -s $errors ]]; then
   echo "Each error, with the SQL that caused it where a script was applied:"
   echo

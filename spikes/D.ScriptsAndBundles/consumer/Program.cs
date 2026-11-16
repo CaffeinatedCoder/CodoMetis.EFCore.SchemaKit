@@ -12,6 +12,8 @@ using Consumer;
 //   drop-prefix <prefix>             every database on SPIKE_D_SERVER whose name starts with it
 //   apply <script> <stop|continue>   to SPIKE_D_CONNECTION, the way the provider's own tool does
 //   check                            what SPIKE_D_CONNECTION's database holds
+//   client <database>                host, port, user, password and database, tab-separated: what
+//                                    psql or sqlcmd needs to reach that database on SPIKE_D_SERVER
 //
 // A script is applied as psql and sqlcmd apply one, not as one command: psql sends a script
 // statement by statement, sqlcmd batch by batch at each GO. `continue` goes on after an error,
@@ -48,6 +50,10 @@ try
             Judge.Check();
             return 0;
 
+        case "client" when args.Length == 2:
+            Console.WriteLine(string.Join('\t', Judge.Client(args[1])));
+            return 0;
+
         default:
             return Usage();
     }
@@ -60,7 +66,7 @@ catch (DbException e)
 
 static int Usage()
 {
-    Console.Error.WriteLine("usage: version | connection <database> | create <database> | drop-prefix <prefix> | apply <script> <stop|continue> | check");
+    Console.Error.WriteLine("usage: version | connection <database> | client <database> | create <database> | drop-prefix <prefix> | apply <script> <stop|continue> | check");
     return 2;
 }
 
@@ -121,25 +127,25 @@ internal static partial class Judge
             : "missing";
         Console.WriteLine($"HISTORY: {history}");
 
-        var (verdict, id) = Forms.IsTrigger ? Trigger(connection, table) : Index(connection);
-        Console.WriteLine($"STATE: table={(table ? "present" : "missing")} history={history} object={verdict} id={id}");
+        var (verdict, id, body) = Forms.IsTrigger ? Trigger(connection, table) : Index(connection);
+        Console.WriteLine($"STATE: table={(table ? "present" : "missing")} history={history} object={verdict} id={id} body={body}");
     }
 
     /// <summary>The trigger by the catalog, and by what it is for: a row it must refuse.</summary>
-    private static (string Verdict, string Id) Trigger(DbConnection connection, bool table)
+    private static (string Verdict, string Id, string Body) Trigger(DbConnection connection, bool table)
     {
-        var (found, id) = TriggerInCatalog(connection);
+        var (found, id, body) = TriggerInCatalog(connection);
         Console.WriteLine($"TRIGGER {Forms.ObjectName}: {found}");
 
-        if (!table) return (found, id);
+        if (!table) return (found, id, body);
 
         var good = Insert(connection, "fine");
         var bad  = Insert(connection, "refused");
         Console.WriteLine($"GOOD-ROW: {good}");
         Console.WriteLine($"REFUSED-ROW: {bad}");
 
-        if (found != "enabled") return (found, id);
-        return good == "accepted" && bad == RefusalCode ? ("ok", id) : ("not-enforcing", id);
+        if (found != "enabled") return (found, id, body);
+        return good == "accepted" && bad == RefusalCode ? ("ok", id, body) : ("not-enforcing", id, body);
     }
 
     /// <summary>Inserts a row and takes it back. The answer is "accepted" or the server's error code.</summary>
@@ -223,6 +229,12 @@ internal static partial class Judge
     public static string ConnectionTo(string database)
         => new Npgsql.NpgsqlConnectionStringBuilder(Server) { Database = database }.ConnectionString;
 
+    public static string[] Client(string database)
+    {
+        var server = new Npgsql.NpgsqlConnectionStringBuilder(Server);
+        return [server.Host ?? "localhost", server.Port.ToString(), server.Username ?? "postgres", server.Password ?? "", database];
+    }
+
     public static string Version()
     {
         using var connection = Open(Server);
@@ -243,7 +255,7 @@ internal static partial class Judge
     }
 
     /// <summary>An index a failed CREATE INDEX CONCURRENTLY leaves behind is in the catalog and invalid; that is not "there".</summary>
-    private static (string Verdict, string Id) Index(DbConnection connection)
+    private static (string Verdict, string Id, string Body) Index(DbConnection connection)
     {
         var rows = Rows(connection,
             $"""
@@ -254,26 +266,27 @@ internal static partial class Judge
         if (rows.Count == 0)
         {
             Console.WriteLine($"INDEX {Forms.ObjectName}: missing");
-            return ("missing", "-");
+            return ("missing", "-", "-");
         }
 
         var valid = (bool)rows[0][1]!;
         Console.WriteLine($"INDEX {Forms.ObjectName}: {(valid ? "valid" : "invalid")}: {rows[0][2]}");
-        return (valid ? "ok" : "invalid", (string)rows[0][0]!);
+        return (valid ? "ok" : "invalid", (string)rows[0][0]!, "-");
     }
 
-    private static (string Found, string Id) TriggerInCatalog(DbConnection connection)
+    /// <summary>The body is the function's source as the catalog keeps it, by its length and hash.</summary>
+    private static (string Found, string Id, string Body) TriggerInCatalog(DbConnection connection)
     {
         var rows = Rows(connection,
             $"""
-             SELECT t.oid::text, t.tgenabled::text, p.oid::text, p.proname::text
+             SELECT t.oid::text, t.tgenabled::text, p.oid::text, p.proname::text, length(p.prosrc)::text || ':' || md5(p.prosrc)
              FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
              WHERE t.tgname = '{Forms.ObjectName}' AND NOT t.tgisinternal
              """);
-        if (rows.Count == 0) return ("missing", "-");
+        if (rows.Count == 0) return ("missing", "-", "-");
 
         Console.WriteLine($"FUNCTION {rows[0][3]}: present");
-        return ((string)rows[0][1]! == "O" ? "enabled" : "disabled", $"{rows[0][0]}+{rows[0][2]}");
+        return ((string)rows[0][1]! == "O" ? "enabled" : "disabled", $"{rows[0][0]}+{rows[0][2]}", (string)rows[0][4]!);
     }
 
     /// <summary>
@@ -376,6 +389,13 @@ internal static partial class Judge
     public static string ConnectionTo(string database)
         => new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(Server) { InitialCatalog = database }.ConnectionString;
 
+    /// <summary>sqlcmd takes the server as SqlClient does, "host,port", so the port stays in it.</summary>
+    public static string[] Client(string database)
+    {
+        var server = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(Server);
+        return [server.DataSource, "-", server.UserID, server.Password, database];
+    }
+
     public static string Version()
     {
         using var connection = Open(Server);
@@ -399,26 +419,34 @@ internal static partial class Judge
         }
     }
 
-    private static (string Verdict, string Id) Index(DbConnection connection)
+    private static (string Verdict, string Id, string Body) Index(DbConnection connection)
     {
         var rows = Rows(connection,
             $"SELECT CONCAT(i.object_id, '.', i.index_id), i.is_disabled FROM sys.indexes i WHERE i.object_id = OBJECT_ID(N'[Things]', N'U') AND i.name = N'{Forms.ObjectName}'");
         if (rows.Count == 0)
         {
             Console.WriteLine($"INDEX {Forms.ObjectName}: missing");
-            return ("missing", "-");
+            return ("missing", "-", "-");
         }
 
         var disabled = (bool)rows[0][1]!;
         Console.WriteLine($"INDEX {Forms.ObjectName}: {(disabled ? "disabled" : "enabled")}");
-        return (disabled ? "disabled" : "ok", (string)rows[0][0]!);
+        return (disabled ? "disabled" : "ok", (string)rows[0][0]!, "-");
     }
 
-    private static (string Found, string Id) TriggerInCatalog(DbConnection connection)
+    /// <summary>The body is the trigger's definition as the catalog keeps it, by its length and hash.</summary>
+    private static (string Found, string Id, string Body) TriggerInCatalog(DbConnection connection)
     {
         var rows = Rows(connection,
-            $"SELECT CONCAT(t.object_id, '@', CONVERT(varchar(33), t.modify_date, 126)), t.is_disabled FROM sys.triggers t WHERE t.name = N'{Forms.ObjectName}'");
-        return rows.Count == 0 ? ("missing", "-") : ((bool)rows[0][1]! ? "disabled" : "enabled", (string)rows[0][0]!);
+            $"""
+             SELECT CONCAT(t.object_id, '@', CONVERT(varchar(33), t.modify_date, 126)), t.is_disabled,
+                    CONCAT(LEN(m.definition), ':', CONVERT(varchar(32), HASHBYTES('MD5', m.definition), 2))
+             FROM sys.triggers t JOIN sys.sql_modules m ON m.object_id = t.object_id
+             WHERE t.name = N'{Forms.ObjectName}'
+             """);
+        return rows.Count == 0
+            ? ("missing", "-", "-")
+            : ((bool)rows[0][1]! ? "disabled" : "enabled", (string)rows[0][0]!, (string)rows[0][2]!);
     }
 
     /// <summary>The script's batches, as sqlcmd finds them: ended by a line that says GO and nothing else.</summary>
@@ -476,6 +504,8 @@ internal static partial class Judge
 
     public static string ConnectionTo(string database) => throw new NotSupportedException("SQLite has no server: SPIKE_D_CONNECTION names the file.");
 
+    public static string[] Client(string database) => throw new NotSupportedException("SQLite has no server: SPIKE_D_CONNECTION names the file.");
+
     public static string Version()
     {
         using var connection = Open(Database);
@@ -486,14 +516,14 @@ internal static partial class Judge
 
     public static void DropPrefix(string prefix) => throw new NotSupportedException("SQLite has no server: SPIKE_D_CONNECTION names the file.");
 
-    private static (string Verdict, string Id) Index(DbConnection connection)
+    private static (string Verdict, string Id, string Body) Index(DbConnection connection)
     {
         var found = Scalar(connection, $"SELECT name FROM sqlite_master WHERE type = 'index' AND name = '{Forms.ObjectName}'") is string;
         Console.WriteLine($"INDEX {Forms.ObjectName}: {(found ? "present" : "missing")}");
-        return (found ? "ok" : "missing", found ? Forms.ObjectName : "-");
+        return (found ? "ok" : "missing", found ? Forms.ObjectName : "-", "-");
     }
 
-    private static (string Found, string Id) TriggerInCatalog(DbConnection connection) => ("missing", "-");
+    private static (string Found, string Id, string Body) TriggerInCatalog(DbConnection connection) => ("missing", "-", "-");
 
     private static List<string> Split(string script) => [script];
 
