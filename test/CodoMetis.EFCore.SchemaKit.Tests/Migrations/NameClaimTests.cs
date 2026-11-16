@@ -211,7 +211,44 @@ public sealed class NameClaimTests
         Assert.AreEqual(expected, claims[0].GetType());
     }
 
+    /// <summary>
+    /// Asked of the dialect, for every kind there is: an object that claims no name is one nothing
+    /// can collide with, and a kind added later has to be answered for (#107).
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void Every_kind_of_object_has_a_scope(Provider provider)
+    {
+        using var context = SchemaOperationPlannerTests.Context<LegacyModels.Undeclared>(provider);
+        var dialect = context.GetService<ISchemaDialect>();
+        var table = new TableRef(dialect.Identifier("app"), dialect.Identifier("things"));
+        var name = dialect.Identifier("named");
+
+        foreach (var kind in Enum.GetValues<SchemaModelObject>())
+        {
+            var claims = dialect.Claims(kind, table, name).ToList();
+
+            Assert.IsTrue(claims.Count > 0, $"{kind} claims no name.");
+            foreach (var claim in claims)
+            {
+                var claimed = claim switch
+                {
+                    NameClaim.Relation relation => relation.Name,
+                    NameClaim.TableIndex index => index.Name,
+                    NameClaim.Constraint constraint => constraint.Name,
+                    NameClaim.Trigger trigger => trigger.Name,
+                };
+                Assert.AreEqual(name, claimed, $"{kind} claims another name than its own.");
+            }
+        }
+    }
+
+    /// <summary>The rows of <see cref="The_default_scopes" /> are every kind: one added to the enum needs its row.</summary>
     [TestMethod]
-    public void Every_kind_of_object_has_a_scope()
-        => Assert.HasCount(7, Enum.GetValues<SchemaModelObject>());
+    public void The_default_scopes_are_stated_for_every_kind()
+        => CollectionAssert.AreEquivalent(
+            Enum.GetValues<SchemaModelObject>(),
+            typeof(NameClaimTests).GetMethod(nameof(The_default_scopes))!
+                .GetCustomAttributes(typeof(DataRowAttribute), inherit: false)
+                .Select(row => (SchemaModelObject)((DataRowAttribute)row).Data![0]!)
+                .ToList());
 }

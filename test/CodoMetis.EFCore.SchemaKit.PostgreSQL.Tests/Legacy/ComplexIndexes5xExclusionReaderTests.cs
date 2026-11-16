@@ -52,10 +52,24 @@ public sealed class ComplexIndexes5xExclusionReaderTests
             Diff<MovedModels.SlotUnderGist>(deferrable));
     }
 
+    /// <summary>
+    /// The statements of a rebuild show the target alone, so they are the same whatever was read.
+    /// What was read shows against the model that declares it: no operations (#107).
+    /// </summary>
     [TestMethod]
     public void A_deferrable_constraint_checked_at_commit_is_not_one_checked_at_once()
-        => Assert.AreEqual(2, Diff<MovedModels.SlotUnderGistDeferrable>(
-            """[{"parts":[{"path":"During","op":"&&"}],"deferrable":true,"initiallyDeferred":true}]""").Count);
+    {
+        const string deferred = """[{"parts":[{"path":"During","op":"&&"}],"deferrable":true,"initiallyDeferred":true}]""";
+
+        CollectionAssert.AreEqual(Array.Empty<string>(), Diff<MovedModels.SlotUnderGistDeferred>(deferred));
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                """ALTER TABLE "Slot" DROP CONSTRAINT "EX_Slot_During";""",
+                """ALTER TABLE "Slot" ADD CONSTRAINT "EX_Slot_During" EXCLUDE USING gist ("During" WITH &&) DEFERRABLE;""",
+            },
+            Diff<MovedModels.SlotUnderGistDeferrable>(deferred));
+    }
 
     /// <summary>The constraint is in the database. A reader that passed over it would have the next migration create it again.</summary>
     [TestMethod]
