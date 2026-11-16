@@ -59,7 +59,7 @@ prefix="spike_d_$(date +%s)_$$_"
 dbn=0
 cleanup=()
 
-export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_UI_LANGUAGE=en
 
 finish() {
   [[ ${SPIKE_KEEP:-} == 1 ]] && return
@@ -215,7 +215,8 @@ after() {
   elif [[ $applied_code != 0 ]]; then
     errline=$(grep -m1 -E 'Exception' "$applied" | sed -E 's/^[[:space:]]+//' | cut -c1-300)
     err=$(grep -m1 -oE 'PostgresException \([^)]*\): [0-9A-Z]{5}' "$applied" | grep -oE '[0-9A-Z]{5}$' || true)
-    [[ -n $err ]] || err=$(grep -m1 -oE 'Error Number:[0-9]+' "$applied" | cut -d: -f2 || true)
+    # SqlClient names the number in the machine's language and in English: "… (Error Number):102".
+    [[ -n $err ]] || err=$(grep -m1 -oE 'Error Number\)?:[0-9]+' "$applied" | grep -oE '[0-9]+$' || true)
     [[ -n $err ]] || err="exit-$applied_code"
     [[ -n $errline ]] || errline=$(tail -n 1 "$applied")
   fi
@@ -228,6 +229,7 @@ after() {
 
 psql_version=$(psql --version 2> /dev/null | head -n 1)
 sqlcmd_version=$(sqlcmd '-?' 2> /dev/null | grep -m1 -i 'version' | sed -E 's/^[[:space:]]+//')
+[[ -n $sqlcmd_version ]] && sqlcmd_version="sqlcmd ${sqlcmd_version#Version }"
 
 with_tool() { # script, stop|continue: applies it to the current database through psql or sqlcmd
   local host port user password db
