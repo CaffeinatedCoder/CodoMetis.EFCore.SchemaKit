@@ -28,8 +28,16 @@
 # told otherwise; where the first run met an error, the path is run again in a new database with
 # the tools' stop-at-the-first-error switch.
 #
-# The judge stands in for psql and sqlcmd. Where the machine has the tool itself, every script is
-# applied through it as well, and what it leaves must be what the judge's way left.
+# The judge stands in for psql and sqlcmd. Where the tool itself can be reached, every script is
+# applied through it as well, and what it leaves must be what the judge's way left. It is reached
+# on PATH, or inside the container a server runs in when one is named:
+#
+#   SPIKE_D_PG16_CONTAINER, SPIKE_D_PG18_CONTAINER   docker containers of the official postgres image
+#   SPIKE_D_MSSQL_CONTAINER                          one of mcr.microsoft.com/mssql/server
+#
+# There the script goes in on standard input (`docker exec -i … psql -f -`, `… sqlcmd`), with the
+# byte order mark EF Core writes taken off for sqlcmd, which reads one off a file given with -i
+# and takes it for a syntax error on standard input.
 #
 # `expected` below is the table as measured. A cell that answers otherwise fails the run.
 #
@@ -46,6 +54,9 @@ case "$work/" in "$(cd "$root" && pwd -P)"/*) echo "The work directory must be o
 pg16=${SPIKE_D_PG16:-${SPIKE_E_PG16:-}}
 pg18=${SPIKE_D_PG18:-${SPIKE_E_PG18:-}}
 mssql=${SPIKE_D_MSSQL:-${SPIKE_E_MSSQL:-}}
+pg16_container=${SPIKE_D_PG16_CONTAINER:-}
+pg18_container=${SPIKE_D_PG18_CONTAINER:-}
+mssql_container=${SPIKE_D_MSSQL_CONTAINER:-}
 
 results=$work/results.md          # CI's summary: consumer, path, mark, outcome
 table=$work/table.md              # question 1, as the README holds it
@@ -55,6 +66,7 @@ tools=$work/tools.md              # what psql and sqlcmd themselves said
 bodies_table=$work/bodies.md      # a trigger's body as the catalog keeps it, by path
 : > "$results"; : > "$table"; : > "$annotations"; : > "$errors"; : > "$tools"; : > "$bodies_table"
 failures=0
+unmeasured=0
 prefix="spike_d_$(date +%s)_$$_"
 dbn=0
 cleanup=()
@@ -83,6 +95,7 @@ row() { # consumer, path, 0 = as expected, outcome
 skipped() { # consumer, path, why
   printf '| %s | %s | not measured | %s |\n' "$1" "$2" "$3" >> "$results"
   printf '%-28s %-52s %-5s %s\n' "$1" "$2" "-" "not measured: $3"
+  unmeasured=$((unmeasured + 1))
   # On CI a server that is not there must not retire the cells while the lane reports green.
   if [[ -n ${CI:-} ]]; then failures=$((failures + 1)); fi
 }
@@ -189,12 +202,17 @@ scaffold() { # what the migration must hold
 
 # ---- one run, and what it left ---------------------------------------------------------------------
 
-database= ; err= ; errline= ; state=
+database= ; err= ; errline= ; state= ; on= ; container=
 
-fresh() {
+# A database of its own for what is named. One that cannot be made is a failing row: the cells
+# that needed it must not go missing from a run that then reports every cell as measured.
+fresh() { # what the database is for
   dbn=$((dbn + 1)); database=${prefix}${dbn}
   app create "$database"
-  [[ $code == 0 ]] || return 1
+  if [[ $code != 0 ]]; then
+    row "$name on $on" "$1" 1 "no database to measure it in: $(head -n 1 "$log" | cut -c1-200) ($log)"
+    return 1
+  fi
   SPIKE_D_CONNECTION=$(dotnet "$dll" connection "$database"); export SPIKE_D_CONNECTION
 }
 
@@ -222,25 +240,50 @@ after() {
   fi
   app check
   state=$(grep -m1 '^STATE: ' "$log" | cut -c8-)
-  [[ -n $state ]] || state="table=? history=? object=unreadable id=- body=-"
+  [[ -n $state ]] || state="table=? history=? object=unreadable id=- body=- qi=-"
 }
 
 # ---- the provider's own client -------------------------------------------------------------------
 
-psql_version=$(psql --version 2> /dev/null | head -n 1)
-sqlcmd_version=$(sqlcmd '-?' 2> /dev/null | grep -m1 -i 'version' | sed -E 's/^[[:space:]]+//')
-[[ -n $sqlcmd_version ]] && sqlcmd_version="sqlcmd ${sqlcmd_version#Version }"
+psql_on_path=$(psql --version 2> /dev/null | head -n 1)
+sqlcmd_on_path=$(sqlcmd '-?' 2> /dev/null | grep -m1 -i 'version' | sed -E 's/^[[:space:]]+//')
+sqlcmd_in_container=/opt/mssql-tools18/bin/sqlcmd
+
+# The tool for the server being measured, by its version line; empty when there is none.
+tool_version() {
+  local line
+  if [[ $provider == NPGSQL ]]; then
+    if [[ -n $container ]]; then line=$(docker exec "$container" psql --version 2> /dev/null | head -n 1); else line=$psql_on_path; fi
+    echo "$line"
+  else
+    if [[ -n $container ]]; then line=$(docker exec "$container" "$sqlcmd_in_container" '-?' 2> /dev/null | grep -m1 -i 'version' | sed -E 's/^[[:space:]]+//')
+    else line=$sqlcmd_on_path; fi
+    [[ -n $line ]] && echo "sqlcmd ${line#Version }"
+  fi
+}
 
 with_tool() { # script, stop|continue: applies it to the current database through psql or sqlcmd
-  local host port user password db
+  local host port user password db stop=()
   IFS=$'\t' read -r host port user password db <<< "$(dotnet "$dll" client "$database")"
   step=$((step + 1)); log=$dir/logs/$(printf '%02d' "$step")-tool-$2.txt
   if [[ $provider == NPGSQL ]]; then
-    local stop=(); [[ $2 == stop ]] && stop=(-v ON_ERROR_STOP=1)
-    PGPASSWORD=$password PGCLIENTENCODING=UTF8 psql -X -h "$host" -p "$port" -U "$user" -d "$db" ${stop[@]+"${stop[@]}"} -f "$dir/$1" > "$log" 2>&1
+    [[ $2 == stop ]] && stop=(-v ON_ERROR_STOP=1)
+    if [[ -n $container ]]; then
+      # Over the container's own socket, which the official image trusts.
+      docker exec -i "$container" psql -X -U "$user" -d "$db" ${stop[@]+"${stop[@]}"} -f - < "$dir/$1" > "$log" 2>&1
+    else
+      PGPASSWORD=$password PGCLIENTENCODING=UTF8 psql -X -h "$host" -p "$port" -U "$user" -d "$db" ${stop[@]+"${stop[@]}"} -f "$dir/$1" > "$log" 2>&1
+    fi
   else
-    local stop=(); [[ $2 == stop ]] && stop=(-b)
-    sqlcmd -S "$host" -U "$user" -P "$password" -d "$db" -C ${stop[@]+"${stop[@]}"} -i "$dir/$1" > "$log" 2>&1
+    [[ $2 == stop ]] && stop=(-b)
+    if [[ -n $container ]]; then
+      # Without the byte order mark: on standard input sqlcmd takes it for a syntax error at line 1
+      # (Msg 102) and loses the script's first batch, which creates the history table.
+      sed $'1s/^\xef\xbb\xbf//' "$dir/$1" \
+        | docker exec -i "$container" "$sqlcmd_in_container" -S localhost -U "$user" -P "$password" -d "$db" -C ${stop[@]+"${stop[@]}"} > "$log" 2>&1
+    else
+      sqlcmd -S "$host" -U "$user" -P "$password" -d "$db" -C ${stop[@]+"${stop[@]}"} -i "$dir/$1" > "$log" 2>&1
+    fi
   fi
   code=$?
 }
@@ -248,12 +291,15 @@ with_tool() { # script, stop|continue: applies it to the current database throug
 triple() { echo "$(field object "$1")/$(field table "$1")/$(field history "$1")"; }
 
 # The same script through the tool, into a database of its own, as often as the judge applied it.
-tool_agrees() { # label, script, stop|continue, the state the judge's way left after each run...
-  local label=$1 script=$2 mode=$3 tool said= run=0 want got codes=
-  shift 3
-  if [[ $provider == NPGSQL ]]; then tool=$psql_version; else tool=$sqlcmd_version; fi
+# What is compared is what a cell says: the object, the table and the history. One thing the
+# tool's session decides is not in a cell and is reported beside it: SQL Server keeps with a
+# trigger whether QUOTED_IDENTIFIER was on when it was created, and sqlcmd leaves it off.
+tool_agrees() { # script, stop|continue, the state the judge's way left after each run...
+  local script=$1 mode=$2 tool said= run=0 want got codes= qi
+  shift 2
+  tool=$(tool_version)
   [[ -n $tool ]] || return 0
-  fresh || return 0
+  fresh "$script through the tool itself, $mode" || return 0
 
   for want in "$@"; do
     run=$((run + 1))
@@ -262,12 +308,21 @@ tool_agrees() { # label, script, stop|continue, the state the judge's way left a
     app check
     got=$(grep -m1 '^STATE: ' "$log" | cut -c8-)
     if [[ $(triple "$got") != "$(triple "$want")" ]]; then
-      row "$name on $label" "$script through the tool itself, $mode" 1 "run $run left '$(triple "$got")' through $tool, and '$(triple "$want")' through the judge"
+      row "$name on $on" "$script through the tool itself, $mode" 1 "run $run left '$(triple "$got")' through $tool, and '$(triple "$want")' through the judge"
       return 0
     fi
   done
-  row "$name on $label" "$script through the tool itself, $mode" 0 "$tool leaves what the judge's way left (exit$codes)${said:+; it says: $said}"
-  printf '| %s | %s | %s | %s | %s |\n' "$label" "$name" "$script, $mode" "$tool, exit$codes" "${said:--}" >> "$tools"
+  row "$name on $on" "$script through the tool itself, $mode" 0 "$tool leaves what the judge's way left (exit$codes)${said:+; it says: $said}"
+  printf '| %s | %s | %s | %s | %s |\n' "$on" "$name" "$script, $mode" "$tool, exit$codes" "${said:--}" >> "$tools"
+
+  qi=$(field qi "$got")
+  if [[ $qi != - ]]; then
+    if [[ "$qi/$(field qi "$want")" == 0/1 ]]; then
+      row "$name on $on" "$script: the trigger's uses_quoted_identifier" 0 "0 created through sqlcmd's defaults, 1 through the judge's connection"
+    else
+      row "$name on $on" "$script: the trigger's uses_quoted_identifier" 1 "$qi through $tool and $(field qi "$want") through the judge; measured before: 0 and 1"
+    fi
+  fi
 }
 
 # The error with the SQL that caused it, once for each consumer and path.
@@ -339,6 +394,14 @@ expected() { # consumer, path
     sqlserver-trigger/script)          echo "111/missing/missing/0 -" ;;
     sqlserver-trigger/idempotent*)     echo "156/missing/missing/0 156/same" ;;
 
+    # The control of sqlserver-suppressed: the same ALTER DATABASE left inside the transaction.
+    # The server refuses it there (Msg 226) on every path. The error is the statement's, not the
+    # batch's: a script goes on to record the migration and commit, with sqlcmd -b as without, so
+    # the migration counts as applied with the option off. A bundle stops and rolls back.
+    sqlserver-unsuppressed/script)      echo "226/missing/present/1 -" ;;
+    sqlserver-unsuppressed/idempotent*) echo "226/missing/present/1 ok/same" ;;
+    sqlserver-unsuppressed/bundle)      echo "226/missing/missing/0 226/same" ;;
+
     # EXEC takes string constants and variables. A body with line breaks comes out of the
     # dialect's Literal as CONCAT(…, nchar(10), …), which EXEC does not take, on any path.
     sqlserver-trigger-exec-lines/script)      echo "102/missing/missing/0 -" ;;
@@ -392,8 +455,9 @@ cell() { # label, server, statement, path id, path words, e1, s1, l1, e2, s2, l2
 }
 
 # One server, every path of this consumer.
-measure() { # label, the server's connection string, the statement as the table names it
-  local label=$1 statement=$3 server e1 s1 l1 e2 s2 l2 b_script b_idempotent b_bundle
+measure() { # label, the server's connection string, the statement as the table names it, the container it runs in
+  local label=$1 statement=$3 server e1 s1 l1 e2 s2 l2 b_script=- b_idempotent=- b_bundle=- before
+  on=$1; container=${4:-}
   if [[ -z $2 ]]; then
     skipped "$name on $label" "every path" "no connection string for $label in the environment"
     return
@@ -407,40 +471,56 @@ measure() { # label, the server's connection string, the statement as the table 
   cleanup+=("$dll|$2")
 
   # The script for an empty database: the same statements without the idempotent wrapper.
-  fresh || { row "$name on $label" "a database for the run" 1 "see $log"; return; }
-  apply script.sql continue; after; explain "$server" "$statement" "migrations script"
-  cell "$label" "$server" "$statement" script "\`migrations script\`, applied once" "$err" "$state" "$errline" - - ""
-  b_script=$(field body "$state")
-  tool_agrees "$label" script.sql continue "$state"
+  if fresh "\`migrations script\`, applied once"; then
+    apply script.sql continue; after; explain "$server" "$statement" "migrations script"
+    cell "$label" "$server" "$statement" script "\`migrations script\`, applied once" "$err" "$state" "$errline" - - ""
+    b_script=$(field body "$state")
+    tool_agrees script.sql continue "$state"
+  fi
 
   # The idempotent script, twice, as psql and sqlcmd apply a file by default.
-  fresh || return
-  apply idempotent.sql continue; after; e1=$err; s1=$state; l1=$errline
-  explain "$server" "$statement" "migrations script --idempotent"
-  apply idempotent.sql continue; after; e2=$err; s2=$state; l2=$errline
-  cell "$label" "$server" "$statement" idempotent "\`migrations script --idempotent\`, applied twice" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
-  b_idempotent=$(field body "$s1")
-  tool_agrees "$label" idempotent.sql continue "$s1" "$s2"
+  e1=ok
+  if fresh "\`migrations script --idempotent\`, applied twice"; then
+    apply idempotent.sql continue; after; e1=$err; s1=$state; l1=$errline
+    explain "$server" "$statement" "migrations script --idempotent"
+    apply idempotent.sql continue; after; e2=$err; s2=$state; l2=$errline
+    cell "$label" "$server" "$statement" idempotent "\`migrations script --idempotent\`, applied twice" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
+    b_idempotent=$(field body "$s1")
+    tool_agrees idempotent.sql continue "$s1" "$s2"
+  fi
 
   # Where that met an error: the same with the tools' switch that stops at the first one.
-  if [[ $e1 != ok ]]; then
-    fresh || return
+  if [[ $e1 != ok ]] && fresh "\`migrations script --idempotent\`, applied twice, stopping at the first error"; then
     apply idempotent.sql stop; after; e1=$err; s1=$state; l1=$errline
     apply idempotent.sql stop; after; e2=$err; s2=$state; l2=$errline
     [[ $e2 == ok ]] || explain "$server" "$statement" "migrations script --idempotent, stopping at the first error, second run"
     cell "$label" "$server" "$statement" idempotent-stop "\`migrations script --idempotent\`, applied twice, stopping at the first error" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
-    tool_agrees "$label" idempotent.sql stop "$s1" "$s2"
+    tool_agrees idempotent.sql stop "$s1" "$s2"
   fi
 
   # The bundle, twice.
-  fresh || return
-  [[ -n ${seen:-} ]] && export SPIKE_D_SEEN=$dir/seen-bundle-$label.txt
-  bundle; after; e1=$err; s1=$state; l1=$errline
-  explain "$server" "$statement" "migrations bundle"
-  bundle; after; e2=$err; s2=$state; l2=$errline
-  unset SPIKE_D_SEEN
-  cell "$label" "$server" "$statement" bundle "\`migrations bundle\`, run twice" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
-  b_bundle=$(field body "$s1")
+  if fresh "\`migrations bundle\`, run twice"; then
+    [[ -n ${seen:-} ]] && export SPIKE_D_SEEN=$dir/seen-bundle-$label.txt
+    bundle; after; e1=$err; s1=$state; l1=$errline
+    explain "$server" "$statement" "migrations bundle"
+    bundle; after; e2=$err; s2=$state; l2=$errline
+    unset SPIKE_D_SEEN
+    cell "$label" "$server" "$statement" bundle "\`migrations bundle\`, run twice" "$e1" "$s1" "$l1" "$e2" "$s2" "$l2"
+    b_bundle=$(field body "$s1")
+
+    # "Nothing changed" rests on the identity the judge reports. Shown here on the object the
+    # bundle left: dropped and created again, it has to report another one.
+    before=$(field id "$s2")
+    if [[ $(field object "$s2") == ok && $before != - ]]; then
+      app recreate; app check
+      state=$(grep -m1 '^STATE: ' "$log" | cut -c8-)
+      if [[ $(field object "$state") == ok && $(field id "$state") != - && $(field id "$state") != "$before" ]]; then
+        row "$name on $label" "the $thing, dropped and created again" 0 "another identity: $before, then $(field id "$state")"
+      else
+        row "$name on $label" "the $thing, dropped and created again" 1 "the judge reports '$(field id "$state")' after '$before' (object: $(field object "$state")): a second run that recreated it would pass for 'nothing changed'"
+      fi
+    fi
+  fi
 
   # A trigger that every path created: is the body the catalog keeps the same on each?
   if [[ $b_script != - && $b_idempotent != - && $b_bundle != - ]]; then
@@ -463,8 +543,15 @@ note() { printf '| %s | %s | %s |\n' "$1" "$2" "$3" >> "$annotations"; }
 # The generation options the statement arrived under: [Script, Idempotent], or [Default] at apply.
 seen_options() { grep -m1 'SqlOperation' "$1" 2> /dev/null | grep -oE '^SEEN \[[^]]*\]' | cut -c6-; }
 
-# What the recording generator writes when the operation reaches it with all four annotations.
-arrived=('SqlOperation "CREATE INDEX' 'Spike:Kind=string "create index"' 'Spike:Claims=string[] ["relation:' 'Spike:Order=Int32 3' 'Spike:AfterRebuild=Boolean True')
+# What the recording generator writes when the operation reaches it with all five annotations.
+arrived=(
+  'SqlOperation "CREATE INDEX'
+  'Spike:AfterRebuild=Boolean True'
+  'Spike:Claims=string[] ["relation:ix_things_name", "index:Things.ix_things_name"]'
+  'Spike:Kind=string "create index"'
+  'Spike:Object=string "ix_things_name"'
+  'Spike:Order=Int32 3'
+)
 
 # Before the migration exists: a value EF Core's C# generator has no literal for.
 unknown_literal() { # provider
@@ -490,17 +577,23 @@ annotated() { # provider
     '.Annotation("Spike:Kind", "drop index")'
   )
   if all_in "$file" "${wanted[@]}"; then
-    row "$name" "migrations add writes the annotations" 0 "a string, a string[], an int and a bool, on Up's statement and on Down's"
-    note "$1" "\`migrations add\`" "Written into the migration as \`.Annotation(…)\` on \`migrationBuilder.Sql(…)\`, in \`Up\` and in \`Down\`: a string, a \`string[]\`, an \`int\` and a \`bool\`"
+    row "$name" "migrations add writes the annotations" 0 "all five (two strings, a string[], an int and a bool), on Up's statement and on Down's"
+    note "$1" "\`migrations add\`" "All five written into the migration as \`.Annotation(…)\` on \`migrationBuilder.Sql(…)\`, in \`Up\` and in \`Down\`: two strings, a \`string[]\`, an \`int\` and a \`bool\`"
   else
     row "$name" "migrations add writes the annotations" 1 "not all of them are in $file"
   fi
 
-  if none_in "$(dirname "$file")"/*.Designer.cs 'Spike:' && none_in "$dir"/Migrations/*ModelSnapshot.cs 'Spike:'; then
+  # Both files by name, and both have to be there: a pattern that matches no file holds no
+  # annotation either.
+  local designer snapshot
+  designer=$(find "$dir/Migrations" -name '*_Initial.Designer.cs' | head -n 1)
+  snapshot=$(find "$dir/Migrations" -name '*ModelSnapshot.cs' | head -n 1)
+  if [[ -s $designer && -s $snapshot ]] && all_in "$designer" 'BuildTargetModel' && all_in "$snapshot" 'BuildModel' \
+      && none_in "$designer" 'Spike:' && none_in "$snapshot" 'Spike:'; then
     row "$name" "the snapshot and the designer file" 0 "neither holds an annotation of an operation"
     note "$1" "The snapshot and the designer file" "Neither holds it: an operation's annotation is not the model's"
   else
-    row "$name" "the snapshot and the designer file" 1 "one of them holds Spike:"
+    row "$name" "the snapshot and the designer file" 1 "one of them holds Spike:, or is not there: '$designer', '$snapshot'"
   fi
 
   local kind flag seen_file options
@@ -512,8 +605,8 @@ annotated() { # provider
     SPIKE_D_SEEN=$seen_file ef migrations script $flag -o "$dir/seen-$kind.sql"
     options=$(seen_options "$seen_file")
     if [[ -s $seen_file ]] && all_in "$seen_file" "${arrived[@]}"; then
-      row "$name" "the generator sees them: migrations script$flag" 0 "all four, with their types, under $options"
-      note "$1" "\`migrations script$flag\`" "The generator SchemaKit's decorator wraps receives the operation with all four, typed as they were set ($options)"
+      row "$name" "the generator sees them: migrations script$flag" 0 "all five, with their types and values, under $options"
+      note "$1" "\`migrations script$flag\`" "The generator SchemaKit's decorator wraps receives the operation with all five, typed and valued as they were set ($options)"
     else
       row "$name" "the generator sees them: migrations script$flag" 1 "see $seen_file and $log"
     fi
@@ -523,7 +616,7 @@ annotated() { # provider
 annotated_bundle() { # provider, label
   local seen_file=$dir/seen-bundle-$2.txt
   if [[ -s $seen_file ]] && all_in "$seen_file" "${arrived[@]}"; then
-    row "$name on $2" "the generator sees them: migrations bundle" 0 "all four, with their types, when the bundle applies the migration"
+    row "$name on $2" "the generator sees them: migrations bundle" 0 "all five, with their types and values, when the bundle applies the migration"
     note "$1" "\`migrations bundle\`, run on $2" "The same, when the bundle applies the migration ($(seen_options "$seen_file")); the second run generates nothing"
   else
     row "$name on $2" "the generator sees them: migrations bundle" 1 "see $seen_file"
@@ -537,16 +630,16 @@ wanted() { [[ -z ${SPIKE_ONLY:-} || " $SPIKE_ONLY " == *" $1 "* ]]; }
 if wanted npgsql-concurrent && consumer npgsql-concurrent NPGSQL CONCURRENT_INDEX; then
   thing=index; thing_ok="the index is in the catalog and valid"
   if scaffold 'CREATE INDEX CONCURRENTLY' 'suppressTransaction: true'; then
-    measure pg16 "$pg16" "\`CREATE INDEX CONCURRENTLY\`, transaction suppressed"
-    measure pg18 "$pg18" "\`CREATE INDEX CONCURRENTLY\`, transaction suppressed"
+    measure pg16 "$pg16" "\`CREATE INDEX CONCURRENTLY\`, transaction suppressed" "$pg16_container"
+    measure pg18 "$pg18" "\`CREATE INDEX CONCURRENTLY\`, transaction suppressed" "$pg18_container"
   fi
 fi
 
 if wanted npgsql-trigger && consumer npgsql-trigger NPGSQL TRIGGER; then
   thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
   if scaffold 'CREATE FUNCTION' 'CREATE TRIGGER'; then
-    measure pg16 "$pg16" "\`CREATE FUNCTION\` and \`CREATE TRIGGER\`"
-    measure pg18 "$pg18" "\`CREATE FUNCTION\` and \`CREATE TRIGGER\`"
+    measure pg16 "$pg16" "\`CREATE FUNCTION\` and \`CREATE TRIGGER\`" "$pg16_container"
+    measure pg18 "$pg18" "\`CREATE FUNCTION\` and \`CREATE TRIGGER\`" "$pg18_container"
   fi
 fi
 
@@ -556,31 +649,53 @@ if wanted npgsql-annotated && consumer npgsql-annotated NPGSQL ANNOTATED; then
   if scaffold 'CREATE INDEX'; then
     annotated Npgsql
     seen=yes
-    measure pg16 "$pg16" "\`CREATE INDEX\` (the control), annotated"
-    measure pg18 "$pg18" "\`CREATE INDEX\` (the control), annotated"
+    measure pg16 "$pg16" "\`CREATE INDEX\` (the control), annotated" "$pg16_container"
+    measure pg18 "$pg18" "\`CREATE INDEX\` (the control), annotated" "$pg18_container"
     unset seen
     [[ -n $pg18 ]] && annotated_bundle Npgsql pg18
   fi
 fi
 
+# SQL Server builds an online index inside a transaction too, so this row would pass if the
+# suppression never arrived. The two after it are the ones that say whether it does.
 if wanted sqlserver-online && consumer sqlserver-online SQLSERVER ONLINE_INDEX; then
   thing=index; thing_ok="the index is in the catalog"
   if scaffold 'WITH (ONLINE = ON)' 'suppressTransaction: true'; then
-    measure mssql "$mssql" "\`CREATE INDEX … WITH (ONLINE = ON)\`, transaction suppressed"
+    measure mssql "$mssql" "\`CREATE INDEX … WITH (ONLINE = ON)\`, transaction suppressed" "$mssql_container"
+  fi
+fi
+
+# A statement SQL Server refuses inside a transaction (Msg 226), with the transaction suppressed,
+# and then the same without: the control, which has to fail on every path.
+if wanted sqlserver-suppressed && consumer sqlserver-suppressed SQLSERVER DATABASE_OPTION; then
+  thing="database option"; thing_ok="the option is on"
+  if scaffold 'ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON' 'suppressTransaction: true'; then
+    measure mssql "$mssql" "\`ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON\`, transaction suppressed" "$mssql_container"
+  fi
+fi
+
+if wanted sqlserver-unsuppressed && consumer sqlserver-unsuppressed SQLSERVER DATABASE_OPTION_IN_TRANSACTION; then
+  thing="database option"; thing_ok="the option is on"
+  if scaffold 'ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON'; then
+    if none_in "$(migration Initial)" 'suppressTransaction'; then
+      measure mssql "$mssql" "\`ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON\`, the transaction not suppressed (the control)" "$mssql_container"
+    else
+      row "$name" "the control's migration suppresses nothing" 1 "it does: $(migration Initial)"
+    fi
   fi
 fi
 
 if wanted sqlserver-trigger && consumer sqlserver-trigger SQLSERVER TRIGGER; then
   thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
   if scaffold 'CREATE TRIGGER'; then
-    measure mssql "$mssql" "\`CREATE TRIGGER\`"
+    measure mssql "$mssql" "\`CREATE TRIGGER\`" "$mssql_container"
   fi
 fi
 
 if wanted sqlserver-trigger-exec && consumer sqlserver-trigger-exec SQLSERVER TRIGGER_EXEC; then
   thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
   if scaffold 'EXEC(N' 'CREATE TRIGGER'; then
-    measure mssql "$mssql" "\`EXEC(N'CREATE TRIGGER …')\`"
+    measure mssql "$mssql" "\`EXEC(N'CREATE TRIGGER …')\`" "$mssql_container"
   fi
 fi
 
@@ -588,14 +703,14 @@ fi
 if wanted sqlserver-trigger-exec-lines && consumer sqlserver-trigger-exec-lines SQLSERVER TRIGGER_EXEC_LINES; then
   thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
   if scaffold 'EXEC(CONCAT(' 'CREATE TRIGGER'; then
-    measure mssql "$mssql" "\`EXEC(…)\` of a \`CREATE TRIGGER\` with line breaks, through the dialect's \`Literal\`"
+    measure mssql "$mssql" "\`EXEC(…)\` of a \`CREATE TRIGGER\` with line breaks, through the dialect's \`Literal\`" "$mssql_container"
   fi
 fi
 
 if wanted sqlserver-trigger-exec-raw && consumer sqlserver-trigger-exec-raw SQLSERVER TRIGGER_EXEC_RAW; then
   thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
   if scaffold "EXEC(N'CREATE TRIGGER" 'BEGIN'; then
-    measure mssql "$mssql" "\`EXEC(N'CREATE TRIGGER …')\`, the line breaks inside the string constant"
+    measure mssql "$mssql" "\`EXEC(N'CREATE TRIGGER …')\`, the line breaks inside the string constant" "$mssql_container"
   fi
 fi
 
@@ -605,7 +720,7 @@ if wanted sqlserver-annotated && consumer sqlserver-annotated SQLSERVER ANNOTATE
   if scaffold 'CREATE INDEX'; then
     annotated "SQL Server"
     seen=yes
-    measure mssql "$mssql" "\`CREATE INDEX\` (the control), annotated"
+    measure mssql "$mssql" "\`CREATE INDEX\` (the control), annotated" "$mssql_container"
     unset seen
     [[ -n $mssql ]] && annotated_bundle "SQL Server" mssql
   fi
@@ -672,4 +787,10 @@ if (( failures > 0 )); then
   echo "$failures row(s) were not as the table says, or could not be measured. Logs: $work/<consumer>/logs" >&2
   exit 1
 fi
-echo "Every cell answered as the table says. Work directory: $work"
+if (( unmeasured > 0 )); then
+  # Off CI a server nobody named is no failure, and no measurement either.
+  echo "NOT MEASURED: $unmeasured pair(s) of a consumer and a server no connection string names (SPIKE_D_PG16, SPIKE_D_PG18, SPIKE_D_MSSQL)."
+  echo "Every cell that was measured answered as the table says. Work directory: $work"
+else
+  echo "Every cell answered as the table says. Work directory: $work"
+fi

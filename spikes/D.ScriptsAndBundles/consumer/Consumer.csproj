@@ -3,8 +3,9 @@
     <!--
         Spike D's consumer. run.sh copies this folder to a directory OUTSIDE the repository, once for
         each provider and statement, and writes a Directory.Build.props there with SpikeProvider
-        (NPGSQL, SQLSERVER, SQLITE), SpikeObject (CONCURRENT_INDEX, ONLINE_INDEX, TRIGGER,
-        TRIGGER_EXEC, TRIGGER_EXEC_LINES, TRIGGER_EXEC_RAW, ANNOTATED) and the versions: SchemaKit's from the packages
+        (NPGSQL, SQLSERVER, SQLITE), SpikeObject (CONCURRENT_INDEX, ONLINE_INDEX, DATABASE_OPTION,
+        DATABASE_OPTION_IN_TRANSACTION, TRIGGER, TRIGGER_EXEC, TRIGGER_EXEC_LINES, TRIGGER_EXEC_RAW,
+        ANNOTATED) and the versions: SchemaKit's from the packages
         it packed, EF Core's and Npgsql's from those packages' own dependencies. It is never built
         in place.
 

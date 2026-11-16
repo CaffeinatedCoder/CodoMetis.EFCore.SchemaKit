@@ -19,8 +19,21 @@ public static class Forms
     /// <summary>PostgreSQL: <c>CREATE INDEX CONCURRENTLY</c>, which cannot run in a transaction.</summary>
     public const string ConcurrentIndex = "concurrent-index";
 
-    /// <summary>SQL Server: <c>CREATE INDEX … WITH (ONLINE = ON)</c>, with the transaction suppressed as well.</summary>
+    /// <summary>
+    /// SQL Server: <c>CREATE INDEX … WITH (ONLINE = ON)</c>, with the transaction suppressed as well.
+    /// SQL Server builds such an index inside a transaction too, so this form does not say whether
+    /// the suppression arrived; <see cref="DatabaseOption" /> does.
+    /// </summary>
     public const string OnlineIndex = "online-index";
+
+    /// <summary>
+    /// SQL Server: <c>ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON</c>, which the server
+    /// refuses inside a transaction (Msg 226), with the transaction suppressed.
+    /// </summary>
+    public const string DatabaseOption = "database-option";
+
+    /// <summary>The same statement without the suppression: the control that the form above needs it.</summary>
+    public const string DatabaseOptionInTransaction = "database-option-in-transaction";
 
     /// <summary>A trigger as it is written: with its function on PostgreSQL, a bare <c>CREATE TRIGGER</c> on SQL Server.</summary>
     public const string Trigger = "trigger";
@@ -41,6 +54,10 @@ public static class Forms
     public const string Current = ConcurrentIndex;
 #elif ONLINE_INDEX
     public const string Current = OnlineIndex;
+#elif DATABASE_OPTION
+    public const string Current = DatabaseOption;
+#elif DATABASE_OPTION_IN_TRANSACTION
+    public const string Current = DatabaseOptionInTransaction;
 #elif TRIGGER
     public const string Current = Trigger;
 #elif TRIGGER_EXEC
@@ -55,7 +72,9 @@ public static class Forms
 
     public static bool IsTrigger { get; } = Current.StartsWith(Trigger, StringComparison.Ordinal);
 
-    public static string ObjectName => IsTrigger ? "tr_things_guard" : "ix_things_name";
+    public static bool IsDatabaseOption { get; } = Current.StartsWith(DatabaseOption, StringComparison.Ordinal);
+
+    public static string ObjectName => IsTrigger ? "tr_things_guard" : IsDatabaseOption ? "allow_snapshot_isolation" : "ix_things_name";
 
     /// <summary>PostgreSQL's trigger function.</summary>
     public const string FunctionName = "things_guard";
@@ -143,6 +162,14 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
                 sql.Statement($"CREATE INDEX {name} ON {descriptor.Table} ({descriptor.Column}) WITH (ONLINE = ON)", suppressTransaction: true);
                 break;
 
+            case Forms.DatabaseOption:
+                sql.Statement($"ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON", suppressTransaction: true);
+                break;
+
+            case Forms.DatabaseOptionInTransaction:
+                sql.Statement($"ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON");
+                break;
+
             case Forms.Trigger:
                 sql.Statement($"""
                     CREATE TRIGGER {descriptor.Name} ON {descriptor.Table} AFTER INSERT, UPDATE AS
@@ -207,7 +234,11 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
         var first = Annotations.Of(sql).Count;
 #endif
         var name = descriptor.Name.Name;
-        if (descriptor.Form.StartsWith(Forms.Trigger, StringComparison.Ordinal))
+        if (descriptor.Form.StartsWith(Forms.DatabaseOption, StringComparison.Ordinal))
+        {
+            sql.Statement($"ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION OFF", suppressTransaction: descriptor.Form == Forms.DatabaseOption);
+        }
+        else if (descriptor.Form.StartsWith(Forms.Trigger, StringComparison.Ordinal))
         {
 #if NPGSQL
             sql.Statement($"DROP TRIGGER {name} ON {descriptor.Table}");
@@ -239,6 +270,8 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
 
     protected override IEnumerable<NameClaim> Claims(SpikeDescriptor descriptor)
     {
+        if (descriptor.Form.StartsWith(Forms.DatabaseOption, StringComparison.Ordinal))
+            return [];
         if (descriptor.Form.StartsWith(Forms.Trigger, StringComparison.Ordinal))
             return [new NameClaim.Trigger(descriptor.Table, descriptor.Name.Name)];
 #if SQLSERVER

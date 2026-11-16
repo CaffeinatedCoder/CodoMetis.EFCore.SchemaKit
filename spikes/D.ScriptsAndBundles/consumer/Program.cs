@@ -12,6 +12,8 @@ using Consumer;
 //   drop-prefix <prefix>             every database on SPIKE_D_SERVER whose name starts with it
 //   apply <script> <stop|continue>   to SPIKE_D_CONNECTION, the way the provider's own tool does
 //   check                            what SPIKE_D_CONNECTION's database holds
+//   recreate                         drops this consumer's object there and creates it again, to show
+//                                    that the identity `check` reports is one a recreation changes
 //   client <database>                host, port, user, password and database, tab-separated: what
 //                                    psql or sqlcmd needs to reach that database on SPIKE_D_SERVER
 //
@@ -50,6 +52,10 @@ try
             Judge.Check();
             return 0;
 
+        case "recreate":
+            Judge.Recreate();
+            return 0;
+
         case "client" when args.Length == 2:
             Console.WriteLine(string.Join('\t', Judge.Client(args[1])));
             return 0;
@@ -66,7 +72,7 @@ catch (DbException e)
 
 static int Usage()
 {
-    Console.Error.WriteLine("usage: version | connection <database> | client <database> | create <database> | drop-prefix <prefix> | apply <script> <stop|continue> | check");
+    Console.Error.WriteLine("usage: version | connection <database> | client <database> | create <database> | drop-prefix <prefix> | apply <script> <stop|continue> | check | recreate");
     return 2;
 }
 
@@ -127,8 +133,10 @@ internal static partial class Judge
             : "missing";
         Console.WriteLine($"HISTORY: {history}");
 
-        var (verdict, id, body) = Forms.IsTrigger ? Trigger(connection, table) : Index(connection);
-        Console.WriteLine($"STATE: table={(table ? "present" : "missing")} history={history} object={verdict} id={id} body={body}");
+        var (verdict, id, body) = Forms.IsTrigger ? Trigger(connection, table)
+            : Forms.IsDatabaseOption ? DatabaseOption(connection)
+            : Index(connection);
+        Console.WriteLine($"STATE: table={(table ? "present" : "missing")} history={history} object={verdict} id={id} body={body} qi={QuotedIdentifier(connection)}");
     }
 
     /// <summary>The trigger by the catalog, and by what it is for: a row it must refuse.</summary>
@@ -172,6 +180,14 @@ internal static partial class Judge
         }
     }
 
+    /// <summary>Drops the object and creates it again as it was, outside EF Core.</summary>
+    public static void Recreate()
+    {
+        using var connection = Open(Database);
+        foreach (var statement in RecreateSql)
+            Execute(connection, statement);
+    }
+
     private static object? Scalar(DbConnection connection, string sql)
     {
         using var command = connection.CreateCommand();
@@ -212,6 +228,18 @@ internal static partial class Judge
     private const string RefusalCode     = "23514";
 
     private static string InsertSql(string name) => $"""INSERT INTO "Things" ("Name") VALUES ('{name}')""";
+
+    private static string[] RecreateSql => Forms.IsTrigger
+        ?
+        [
+            $"""DROP TRIGGER {Forms.ObjectName} ON "Things" """,
+            $"""CREATE TRIGGER {Forms.ObjectName} BEFORE INSERT OR UPDATE ON "Things" FOR EACH ROW EXECUTE FUNCTION {Forms.FunctionName}()""",
+        ]
+        : [$"DROP INDEX {Forms.ObjectName}", $"""CREATE INDEX {Forms.ObjectName} ON "Things" ("Name")"""];
+
+    private static string QuotedIdentifier(DbConnection connection) => "-";
+
+    private static (string Verdict, string Id, string Body) DatabaseOption(DbConnection connection) => ("missing", "-", "-");
 
     private static DbConnection Open(string connectionString)
     {
@@ -374,6 +402,36 @@ internal static partial class Judge
 
     private static string InsertSql(string name) => $"INSERT INTO [Things] ([Name]) VALUES (N'{name}')";
 
+    private static string[] RecreateSql => Forms.IsTrigger
+        ?
+        [
+            $"""
+             DECLARE @definition nvarchar(max) = OBJECT_DEFINITION(OBJECT_ID(N'[{Forms.ObjectName}]'));
+             DROP TRIGGER [{Forms.ObjectName}];
+             EXEC(@definition);
+             """,
+        ]
+        : [$"DROP INDEX [{Forms.ObjectName}] ON [Things]", $"CREATE INDEX [{Forms.ObjectName}] ON [Things] ([Name])"];
+
+    /// <summary>
+    /// Whether the trigger was created with QUOTED_IDENTIFIER on, which the session that creates it
+    /// decides: SqlClient sets it, sqlcmd does not unless it is run with -I.
+    /// </summary>
+    private static string QuotedIdentifier(DbConnection connection)
+    {
+        if (!Forms.IsTrigger) return "-";
+        var value = Scalar(connection, $"SELECT uses_quoted_identifier FROM sys.sql_modules WHERE object_id = OBJECT_ID(N'[{Forms.ObjectName}]')");
+        return value is bool on ? (on ? "1" : "0") : "-";
+    }
+
+    /// <summary>ALLOW_SNAPSHOT_ISOLATION of the database itself: what the statement that cannot run in a transaction sets.</summary>
+    private static (string Verdict, string Id, string Body) DatabaseOption(DbConnection connection)
+    {
+        var state = (string)Scalar(connection, "SELECT snapshot_isolation_state_desc FROM sys.databases WHERE database_id = DB_ID()")!;
+        Console.WriteLine($"OPTION {Forms.ObjectName}: {state}");
+        return (state == "ON" ? "ok" : state == "OFF" ? "missing" : state.ToLowerInvariant(), "-", "-");
+    }
+
     private static DbConnection Open(string connectionString)
     {
         var connection = new Microsoft.Data.SqlClient.SqlConnection(
@@ -421,8 +479,14 @@ internal static partial class Judge
 
     private static (string Verdict, string Id, string Body) Index(DbConnection connection)
     {
+        // The rowset's id, not the index's: object_id and index_id are the same after a drop and
+        // create, so they would call a recreated index "the same".
         var rows = Rows(connection,
-            $"SELECT CONCAT(i.object_id, '.', i.index_id), i.is_disabled FROM sys.indexes i WHERE i.object_id = OBJECT_ID(N'[Things]', N'U') AND i.name = N'{Forms.ObjectName}'");
+            $"""
+             SELECT CONCAT(i.object_id, '.', i.index_id, '@', p.hobt_id), i.is_disabled
+             FROM sys.indexes i JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id
+             WHERE i.object_id = OBJECT_ID(N'[Things]', N'U') AND i.name = N'{Forms.ObjectName}'
+             """);
         if (rows.Count == 0)
         {
             Console.WriteLine($"INDEX {Forms.ObjectName}: missing");
@@ -489,6 +553,12 @@ internal static partial class Judge
     private const string RefusalCode     = "-";
 
     private static string InsertSql(string name) => $"INSERT INTO \"Things\" (\"Name\") VALUES ('{name}')";
+
+    private static string[] RecreateSql => throw new NotSupportedException("Nothing is compared across two runs on SQLite.");
+
+    private static string QuotedIdentifier(DbConnection connection) => "-";
+
+    private static (string Verdict, string Id, string Body) DatabaseOption(DbConnection connection) => ("missing", "-", "-");
 
     private static DbConnection Open(string connectionString)
     {

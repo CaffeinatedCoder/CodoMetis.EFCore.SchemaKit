@@ -12,18 +12,25 @@ on SQL Server, where `CREATE TRIGGER` must start its batch) survive
 `dotnet ef migrations script --idempotent`, the script applied twice, and a migrations bundle, run
 twice?
 
-**Answer.** A bundle carries every one of them, on PostgreSQL 16 and 18, which answer alike, and
-on SQL Server 2022. A script does not carry two of them, and after one of the two the migration
-counts as applied while its object is missing:
+**Answer.** A bundle carries the statements of the question, on PostgreSQL 16 and 18, which
+answer alike, and on SQL Server 2022. A script does not carry two of them, and after one of the
+two the migration counts as applied while its object is missing:
 
 | Statement | Does not survive | What happens |
 |---|---|---|
 | PostgreSQL: `CREATE INDEX CONCURRENTLY` | `migrations script --idempotent` | The script puts each statement into a `DO` block, and PostgreSQL refuses this one there (`25001`). **psql goes on and exits 0:** the migration is recorded as applied, the index is missing, and no later run creates it |
 | SQL Server: `CREATE TRIGGER` | `migrations script`, with `--idempotent` and without | EF Core writes a migration's statements into one batch. `CREATE TRIGGER` must start its batch (`111`) and cannot stand inside the idempotent script's `IF … BEGIN … END` (`156`). The batch does not compile, so nothing of the migration is applied, on the second run as on the first. sqlcmd prints the error and exits 0 unless it is run with `-b` |
 
-`CREATE INDEX … WITH (ONLINE = ON)` with the transaction suppressed survives every path, and so
-does PostgreSQL's trigger with its function. On SQL Server the trigger survives every path inside
-`EXEC(N'CREATE TRIGGER …')`, and the contract can write that for a statement on one line only:
+PostgreSQL's trigger with its function survives every path. So does a statement with the
+transaction suppressed on SQL Server, and there the suppression is what carries it:
+`ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON`, which the server refuses inside a
+transaction, applies on every path with the transaction suppressed and fails on every path
+without. `CREATE INDEX … WITH (ONLINE = ON)` survives too, and says nothing about suppression:
+SQL Server builds such an index inside a transaction as well.
+
+On SQL Server the trigger survives every path inside `EXEC(N'CREATE TRIGGER …')`, and the contract
+can write that for a statement on one line only. With line breaks, what the contract writes is not
+valid T-SQL and fails on every path, the bundle included:
 [the trigger's forms](#sql-servers-trigger-three-forms-of-exec).
 
 **Question 2.** What does EF Core do with an annotation on a `SqlOperation`: does `migrations add`
@@ -33,7 +40,7 @@ survive a script and a bundle?
 **Answer: it writes it, and the migration carries it everywhere.** `migrations add` writes each
 annotation as `.Annotation(name, value)` on the `migrationBuilder.Sql(…)` call, in `Up` and in
 `Down`. The generator SchemaKit's decorator wraps then receives the operation with every annotation
-and its type, at `migrations script`, at `migrations script --idempotent` and when a bundle applies
+with its type and value, at `migrations script`, at `migrations script --idempotent` and when a bundle applies
 the migration, on Npgsql, SQL Server and SQLite. A value EF Core has no C# literal for fails
 `migrations add`, which writes nothing. [The table](#question-2-an-annotation-on-a-sqloperation).
 
@@ -50,7 +57,11 @@ not set, spike E's variable for the same server is read (`SPIKE_E_PG16`, `SPIKE_
 server neither names is reported as not measured, and fails the run when `CI` is set. Every run of
 a path gets a database of its own, `spike_d_<time>_<pid>_<n>`, and the script drops them on exit
 (`SPIKE_KEEP=1` keeps them). `SPIKE_ONLY="npgsql-trigger sqlserver-online"` runs those consumers
-only.
+only. A run that measured only part says so in its last lines: `NOT MEASURED: …`.
+
+`SPIKE_D_PG16_CONTAINER`, `SPIKE_D_PG18_CONTAINER` and `SPIKE_D_MSSQL_CONTAINER` name the docker
+container a server runs in, where it is one of the official images. Its own psql or sqlcmd is then
+what [the judge is held against](#how-a-cell-is-measured).
 
 Measured on 2026-11-16 with EF Core `11.0.0-rc.3.26522.148` and Npgsql EF `11.0.0-rc.3`, twice:
 on a developer's machine against PostgreSQL 16.15 and 18.6 and SQL Server 2022 (16.0.4305.5,
@@ -61,8 +72,10 @@ Developer Edition). Every cell answered the same in both places.
 
 The script's `expected` holds this table, cell by cell, and a cell that answers otherwise fails
 the run. "Applies" is: no error, the object is in the catalog (an index valid, a trigger refusing
-the row it must refuse), and the migration is recorded. "Nothing changed" is: no error, and the
-catalog holds the same objects under the same identities as after the first run.
+the row it must refuse, a database option on), and the migration is recorded. "Nothing changed"
+is: no error, and the catalog holds the same objects under the same identities as after the first
+run. [Which identities](#how-a-cell-is-measured), and that each is one a recreation changes, is
+below.
 
 ### PostgreSQL 16 and 18
 
@@ -86,6 +99,13 @@ versions (the table on #34).
 
 | Statement | Path | First run | Second run | Error |
 |---|---|---|---|---|
+| `ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON`, transaction suppressed | `migrations script`, applied once | Applies | not applicable | |
+| | `migrations script --idempotent`, applied twice | Applies | Nothing changed | |
+| | `migrations bundle`, run twice | Applies | Nothing changed | |
+| The same, the transaction not suppressed: the control | `migrations script`, applied once | **Error, and the batch goes on:** the table is there, the option is off, the migration is recorded as applied | not applicable | `226: ALTER DATABASE statement not allowed within multi-statement transaction.` |
+| | `migrations script --idempotent`, applied twice | **Error, and the batch goes on:** the same | No error, nothing changed: the option stays off | `226`, as above |
+| | the same, stopping at the first error (`sqlcmd -b`) | The same; sqlcmd exits 1 after the batch has committed | No error, nothing changed; sqlcmd exits 0 | `226`, as above |
+| | `migrations bundle`, run twice | **Error** (the bundle exits 1): no table, the option is off, no migration recorded | The same error, nothing changed | `226`, as above |
 | `CREATE INDEX … WITH (ONLINE = ON)`, transaction suppressed | `migrations script`, applied once | Applies | not applicable | |
 | | `migrations script --idempotent`, applied twice | Applies | Nothing changed | |
 | | `migrations bundle`, run twice | Applies | Nothing changed | |
@@ -106,7 +126,11 @@ versions (the table on #34).
 | | `migrations script --idempotent`, applied twice | Applies | Nothing changed | |
 | | `migrations bundle`, run twice | Applies | Nothing changed | |
 
-`ONLINE = ON` needs an edition that has it; the image's is Developer Edition.
+The first two statements are the ones that say whether the suppression arrives: the server
+refuses `ALTER DATABASE` inside a transaction, so it applies only where EF Core ends the
+transaction before it. The `ONLINE` index does not say it. By hand on the same server,
+`BEGIN TRANSACTION; CREATE INDEX … WITH (ONLINE = ON); COMMIT;` creates the index. `ONLINE = ON`
+needs an edition that has it; the image's is Developer Edition.
 
 ## Each failure, with the SQL that caused it
 
@@ -212,12 +236,13 @@ decorator: it sees the list the decorator hands on.
 |---|---|---|---|
 | `migrations add` | `.Annotation(…)` on `migrationBuilder.Sql(…)`, in `Up` and in `Down` | the same | the same |
 | The snapshot and the designer file | neither holds it | neither | neither |
-| `migrations script`: the generator receives the operation | with all of them, under `Script` | the same | the same |
-| `migrations script --idempotent` | with all of them, under `Script, Idempotent` | the same | the provider has no idempotent scripts |
-| `migrations bundle`, applying the migration | with all of them, under `Default`, on PostgreSQL 18 | the same, on SQL Server 2022 | the same |
+| `migrations script`: the generator receives the operation | with all five, each with its type and value, under `Script` | the same | the same |
+| `migrations script --idempotent` | with all five, under `Script, Idempotent` | the same | the provider has no idempotent scripts |
+| `migrations bundle`, applying the migration | with all five, under `Default`, on PostgreSQL 18 | the same, on SQL Server 2022 | the same |
 | A value with no C# literal (a record) | `migrations add` fails and writes nothing | the same | the same |
 
-What `migrations add` wrote, for a string, a `string[]`, an `int` and a `bool`, sorted by name:
+What `migrations add` wrote for the five annotations (two strings, a `string[]`, an `int` and a
+`bool`), sorted by name:
 
 ```csharp
 migrationBuilder.Sql("CREATE INDEX ix_things_name ON \"Things\" (\"Name\");")
@@ -289,7 +314,12 @@ The two are #155 (PostgreSQL) and #156 (SQL Server).
    that is not). A trigger has to be there and enabled, a row named `fine` has to be accepted, and
    a row named `refused` has to be refused with the trigger's own error.
 5. Then the same again in the same database, and the catalog is compared with what the first run
-   left, object identifiers included.
+   left, the object's identity included: on PostgreSQL the index's OID, or the trigger's and its
+   function's; on SQL Server the trigger's `object_id` with its `modify_date`, and for an index
+   the id of its rowset (`sys.partitions.hobt_id`), since `object_id` and `index_id` are the same
+   after a drop and create. A database option has no identity; there the comparison is its state.
+6. Each identity is shown to be one a recreation changes: after the bundle's second run the judge
+   drops the object and creates it again, and has to report another identity.
 
 **A script is applied as the provider's own client applies one,** not as one command: psql sends a
 file statement by statement, sqlcmd batch by batch at each `GO`, and both go on after an error
@@ -298,17 +328,31 @@ again in a new database, stopping at the first error, which is `psql -v ON_ERROR
 `sqlcmd -b`. Spike B sent a script as one command; whether a statement runs in a transaction is
 what this spike is about, so it does not.
 
-**The judge is held against the tools.** Where the machine has `psql` or `sqlcmd`, `run.sh` applies
-every script through it as well, into a database of its own, and what it leaves must be what the
-judge's way left. CI's runner has psql (18.6) and no sqlcmd. On the developer's machine the
-scripts went through the clients the servers' own images bring, psql 16.15 and 18.6 and sqlcmd
-18.7, piped in on standard input since those clients live in the servers' containers. In both
-places, for every consumer, with the tools' defaults and with the stop switch, they left what the
-judge's way left. The exit codes named above are theirs.
+**The judge is held against the tools.** `run.sh` applies every script through psql or sqlcmd as
+well, into a database of its own, and the object, the table and the history it leaves must be
+what the judge's way left. The tool is the one on PATH (`psql -f script.sql`,
+`sqlcmd -i script.sql`), or the one in the server's container where the variables above name it.
+In a container the script goes in on standard input, and for sqlcmd without the byte order mark
+EF Core writes: sqlcmd reads one off a file given with `-i`, and on standard input takes it for
+a syntax error at line 1 (Msg 102) and loses the batch that creates the history table.
+
+CI's runner has psql (18.6) and no sqlcmd. On the developer's machine the tools were the
+containers': psql 16.15 and 18.6, and sqlcmd 18.7. In both places, for every consumer, with the
+tools' defaults and with the stop switch, they left what the judge's way left. The exit codes
+named above are theirs.
+
+**One thing the tool's session decides is not in a cell.** SQL Server keeps with a trigger whether
+`QUOTED_IDENTIFIER` was on when it was created (`sys.sql_modules.uses_quoted_identifier`). It is 0
+for a trigger a script created through sqlcmd's defaults, and 1 through sqlcmd `-I`, through the
+judge's connection and from a bundle. `run.sh` holds the 0 and the 1 beside each such cell. What
+follows from it, for a trigger that later writes to a table with a filtered index or an indexed
+view, is not measured.
 
 **The control.** Every database is empty before its first run, and the failing cells are the proof
 that the judge reads the catalog: the same check that says "applies" elsewhere sees the index and
-the trigger missing there.
+the trigger missing there. A database that cannot be created is a failing row, so a cell cannot
+go missing from a run that reports the table as measured: with `Create` made to throw for every
+database after the first, the run fails with one row for each path.
 
 ## What it found beyond the question
 
@@ -319,6 +363,12 @@ the trigger missing there.
   its line breaks inside the constant is 219 and 239; on one line it is 203 on every path. The
   trigger behaves the same. A comparison of catalog text between two databases built on
   different paths does not come out equal. `run.sh` holds which paths agree.
+- **On SQL Server an error at run time does not end the batch, and a migration is one batch.**
+  The control shows it: after Msg 226 the script goes on, records the migration and commits, so
+  the migration counts as applied with one of its statements never run, and the second run does
+  nothing. `sqlcmd -b` exits 1 and changes none of that, since the batch has committed by then. A
+  bundle stops at the error and rolls back. Only an error that keeps the batch from compiling,
+  as the bare trigger's, leaves nothing behind.
 - **A statement that suppresses the transaction splits the migration in three.** What stands
   before it is committed first, and what stands after it, the history row included, runs outside
   a transaction in both scripts. That is where the half-applied state of the failing cell comes
@@ -343,4 +393,6 @@ the trigger missing there.
 - SQLite, for question 1: its provider has no idempotent scripts (spike B).
 - Any edition of SQL Server without `ONLINE = ON`, and Azure SQL.
 - EF Core 11.0.0, applied. Its two scripts for the bare trigger on SQL Server were compared with
-  rc.3's as text; nothing else was run on it.
+  rc.3's as text; nothing else was run on it. The consumer builds on it only without its
+  reference to `System.Security.Cryptography.Pkcs` 9.0.23, which the 11.0.0 provider has
+  outgrown (NU1605).
