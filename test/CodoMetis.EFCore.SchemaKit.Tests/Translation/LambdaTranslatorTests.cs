@@ -289,8 +289,9 @@ public sealed class LambdaTranslatorTests
 
         protected override Expression VisitUnary(UnaryExpression node)
         {
-            if (node.NodeType == ExpressionType.Convert && new ParameterSeeker(root).Sees(node))
-                Found.Add($"{Name(node.Operand.Type)}->{Name(node.Type)}");
+            // The node the compiler wrote is part of what a row states: ConvertChecked in a checked context.
+            if (node.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked && new ParameterSeeker(root).Sees(node))
+                Found.Add($"{(node.NodeType == ExpressionType.ConvertChecked ? "checked " : "")}{Name(node.Operand.Type)}->{Name(node.Type)}");
             return base.VisitUnary(node);
         }
 
@@ -393,6 +394,75 @@ public sealed class LambdaTranslatorTests
         Expression<Func<Doc, string>> concat = x => x.Code + x.Rank;
         Assert.AreEqual("Int32->Object", Conversions(concat));
         Assert.AreEqual("({Code} || {Rank})", LambdaTranslator.Expression(concat));
+    }
+
+    /// <summary>
+    /// Issue 126: in a checked context, which a project sets for all of its code with
+    /// <c>CheckForOverflowUnderflow</c>, the compiler writes a numeric conversion as another node,
+    /// <c>ConvertChecked</c>, and every promoted comparison was refused. Each row is a row of the
+    /// test above inside <c>checked(…)</c>: its tree says which node the compiler wrote, and its
+    /// template is the one it has unchecked.
+    /// </summary>
+    [TestMethod]
+    public void In_a_checked_context_the_same_conversions_are_left_out()
+    {
+        // To Nullable<T> of the same type the compiler writes Convert in either context; back, it does not.
+        Silent("{Score} = {Rank}", "Int32->Int32?", x => checked(x.Score == x.Rank));
+        Silent("{Flag} = {Active}", "Boolean->Boolean?", x => checked(x.Flag == x.Active));
+        Silent("{Score} > 5", "checked Int32?->Int32", x => checked((int)x.Score! > 5));
+
+        // Between integer types.
+        Silent("{Small} = 5", "checked Int16->Int32", x => checked(x.Small == 5));
+        Silent("{Tiny} > 5", "checked Byte->Int32", x => checked(x.Tiny > 5));
+        Silent("{Signed} < 5", "checked SByte->Int32", x => checked(x.Signed < 5));
+        Silent("{Port} = 5", "checked UInt16->Int32", x => checked(x.Port == 5));
+        Silent("{Tiny} = {Small}", "checked Byte->Int32, checked Int16->Int32", x => checked(x.Tiny == x.Small));
+        Silent("{Rank} = 5", "checked Int32->Int64", x => checked(x.Rank == 5L));
+        Silent("{Rank} < {Big}", "checked Int32->Int64", x => checked(x.Rank < x.Big));
+        Silent("{Small} < {Big}", "checked Int16->Int64", x => checked(x.Small < x.Big));
+        Silent("{Count} = {Rank}", "checked UInt32->Int64, checked Int32->Int64", x => checked(x.Count == x.Rank));
+        Silent("{Tiny} = {Count}", "checked Byte->UInt32", x => checked(x.Tiny == x.Count));
+        Silent("{Count} <= {Huge}", "checked UInt32->UInt64", x => checked(x.Count <= x.Huge));
+        Silent("{Port} <= {Huge}", "checked UInt16->UInt64", x => checked(x.Port <= x.Huge));
+        Silent("{Score} = {Small}", "checked Int32->Int32?, checked Int16->Int32", x => checked(x.Score == x.Small));
+
+        // A char is compared as an int, and the constant goes back to the char it was written as.
+        Silent("{Grade} = 'A'", "checked Char->Int32", x => checked(x.Grade == 'A'));
+
+        // To object, for string.Concat, the compiler writes Convert in either context.
+        Expression<Func<Doc, string>> concat = x => checked(x.Code + x.Rank);
+        Assert.AreEqual("Int32->Object", Conversions(concat));
+        Assert.AreEqual("({Code} || {Rank})", LambdaTranslator.Expression(concat));
+    }
+
+    /// <summary>
+    /// The places that take a conversion off besides the operand of a plain comparison: a
+    /// comparison that can be NULL, a negation pushed down to one, a null test, a concatenation
+    /// with an operand that can be null, the refusal of an enum. Each gives what it gives
+    /// unchecked (#126).
+    /// </summary>
+    [TestMethod]
+    public void In_a_checked_context_every_rule_reads_through_the_conversion()
+    {
+        // Null compensation: the operand under the conversion is what can be NULL.
+        Assert.AreEqual(P(x => x.Score != x.Small), P(x => checked(x.Score != x.Small)));
+        Assert.AreEqual(P(x => !(x.Small < x.Score)), P(x => checked(!(x.Small < x.Score))));
+        Assert.AreEqual(P(x => !(x.Small < x.Rank)), P(x => checked(!(x.Small < x.Rank))));
+        Assert.AreEqual(P(x => (long?)x.Score == null), P(x => checked((long?)x.Score == null)));
+        Assert.AreEqual(P(x => (long?)x.Score != x.Big), P(x => checked((long?)x.Score != x.Big)));
+        StringAssert.Contains(Conversions((Expression<Func<Doc, bool>>)(x => checked((long?)x.Score == null))), "checked Int32?->Int64?");
+
+        // A concatenation coalesces the operand under the conversion, and casts it by its own type.
+        Assert.AreEqual(E(x => x.Code + (long?)x.Score), E(x => checked(x.Code + (long?)x.Score)));
+        Assert.AreEqual(E(x => x.Code + (long)x.Small), E(x => checked(x.Code + (long)x.Small)));
+
+        // An enum keeps its own refusal, which says why; it is not a conversion's.
+        StringAssert.Contains(Refused(() => P(x => checked(x.Status == DocStatus.Final))), "compares an enum");
+        StringAssert.Contains(Refused(() => P(x => checked((int)x.Status == 1))), "compares an enum");
+
+        // And a conversion that can change the value is refused as it is unchecked (#103).
+        StringAssert.Contains(Refused(() => P(x => checked((int)x.Big == 2))), "converts Int64 to Int32.");
+        StringAssert.Contains(Refused(() => P(x => checked(x.Rank > 2.5))), "converts Int32 to Double.");
     }
 
     /// <summary>

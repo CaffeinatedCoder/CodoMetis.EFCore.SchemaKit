@@ -156,11 +156,78 @@ internal static class ParitySweep
         return results.OfType<ParityResult>().ToList();
     }
 
+    // ── A checked context ──
+
+    /// <summary>One row translated twice: from the tree the compiler builds for it as the sweep compiles it, and in a checked context.</summary>
+    internal sealed record CheckedRow(string Id, string Unchecked, string Checked, bool HasCheckedConversion);
+
+    /// <summary>
+    /// Every row once more, compiled as a project with <c>CheckForOverflowUnderflow</c> compiles
+    /// it. The compiler then writes the numeric conversions of a tree as <c>ConvertChecked</c>,
+    /// and the translator has to give the template, or the refusal, it gives for <c>Convert</c>
+    /// (#126). No query is translated: a template that is the same needs no second comparison.
+    /// </summary>
+    public static IReadOnlyList<CheckedRow> InACheckedContext()
+    {
+        var cases     = ParityCatalogue.Build();
+        var plain     = Compile(cases);
+        var inChecked = Compile(cases, overflowChecks: true);
+
+        List<CheckedRow> rows = [];
+        for (var i = 0; i < cases.Count; i++)
+        {
+            // Not C# in either context: no row.
+            if (plain[i] is null && inChecked[i] is null)
+                continue;
+
+            rows.Add(new CheckedRow(
+                cases[i].Id,
+                Translated(cases[i], plain[i]),
+                Translated(cases[i], inChecked[i]),
+                inChecked[i] is { } lambda && new CheckedConversionFinder().Found(lambda)));
+        }
+
+        return rows;
+    }
+
+    private static string Translated(ParityCase @case, LambdaExpression? lambda)
+    {
+        if (lambda is null)
+            return "not C#";
+
+        try
+        {
+            return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda) : LambdaTranslator.Expression(lambda);
+        }
+        catch (NotSupportedException e)
+        {
+            // A refusal quotes the expression, which names the node. The reason has to be the same.
+            return "refused: " + e.Message.Replace("ConvertChecked(", "Convert(", StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class CheckedConversionFinder : ExpressionVisitor
+    {
+        private bool _found;
+
+        public bool Found(LambdaExpression lambda)
+        {
+            Visit(lambda.Body);
+            return _found;
+        }
+
+        protected override Expression VisitUnary(UnaryExpression node)
+        {
+            _found |= node.NodeType == ExpressionType.ConvertChecked;
+            return base.VisitUnary(node);
+        }
+    }
+
     // ── Compilation ──
 
     // Each row is one method on one line, so a compiler error names its row. Rows that are not C#
     // (x.Bool < true) are dropped; the coverage check guards against dropping a whole construct.
-    private static LambdaExpression?[] Compile(IReadOnlyList<ParityCase> cases)
+    private static LambdaExpression?[] Compile(IReadOnlyList<ParityCase> cases, bool overflowChecks = false)
     {
         var excluded = new HashSet<int>();
 
@@ -185,10 +252,10 @@ internal static class ParitySweep
             source.AppendLine("}");
 
             var compilation = CSharpCompilation.Create(
-                "TranslatorParity.Generated",
+                overflowChecks ? "TranslatorParity.Generated.Checked" : "TranslatorParity.Generated",
                 [CSharpSyntaxTree.ParseText(source.ToString())],
                 References.Value,
-                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, checkOverflow: overflowChecks));
 
             using var stream = new MemoryStream();
             var       result = compilation.Emit(stream);
