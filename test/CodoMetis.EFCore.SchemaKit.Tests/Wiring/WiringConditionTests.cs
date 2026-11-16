@@ -52,13 +52,30 @@ public sealed class WiringConditionTests
         StringAssert.Contains(error.Message, "UseSchemaKit() is not on this context's options");
     }
 
+    /// <summary>The table of <see cref="Ctx{TTest}" /> and no declaration: the two differ in nothing EF Core's own differ sees.</summary>
+    private sealed class Undeclared(DbContextOptions<Undeclared> options) : DbContext(options)
+    {
+        public DbSet<Thing> Things => Set<Thing>();
+    }
+
+    /// <summary>
+    /// Against no model at all the table alone is a difference, and a model against itself is none
+    /// whoever answers: neither says who answered. The pair here differs in the declaration only,
+    /// so a <c>HasDifferences</c> that hands on the inner differ's answer says "no changes" (#107).
+    /// </summary>
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
     public void C04_has_differences_sees_the_declaration(Provider provider)
     {
-        using var context = new Ctx<T04>(Setup.Options<T04>().Use(provider).UseSchemaKit().Options);
-        var model = context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
-        Assert.IsTrue(context.GetService<IMigrationsModelDiffer>().HasDifferences(null, model));
-        Assert.IsFalse(context.GetService<IMigrationsModelDiffer>().HasDifferences(model, model));
+        using var declared = new Ctx<T04>(Setup.Options<T04>().Use(provider).UseSchemaKit().Options);
+        using var undeclared = new Undeclared(new DbContextOptionsBuilder<Undeclared>().Use(provider).UseSchemaKit().Options);
+        var with    = declared.GetService<IDesignTimeModel>().Model.GetRelationalModel();
+        var without = undeclared.GetService<IDesignTimeModel>().Model.GetRelationalModel();
+        var differ  = (SchemaKitModelDiffer)declared.GetService<IMigrationsModelDiffer>();
+
+        Assert.IsFalse(differ.Inner.HasDifferences(without, with), "The premise: the inner differ sees no change.");
+        Assert.IsTrue(differ.HasDifferences(without, with));
+        Assert.IsTrue(differ.HasDifferences(with, without), "Taking the declaration away is a change too.");
+        Assert.IsFalse(differ.HasDifferences(with, with));
     }
 
     // ---- another package's ReplaceService ---------------------------------------------------------

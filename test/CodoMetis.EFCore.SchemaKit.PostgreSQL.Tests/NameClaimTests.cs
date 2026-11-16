@@ -209,9 +209,15 @@ public sealed class NameClaimTests
         Assert.AreEqual("the primary key 'PK_role_grants' of 'role_grants'", collision.Second);
     }
 
+    /// <summary>
+    /// Not refused, and created under the name as it is declared: written in the key's case it
+    /// would be the key's name after all, and the server would refuse it (#107).
+    /// </summary>
     [TestMethod]
     public void A_name_that_differs_in_case_is_another_name()
-        => Assert.HasCount(1, Contexts.Diff<Models.Bare, ClaimModels.LikeItsPrimaryKeyInAnotherCase>().Sql());
+        => CollectionAssert.AreEqual(
+            new[] { """ALTER TABLE role_grants ADD CONSTRAINT pk_role_grants EXCLUDE USING gist ("Period" WITH &&);""" },
+            Contexts.Diff<Models.Bare, ClaimModels.LikeItsPrimaryKeyInAnotherCase>().Sql());
 
     [TestMethod]
     public void A_constraint_named_like_an_index_of_another_table_is_refused()

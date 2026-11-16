@@ -182,6 +182,13 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
                 => modelBuilder.Entity<Slot>().DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.During), deferral: Deferral.InitiallyImmediate)]);
         }
 
+        /// <summary><see cref="SlotUnderGist" />, deferrable and checked at commit.</summary>
+        public sealed class SlotUnderGistDeferred : ITestModel
+        {
+            public static void Build(ModelBuilder modelBuilder)
+                => modelBuilder.Entity<Slot>().DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.During), deferral: Deferral.InitiallyDeferred)]);
+        }
+
         /// <summary>One table and no constraint.</summary>
         public sealed class SlotAlone : ITestModel
         {

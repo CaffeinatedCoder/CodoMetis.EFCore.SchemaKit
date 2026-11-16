@@ -370,8 +370,21 @@ public sealed class PgExclusionLiveTests
         CollectionAssert.AreEqual(new[] { Scheduling.Replace(Models.Name, "ex_renamed") }, database.Exclusions());
     }
 
+    /// <summary>
+    /// Both ways, and by the catalog's text: two catalogs that agree say nothing when neither
+    /// holds a deferral, which is what a create that never wrote one would leave (#107).
+    /// </summary>
     [TestMethod]
-    public void Changing_the_deferral() => AssertMigratesTo<Models.Scheduling, Models.Immediate>();
+    public void Changing_the_deferral()
+    {
+        const string deferred = " DEFERRABLE INITIALLY DEFERRED";
+        StringAssert.EndsWith(Scheduling, deferred);
+
+        AssertMigratesTo<Models.Scheduling, Models.Immediate>(
+            (migrated, _) => CollectionAssert.AreEqual(new[] { Scheduling[..^deferred.Length] }, migrated.Exclusions()));
+        AssertMigratesTo<Models.Immediate, Models.Scheduling>(
+            (migrated, _) => CollectionAssert.AreEqual(new[] { Scheduling }, migrated.Exclusions()));
+    }
 
     [TestMethod]
     public void Changing_the_condition() => AssertMigratesTo<Models.Scheduling, Models.SchedulingWithAnotherCondition>(

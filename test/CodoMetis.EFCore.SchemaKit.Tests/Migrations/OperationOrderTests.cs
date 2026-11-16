@@ -1,10 +1,13 @@
 using CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 using CodoMetis.EFCore.SchemaKit.Tests.Harness;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Design.Internal;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Design;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Migrations;
 
@@ -62,10 +65,22 @@ public sealed class OperationOrderTests
         var inner = differ.Inner.GetDifferences(null, Model(context));
         var all   = differ.GetDifferences(null, Model(context));
 
-        CollectionAssert.AreEqual(
-            inner.Select(o => o.GetType()).ToList(),
-            all.Take(inner.Count).Select(o => o.GetType()).ToList());
         Assert.AreEqual(inner.Count + 1, all.Count);
+        Assert.AreEqual(Scaffolded(context, inner), Scaffolded(context, all.Take(inner.Count)));
+    }
+
+    /// <summary>
+    /// The operations as <c>migrations add</c> writes them into a migration: every name, every
+    /// column and every annotation. Their types and their count say none of that (#107).
+    /// </summary>
+    private static string Scaffolded(DbContext context, IEnumerable<MigrationOperation> operations)
+    {
+        var code = new IndentedStringBuilder();
+        new DesignTimeServicesBuilder(typeof(OperationOrderTests).Assembly, typeof(OperationOrderTests).Assembly, new OperationReporter(handler: null), [])
+            .Build(context)
+            .GetRequiredService<ICSharpMigrationOperationGenerator>()
+            .Generate("migrationBuilder", [.. operations], code);
+        return code.ToString();
     }
 
     /// <summary>
