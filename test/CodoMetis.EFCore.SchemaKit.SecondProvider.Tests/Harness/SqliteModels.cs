@@ -109,6 +109,14 @@ public static class People
             => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template("lower({Email})")) { Name = Name });
     }
 
+    /// <summary>The same index, and the column it reads altered.</summary>
+    public sealed class IndexedByARequiredEmail : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template("lower({Email})")) { Name = Name })
+                .Property(x => x.Email).IsRequired();
+    }
+
     /// <summary>The address is gone, and the index of that name is on the person's name.</summary>
     public sealed class IndexedWithoutTheEmail : ITestModel
     {

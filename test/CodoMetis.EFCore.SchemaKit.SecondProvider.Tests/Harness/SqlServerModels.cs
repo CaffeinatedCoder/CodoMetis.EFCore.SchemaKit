@@ -416,6 +416,16 @@ public static class Sales
         }
     }
 
+    /// <summary>The customers in a schema of their own: their table's name and their key's are taken there, and free in <c>dbo</c>.</summary>
+    public sealed class WithCustomersInAnotherSchema : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Customer>().ToTable("Customers", "crm");
+            Orders(modelBuilder).DeclareProbe(Open);
+        }
+    }
+
     // ── A name a rename frees or takes in the same migration (#99, on the second provider) ──
 
     /// <summary>The index renamed, and an index of EF Core's own under the name it gave up.</summary>

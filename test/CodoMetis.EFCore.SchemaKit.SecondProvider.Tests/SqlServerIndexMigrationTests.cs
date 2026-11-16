@@ -177,6 +177,22 @@ public sealed class SqlServerIndexMigrationTests
             Shape<Sales.Indexed, Sales.TableMoved>());
 
     /// <summary>
+    /// The rename in place runs after EF Core's operations, so it names the table where the move
+    /// has put it. The kernel hands <c>Plan</c> the source under the target's table, for a move as
+    /// for a rename, which is why it does not matter which of the two descriptors the statement
+    /// takes the table from.
+    /// </summary>
+    [TestMethod]
+    public void A_moved_table_and_its_renamed_index_are_the_move_and_then_the_rename()
+        => CollectionAssert.AreEqual(
+            new[]
+            {
+                nameof(EnsureSchemaOperation), nameof(RenameTableOperation),
+                "EXEC sp_rename N'[sales].[Orders].[IX_orders_open]', N'IX_orders_unshipped', N'INDEX';",
+            },
+            Shape<Sales.Indexed, Sales.MovedAndRenamed>());
+
+    /// <summary>
     /// The drop names the table as it is before EF Core's operations and the create as it is after
     /// them. The contributor finds the filter's column by its name: the change names the table as
     /// the target has it, the descriptor as the source has it.
@@ -366,8 +382,11 @@ public sealed class SqlServerIndexMigrationTests
     /// (<c>ClaimedAs</c>), and what is compared is the dialect's answer for EF Core's object.
     /// </summary>
     private static SchemaValidationException? CollisionOfAnObjectOfTheSchemaNamed(string name, bool dialect = true)
+        => CollisionOfAnObjectOfTheSchemaNamed<Sales.WithObjectsOfTheSchema>(name, dialect);
+
+    private static SchemaValidationException? CollisionOfAnObjectOfTheSchemaNamed<TModel>(string name, bool dialect = true) where TModel : ITestModel
     {
-        using var context = Contexts.SqlServer<Sales.WithObjectsOfTheSchema>(dialect: dialect);
+        using var context = Contexts.SqlServer<TModel>(dialect: dialect);
         var identifier = context.GetService<ISchemaDialect>().Identifier(name);
         context.Contributor<ProbeIndexContributor>().ClaimedAs = index => [new NameClaim.Relation(index.Table.Schema, identifier)];
         return context.Collisions();
@@ -401,6 +420,21 @@ public sealed class SqlServerIndexMigrationTests
         Assert.AreEqual("SK1001", CollisionOfAnObjectOfTheSchemaNamed("PK_Customers")?.Diagnostics.Single().Id);
 
         Assert.IsNull(CollisionOfAnObjectOfTheSchemaNamed("Customers", dialect: false));
+    }
+
+    /// <summary>
+    /// A name is taken in its schema and in no other: the dialect claims a table and its key in
+    /// the table's schema. The object is claimed for a table without a schema, which is
+    /// <c>dbo</c>, and the customers are in <c>crm</c>. The server keeps two tables of one name in
+    /// two schemas (<c>SqlServerIndexLiveTests.Dropping_an_index_leaves_its_namesake_in_another_schema</c>).
+    /// </summary>
+    [TestMethod]
+    public void A_name_taken_in_another_schema_is_free_in_this_one()
+    {
+        Assert.IsNull(CollisionOfAnObjectOfTheSchemaNamed<Sales.WithCustomersInAnotherSchema>("Customers"));
+        Assert.IsNull(CollisionOfAnObjectOfTheSchemaNamed<Sales.WithCustomersInAnotherSchema>("PK_Customers"));
+
+        Assert.AreEqual("SK1001", CollisionOfAnObjectOfTheSchemaNamed<Sales.WithCustomersInAnotherSchema>("Orders")?.Diagnostics.Single().Id);
     }
 
     /// <summary>

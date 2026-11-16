@@ -272,10 +272,17 @@ public sealed class SqlServerIndexLiveTests
             5074);
 
     /// <summary>
-    /// A filter written as SQL, with no placeholder, says nothing of what it reads. The
-    /// contributor takes it to read every column, so the index is out of the way of the rename
-    /// of the column it does read, and of one it does not.
+    /// A filter written as SQL, with no placeholder, says nothing of what it reads, and the
+    /// contributor takes it to read every column. Both renames apply and leave the index: of the
+    /// column the filter reads, and of one it does not.
     /// </summary>
+    /// <remarks>
+    /// This does not hold that rule, and no test on the server can. When the column such a filter
+    /// reads is renamed, the filter's text changes with it, and that is a rebuild whatever is
+    /// answered; a column it does not read may be renamed under the index. The rule is caution
+    /// and costs a rebuild nobody needed. What holds it is the diff
+    /// (<c>SqlServerIndexMigrationTests.A_filter_without_a_placeholder_is_taken_to_read_every_column</c>).
+    /// </remarks>
     [TestMethod]
     public void Renaming_a_column_under_a_filter_written_as_SQL()
     {
@@ -316,6 +323,20 @@ public sealed class SqlServerIndexLiveTests
     [TestMethod]
     public void Moving_the_table_to_another_schema() => AssertMigratesTo<Sales.Indexed, Sales.TableMoved>(
         migrated => CollectionAssert.AreEqual(new[] { Open.Replace("dbo.Orders", "sales.Orders") }, migrated.Declared()));
+
+    /// <summary>The move and a rename of the index in one migration: the procedure finds the index in the table's new schema, and it is the same index.</summary>
+    [TestMethod]
+    public void Moving_the_table_and_renaming_its_index_keeps_the_index()
+    {
+        using var database = new SqlServerDatabase();
+        database.Create<Sales.Indexed>();
+        var storage = database.StorageOf(Sales.Name);
+
+        database.Migrate<Sales.Indexed, Sales.MovedAndRenamed>();
+
+        Assert.AreEqual(storage, database.StorageOf("IX_orders_unshipped"));
+        CollectionAssert.AreEqual(new[] { OpenInSales.Replace(Sales.Name, "IX_orders_unshipped") }, database.Declared());
+    }
 
     /// <summary>And back, which SQL Server's provider writes (Npgsql's does not, #105).</summary>
     [TestMethod]

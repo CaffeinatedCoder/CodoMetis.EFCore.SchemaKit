@@ -221,6 +221,26 @@ public sealed class SqliteExpressionIndexTests
         CollectionAssert.AreEqual(before, database.Indexes());
     }
 
+    /// <summary>
+    /// The column the index reads is altered, which SQLite's provider writes as a rebuild too. The
+    /// alteration is answered as leaving the index alone, since the rebuild is asked about by
+    /// itself and says the index is lost: the create meets the index that is still there. Answered
+    /// as a reason to take the index away first, the migration would apply and the rebuild would
+    /// take the index (#145).
+    /// </summary>
+    [TestMethod]
+    public void An_altered_column_under_the_index_fails_the_migration_as_a_rebuild_does()
+    {
+        using var database = new SqliteDatabase();
+        database.Create<People.IndexedByEmail>();
+        var before = database.Indexes();
+
+        var refused = Assert.ThrowsExactly<SqliteException>(() => database.Migrate<People.IndexedByEmail, People.IndexedByARequiredEmail>());
+
+        StringAssert.Contains(refused.Message, "index IX_people_lower_name already exists");
+        CollectionAssert.AreEqual(before, database.Indexes());
+    }
+
     private static void AssertRefusedAndUnchanged<TFrom, TTo>()
         where TFrom : ITestModel
         where TTo : ITestModel
@@ -422,5 +442,16 @@ public sealed class SqliteExpressionIndexTests
         Assert.AreEqual(0, differ.GetDifferences(snapshot, context.Relational()).Count);
         Assert.AreEqual(0, differ.GetDifferences(context.Relational(), snapshot).Count);
         Assert.AreEqual(1, snapshot.Model.GetEntityTypes().Single().GetDeclarations<Sqlite.ProbeSqliteIndex>().Count);
+    }
+
+    /// <summary>The stored form, as it stands in a consumer's snapshot: an expression is stored as <c>sql</c>, a column as <c>column</c>.</summary>
+    [TestMethod]
+    public void The_declaration_is_one_annotation_in_the_snapshot()
+    {
+        using var context = Contexts.Sqlite<People.Indexed>();
+        var code = CodoMetis.EFCore.SchemaKit.Tests.Harness.Snapshots.Of(context).Code;
+
+        StringAssert.Contains(code, "b.HasAnnotation(\"CodoMetis:Probe.SqliteIndex:");
+        StringAssert.Contains(code, """{\"$kind\":\"index\",\"v\":2,\"r\":1,\"name\":\"IX_people_lower_name\",\"sql\":\"lower({Name})\",\"unique\":false}""");
     }
 }
