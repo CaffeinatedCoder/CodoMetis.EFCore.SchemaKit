@@ -270,6 +270,8 @@ For a trigger on SQL Server it is the statement's form that fails, in both scrip
 is the contributor's to choose: inside `EXEC` it needs no refusal, once the contract can write a
 statement with line breaks into a string constant.
 
+The two are #155 (PostgreSQL) and #156 (SQL Server).
+
 ## How a cell is measured
 
 1. `run.sh` packs the kernel and the PostgreSQL package from the checkout and copies `consumer/`
@@ -321,6 +323,12 @@ the trigger missing there.
   before it is committed first, and what stands after it, the history row included, runs outside
   a transaction in both scripts. That is where the half-applied state of the failing cell comes
   from.
+- **sqlcmd leaves `QUOTED_IDENTIFIER` off, and a filtered index needs it on.** By hand, with sqlcmd
+  18.7 on SQL Server 16.0.4305.5: `CREATE INDEX … WHERE …` through sqlcmd fails with Msg 1934 and
+  creates nothing, and sqlcmd exits 0; with `-I` the index is created. The judge connects through
+  SqlClient, which sets the option on, so for a statement of that kind the judge is no stand-in for
+  sqlcmd. None of this spike's statements is one; a filtered index in a script is not measured
+  here beyond this.
 - **`SchemaSql.Statement` already takes `suppressTransaction`,** and EF Core scaffolds it as
   `migrationBuilder.Sql("…", suppressTransaction: true)`.
 
@@ -332,9 +340,6 @@ the trigger missing there.
 - `DROP INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY` and the other statements PostgreSQL refuses in
   a transaction. They suppress it the same way and were not run.
 - Several migrations in one script, and `--no-transactions`.
-- sqlcmd's own session settings. Its documentation says it leaves `QUOTED_IDENTIFIER` off unless
-  `-I` is given, which the statements here do not notice; an index that needs it on, such as a
-  filtered one, was not measured.
 - SQLite, for question 1: its provider has no idempotent scripts (spike B).
 - Any edition of SQL Server without `ONLINE = ON`, and Azure SQL.
 - EF Core 11.0.0, applied. Its two scripts for the bare trigger on SQL Server were compared with
