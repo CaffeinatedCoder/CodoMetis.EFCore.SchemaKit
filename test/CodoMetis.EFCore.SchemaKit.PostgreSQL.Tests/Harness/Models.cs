@@ -20,6 +20,15 @@ public sealed class RoleGrant
     public string? Note { get; set; }
 }
 
+/// <summary>A worker's shifts and leave, each a multirange: an array and a list of ranges, as Npgsql maps them.</summary>
+public sealed class Roster
+{
+    public int Id { get; set; }
+    public int WorkerId { get; set; }
+    public NpgsqlRange<DateOnly>[] Shifts { get; set; } = [];
+    public List<NpgsqlRange<DateOnly>> Leave { get; set; } = [];
+}
+
 public sealed class Booking
 {
     public int Id { get; set; }
@@ -183,6 +192,19 @@ public static class Models
     public sealed class Renamed : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod with { Name = "ex_renamed" }]);
+    }
+
+    /// <summary>
+    /// <c>&amp;&amp;</c> over a multirange, which GiST has an operator class for (#104): after an
+    /// equality on the array of ranges, and alone on the list of ranges.
+    /// </summary>
+    public sealed class Multiranges : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<Roster>().ToTable("rosters").DeclarePostgres(pg =>
+        [
+            pg.Exclusion(pg.Equal(x => x.WorkerId).Overlaps(x => x.Shifts), name: "ex_shifts"),
+            pg.Exclusion(pg.Overlaps(x => x.Leave), name: "ex_leave"),
+        ]);
     }
 
     /// <summary>Checked at each statement. PostgreSQL has no statement that changes this on an exclusion constraint.</summary>

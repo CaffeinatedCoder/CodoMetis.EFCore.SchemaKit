@@ -13,6 +13,7 @@ public sealed class ConsumerCompileTests
 {
     private const string Model = """
         using System;
+        using System.Collections.Generic;
         using System.Linq;
         using Microsoft.EntityFrameworkCore;
         using NpgsqlTypes;
@@ -27,6 +28,16 @@ public sealed class ConsumerCompileTests
             public int GranteeId { get; set; }
             public NpgsqlRange<DateOnly> Period { get; set; }
             public DateOnly? RevokedOn { get; set; }
+        }
+
+        public sealed class Roster
+        {
+            public int Id { get; set; }
+            public int WorkerId { get; set; }
+            public NpgsqlRange<DateOnly>[] Shifts { get; set; } = [];
+            public List<NpgsqlRange<DateOnly>> Leave { get; set; } = [];
+            public int[] Tags { get; set; } = [];
+            public List<int> Codes { get; set; } = [];
         }
 
         public static class Grants
@@ -105,6 +116,22 @@ public sealed class ConsumerCompileTests
         }
         """;
 
+    /// <summary>A declaration of <c>&amp;&amp;</c> over the operands of <c>Roster</c>, first and after an equality.</summary>
+    private static string OverlapsOver(string property) => $$"""
+        using Microsoft.EntityFrameworkCore;
+        using CodoMetis.EFCore.SchemaKit.PostgreSQL;
+
+        public static class Rosters
+        {
+            public static void Apply(ModelBuilder modelBuilder) => modelBuilder.Entity<Roster>().DeclarePostgres(pg =>
+            [
+                pg.Exclusion(pg.Overlaps(x => x.{{property}}), name: "ex_first"),
+                pg.Exclusion(pg.Equal(x => x.WorkerId).Overlaps(x => x.{{property}}), name: "ex_second"),
+                pg.Exclusion(pg.Equal(x => x.WorkerId).Overlaps(x => x.Shifts).Overlaps(x => x.{{property}}), name: "ex_third"),
+            ]);
+        }
+        """;
+
     private static List<Diagnostic> Compile(params string[] sources)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
@@ -160,5 +187,32 @@ public sealed class ConsumerCompileTests
 
         Assert.IsTrue(diagnostics.Count >= 2, string.Join("\n", diagnostics));
         Assert.IsTrue(diagnostics.All(d => d.Id == "SK9001"), string.Join("\n", diagnostics));
+    }
+
+    /// <summary>
+    /// A multirange is an array or a list of ranges on the CLR side, and <c>Overlaps</c> takes
+    /// both, first and after another element.
+    /// </summary>
+    [TestMethod]
+    [DataRow("Shifts"), DataRow("Leave")]
+    public void Overlaps_over_a_multirange_compiles(string property)
+    {
+        var diagnostics = Compile(Model, OverlapsOver(property));
+
+        Assert.AreEqual(0, diagnostics.Count, string.Join("\n", diagnostics));
+    }
+
+    /// <summary>
+    /// A plain array or list has no GiST operator class, and PostgreSQL refuses the constraint at
+    /// apply (42704, #104). So it does not compile, in any of the three places an element is added.
+    /// </summary>
+    [TestMethod]
+    [DataRow("Tags"), DataRow("Codes")]
+    public void Overlaps_over_a_plain_array_does_not_compile(string property)
+    {
+        var diagnostics = Compile(Model, OverlapsOver(property));
+
+        Assert.AreEqual(3, diagnostics.Count, string.Join("\n", diagnostics));
+        Assert.IsTrue(diagnostics.All(d => d.Id == "CS0411"), string.Join("\n", diagnostics));
     }
 }
