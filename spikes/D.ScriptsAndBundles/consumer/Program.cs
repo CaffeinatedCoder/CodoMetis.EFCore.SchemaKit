@@ -92,7 +92,7 @@ internal static partial class Judge
             catch (DbException e)
             {
                 errors++;
-                Console.WriteLine($"ERROR {Code(e)}: {e.Message.Split('\n')[0].Trim()}");
+                Console.WriteLine($"ERROR {Code(e)}: {Text(e)}");
                 Console.WriteLine("STATEMENT:");
                 foreach (var line in part.Split('\n')) Console.WriteLine($"    {line.TrimEnd('\r')}");
                 Console.WriteLine("END-STATEMENT");
@@ -216,6 +216,9 @@ internal static partial class Judge
     }
 
     public static string Code(DbException e) => e is Npgsql.PostgresException postgres ? postgres.SqlState : e.GetType().Name;
+
+    /// <summary>The server's own words. Npgsql's message puts the SQLSTATE in front of them.</summary>
+    private static string Text(DbException e) => e is Npgsql.PostgresException postgres ? postgres.MessageText : e.Message.Split('\n')[0].Trim();
 
     public static string ConnectionTo(string database)
         => new Npgsql.NpgsqlConnectionStringBuilder(Server) { Database = database }.ConnectionString;
@@ -368,6 +371,8 @@ internal static partial class Judge
 
     public static string Code(DbException e) => e is Microsoft.Data.SqlClient.SqlException sql ? sql.Number.ToString() : e.GetType().Name;
 
+    private static string Text(DbException e) => e.Message.Split('\n')[0].Trim();
+
     public static string ConnectionTo(string database)
         => new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(Server) { InitialCatalog = database }.ConnectionString;
 
@@ -466,6 +471,8 @@ internal static partial class Judge
     }
 
     public static string Code(DbException e) => e is Microsoft.Data.Sqlite.SqliteException sqlite ? sqlite.SqliteErrorCode.ToString() : e.GetType().Name;
+
+    private static string Text(DbException e) => e.Message.Split('\n')[0].Trim();
 
     public static string ConnectionTo(string database) => throw new NotSupportedException("SQLite has no server: SPIKE_D_CONNECTION names the file.");
 

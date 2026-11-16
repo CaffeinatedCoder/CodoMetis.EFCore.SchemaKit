@@ -67,6 +67,10 @@ SMOKE_EF_VERSION=11.0.0 SCHEMAKIT_TEST_PG="…" test/ConsumerSmokeTest/run.sh
 # Spike B, the first version of the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
 spikes/B.DesignTime/run.sh
 
+# Spike D, SqlOperations in scripts and bundles; SPIKE_D_PG16, SPIKE_D_PG18 and SPIKE_D_MSSQL are connection
+# strings, and spike E's are read where one is not set. A server without one is reported as not measured
+spikes/D.ScriptsAndBundles/run.sh
+
 # Spike E, the impact table; SPIKE_E_PG16, SPIKE_E_PG18 and SPIKE_E_MSSQL are connection strings (its README)
 dotnet test spikes/E.ImpactTable/E.ImpactTable.csproj
 ```

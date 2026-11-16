@@ -28,6 +28,9 @@ public static class Forms
     /// <summary>SQL Server: the same trigger inside <c>EXEC(N'…')</c>, which is a statement that may stand anywhere in a batch.</summary>
     public const string TriggerExec = "trigger-exec";
 
+    /// <summary>SQL Server: the same, with the trigger's body on several lines, as a real one is written.</summary>
+    public const string TriggerExecLines = "trigger-exec-lines";
+
     /// <summary>A plain <c>CREATE INDEX</c>: the control, and what the annotations are put on.</summary>
     public const string PlainIndex = "plain-index";
 
@@ -39,11 +42,13 @@ public static class Forms
     public const string Current = Trigger;
 #elif TRIGGER_EXEC
     public const string Current = TriggerExec;
+#elif TRIGGER_EXEC_LINES
+    public const string Current = TriggerExecLines;
 #else
     public const string Current = PlainIndex;
 #endif
 
-    public static bool IsTrigger { get; } = string.Equals(Current, Trigger) || string.Equals(Current, TriggerExec);
+    public static bool IsTrigger { get; } = Current.StartsWith(Trigger, StringComparison.Ordinal);
 
     public static string ObjectName => IsTrigger ? "tr_things_guard" : "ix_things_name";
 
@@ -151,6 +156,20 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
                     $"CREATE TRIGGER {descriptor.Name} ON {descriptor.Table} AFTER INSERT, UPDATE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM inserted WHERE {descriptor.Column} = N'refused') THROW 51000, N'spike D: the row is refused', 1; END");
                 sql.Statement($"EXEC({sql.Literal(trigger.ToString())})");
                 break;
+
+            // What the line above avoids. The dialect writes a string with line breaks as
+            // CONCAT(N'…', nchar(10), N'…'), EF Core's literal for it, and EXEC takes no function call.
+            case Forms.TriggerExecLines:
+                var lines = sql.Fragment($"""
+                    CREATE TRIGGER {descriptor.Name} ON {descriptor.Table} AFTER INSERT, UPDATE AS
+                    BEGIN
+                        SET NOCOUNT ON;
+                        IF EXISTS (SELECT 1 FROM inserted WHERE {descriptor.Column} = N'refused')
+                            THROW 51000, N'spike D: the row is refused', 1;
+                    END
+                    """);
+                sql.Statement($"EXEC({sql.Literal(lines.ToString())})");
+                break;
 #endif
 
             default:
@@ -168,7 +187,7 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
         var first = Annotations.Of(sql).Count;
 #endif
         var name = descriptor.Name.Name;
-        if (descriptor.Form is Forms.Trigger or Forms.TriggerExec)
+        if (descriptor.Form.StartsWith(Forms.Trigger, StringComparison.Ordinal))
         {
 #if NPGSQL
             sql.Statement($"DROP TRIGGER {name} ON {descriptor.Table}");
@@ -200,7 +219,7 @@ public sealed class SpikeContributor(SchemaContributorDependencies dependencies)
 
     protected override IEnumerable<NameClaim> Claims(SpikeDescriptor descriptor)
     {
-        if (descriptor.Form is Forms.Trigger or Forms.TriggerExec)
+        if (descriptor.Form.StartsWith(Forms.Trigger, StringComparison.Ordinal))
             return [new NameClaim.Trigger(descriptor.Table, descriptor.Name.Name)];
 #if SQLSERVER
         return [new NameClaim.TableIndex(descriptor.Table, descriptor.Name.Name)];

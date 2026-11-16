@@ -4,8 +4,9 @@
         Spike D's consumer. run.sh copies this folder to a directory OUTSIDE the repository, once for
         each provider and statement, and writes a Directory.Build.props there with SpikeProvider
         (NPGSQL, SQLSERVER, SQLITE), SpikeObject (CONCURRENT_INDEX, ONLINE_INDEX, TRIGGER,
-        TRIGGER_EXEC, ANNOTATED) and the versions: SchemaKit's from the packages it packed, EF Core's
-        and Npgsql's from those packages' own dependencies. It is never built in place.
+        TRIGGER_EXEC, TRIGGER_EXEC_LINES, ANNOTATED) and the versions: SchemaKit's from the packages
+        it packed, EF Core's and Npgsql's from those packages' own dependencies. It is never built
+        in place.
 
         The statement is a compile-time constant on purpose. A bundle builds the model again when it
         runs, to check for pending changes, so a statement chosen by an environment variable would

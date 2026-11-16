@@ -104,6 +104,10 @@ dependency() { # package, id: the version the nuspec names, without brackets
 ef_version=$(dependency "$feed/CodoMetis.EFCore.SchemaKit.$version.nupkg" Microsoft.EntityFrameworkCore.Relational)
 npgsql_ef_version=$(dependency "$feed/CodoMetis.EFCore.SchemaKit.PostgreSQL.$version.nupkg" Npgsql.EntityFrameworkCore.PostgreSQL)
 [[ -n $ef_version && -n $npgsql_ef_version ]] || { echo "Cannot read EF Core's and Npgsql EF's versions from the packed nuspecs." >&2; exit 1; }
+# SPIKE_D_EF_VERSION: the consumers on another EF Core than the packages reference, as the smoke
+# test's SMOKE_EF_VERSION. The design package, the SQL Server and SQLite providers and dotnet-ef
+# follow it; Npgsql EF keeps its own version, whose pin NuGet answers with NU1608.
+ef_version=${SPIKE_D_EF_VERSION:-$ef_version}
 echo "CodoMetis.EFCore.SchemaKit $version, EF Core $ef_version, Npgsql EF $npgsql_ef_version"
 echo "Work directory: $work"
 echo
@@ -250,6 +254,12 @@ outcome() { # err, state: the cell's words
     not-enforcing) what="the trigger is there and does not refuse the row" ;;
     *)             what="the $thing: $object" ;;
   esac
+  if [[ $object != ok ]]; then
+    case $(field table "$2") in
+      present) what="$what; the table is there" ;;
+      missing) what="$what; the table is missing" ;;
+    esac
+  fi
   case $history in
     missing) what="$what; there is no history table" ;;
     0)       what="$what; no migration is recorded" ;;
@@ -258,13 +268,31 @@ outcome() { # err, state: the cell's words
   if [[ $1 == ok ]]; then echo "no error; $what"; else echo "error $1; $what"; fi
 }
 
-# The table as measured: what each cell's two runs answered. "E/object/history" for the first
-# run, then "E/same" when the second run met no other state, or its own "E/object/history".
+# The table as measured: what each cell's two runs answered. "error/object/table/history" for the
+# first run, then "error/same" when the second run left what the first had left, or its own four.
 # PostgreSQL 16 and 18 answer alike.
 expected() { # consumer, path
   case "$1/$2" in
-    */script) echo "ok/ok/1 -" ;;
-    *)        echo "ok/ok/1 ok/same" ;;
+    # PostgreSQL refuses the statement inside the DO block the idempotent script wraps it in. psql
+    # goes on: the migration is recorded as applied without its index, and no later run creates it.
+    npgsql-concurrent/idempotent)      echo "25001/missing/present/1 ok/same" ;;
+    # Stopped there, the table is committed and the migration is not recorded: the second run
+    # creates the table again.
+    npgsql-concurrent/idempotent-stop) echo "25001/missing/present/0 42P07/same" ;;
+
+    # SQL Server: EF Core writes a migration's statements into one batch, in both scripts, and
+    # CREATE TRIGGER must start its batch. The batch does not compile, so nothing of it runs.
+    sqlserver-trigger/script)          echo "111/missing/missing/0 -" ;;
+    sqlserver-trigger/idempotent*)     echo "156/missing/missing/0 156/same" ;;
+
+    # EXEC takes string constants and variables. A body with line breaks comes out of the
+    # dialect's Literal as CONCAT(…, nchar(10), …), which EXEC does not take, on any path.
+    sqlserver-trigger-exec-lines/script)      echo "102/missing/missing/0 -" ;;
+    sqlserver-trigger-exec-lines/idempotent*) echo "102/missing/missing/0 102/same" ;;
+    sqlserver-trigger-exec-lines/bundle)      echo "102/missing/missing/missing 102/same" ;;
+
+    */script)                          echo "ok/ok/present/1 -" ;;
+    *)                                 echo "ok/ok/present/1 ok/same" ;;
   esac
 }
 
@@ -273,7 +301,7 @@ cell() { # label, server, statement, path id, path words, e1, s1, l1, e2, s2, l2
   local first second error=- signature want
 
   first=$(outcome "$e1" "$s1")
-  signature="$e1/$(field object "$s1")/$(field history "$s1")"
+  signature="$e1/$(field object "$s1")/$(field table "$s1")/$(field history "$s1")"
   if [[ $e2 == - ]]; then
     second="not applicable: this script is for an empty database"
     signature="$signature -"
@@ -282,7 +310,7 @@ cell() { # label, server, statement, path id, path words, e1, s1, l1, e2, s2, l2
     signature="$signature $e2/same"
   else
     second=$(outcome "$e2" "$s2")
-    signature="$signature $e2/$(field object "$s2")/$(field history "$s2")"
+    signature="$signature $e2/$(field object "$s2")/$(field table "$s2")/$(field history "$s2")"
   fi
 
   if [[ -n $l1 ]]; then error="\`${l1//|/\\|}\`"; fi
@@ -471,6 +499,14 @@ if wanted sqlserver-trigger-exec && consumer sqlserver-trigger-exec SQLSERVER TR
   thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
   if scaffold 'EXEC(N' 'CREATE TRIGGER'; then
     measure mssql "$mssql" "\`EXEC(N'CREATE TRIGGER …')\`"
+  fi
+fi
+
+# Beyond the question: the same EXEC with the trigger's body on several lines, as a real one is.
+if wanted sqlserver-trigger-exec-lines && consumer sqlserver-trigger-exec-lines SQLSERVER TRIGGER_EXEC_LINES; then
+  thing=trigger; thing_ok="the trigger is in the catalog and refuses the row"
+  if scaffold 'EXEC(CONCAT(' 'CREATE TRIGGER'; then
+    measure mssql "$mssql" "\`EXEC(…)\` of a \`CREATE TRIGGER\` with line breaks, through the dialect's \`Literal\`"
   fi
 fi
 
