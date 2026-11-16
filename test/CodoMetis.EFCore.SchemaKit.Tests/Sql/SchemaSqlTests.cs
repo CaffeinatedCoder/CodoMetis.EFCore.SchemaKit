@@ -170,12 +170,15 @@ public sealed class SchemaSqlTests
         Assert.AreEqual(statement + ";", Only(sql));
     }
 
-    // Test-only: the text of a statement as one literal. A contributor cannot do this, having no hole
-    // for a string; here the handler is driven by hand.
+    // Test-only: the text of a statement as one literal, the handler driven by hand. A contributor's
+    // build reports this call (CA1857, #109): the literal is not a constant, and there is no hole
+    // for a string.
     private static void Add(SchemaSql sql, string text)
     {
         var handler = new SqlHandler(text.Length, 0, sql);
+#pragma warning disable CA1857 // The rows' statements are data; the refusals they test are the subject.
         handler.AppendLiteral(text);
+#pragma warning restore CA1857
         sql.Statement(ref handler);
     }
 }

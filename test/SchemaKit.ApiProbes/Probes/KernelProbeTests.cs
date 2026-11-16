@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace SchemaKit.ApiProbes.Probes;
 
@@ -185,6 +186,23 @@ public sealed class KernelProbeTests
             "public static class Ddl { public static SchemaSql Same(SchemaSql sql) => sql; }",
             "public static class Ddl { public static SchemaSql Make(ISchemaDialect dialect) => new SchemaSql(dialect); }",
             "CS1729"),
+        // The handler is public, as the compiler needs it to be, so a contributor can build one by
+        // hand and give AppendLiteral any string (#109). Nothing can stop the call; its parameter is
+        // [ConstantExpected], and a contributor's build reports a value that is not a constant.
+        new("E11.literal-from-a-runtime-string", "E", ProbeShape.TopLevel,
+            "public static class Ddl { public static void Drop(SchemaSql sql, Identifier name) => sql.Statement($\"DROP INDEX {name}\"); }",
+            """
+            public static class Ddl
+            {
+                public static void Drop(SchemaSql sql, string name)
+                {
+                    var handler = new SqlHandler(0, 0, sql);
+                    handler.AppendLiteral("DROP INDEX " + name);
+                    sql.Statement(ref handler);
+                }
+            }
+            """,
+            "CA1857"),
 
         // ── S: the scope is a closed union ────────────────────────────────────────────────
         new("S1.scope-missing-arm", "S", ProbeShape.TopLevel,
@@ -329,7 +347,30 @@ public sealed class KernelProbeTests
                 nullableContextOptions: NullableContextOptions.Enable,
                 generalDiagnosticOption: ReportDiagnostic.Error));
 
-        return [.. compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error)];
+        // The .NET analyzers run as they do in a contributor's build, their warnings errors as in
+        // this repository's: a rule of the contract can be theirs (E11, CA1857).
+        var diagnostics = compilation.WithAnalyzers(Analyzers).GetAllDiagnosticsAsync().GetAwaiter().GetResult();
+        return [.. diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)];
+    }
+
+    private static readonly ImmutableArray<DiagnosticAnalyzer> Analyzers = LoadAnalyzers();
+
+    private static ImmutableArray<DiagnosticAnalyzer> LoadAnalyzers()
+    {
+        var folder = Path.Combine(AppContext.BaseDirectory, "netanalyzers");
+        var analyzers = Directory.EnumerateFiles(folder, "*.dll")
+            .SelectMany(path => new AnalyzerFileReference(path, AnalyzerLoader.Instance).GetAnalyzers(LanguageNames.CSharp))
+            .ToImmutableArray();
+        return analyzers.IsEmpty ? throw new InvalidOperationException($"No analyzers in {folder}.") : analyzers;
+    }
+
+    private sealed class AnalyzerLoader : IAnalyzerAssemblyLoader
+    {
+        public static readonly AnalyzerLoader Instance = new();
+
+        public void AddDependencyLocation(string fullPath) { }
+
+        public System.Reflection.Assembly LoadFromPath(string fullPath) => System.Reflection.Assembly.LoadFrom(fullPath);
     }
 
     private static string Describe(IEnumerable<Diagnostic> diagnostics)

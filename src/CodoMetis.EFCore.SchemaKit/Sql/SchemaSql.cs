@@ -97,8 +97,16 @@ public sealed partial class SchemaSql
 /// kind of value that is safe to write, and none for <see cref="string" />.
 /// </summary>
 /// <remarks>
+/// <para>
 /// A hole with a <see cref="string" />, an <see cref="object" />, a format or an alignment does not
 /// compile. That absence is the feature; adding an overload "for convenience" removes it.
+/// </para>
+/// <para>
+/// The guarantee is the holes'. The handler is public because the compiler builds it in the
+/// contributor's assembly, so nothing stops a contributor from building one by hand and calling
+/// <see cref="AppendLiteral" /> itself. Its parameter is <see cref="ConstantExpectedAttribute" />:
+/// a value that is not a constant is <c>CA1857</c>, a warning in a contributor's build by default.
+/// </para>
 /// </remarks>
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 [InterpolatedStringHandler]
@@ -117,8 +125,12 @@ public ref struct SqlHandler
         _dependencies = [];
     }
 
-    /// <summary>The contributor's own text.</summary>
-    public readonly void AppendLiteral(string literal) => _text.Append(literal);
+    /// <summary>The contributor's own text: the literal parts of the interpolated string, which the compiler passes.</summary>
+    /// <remarks>
+    /// A constant, as the compiler passes it. Called by hand with a string built at run time, the
+    /// text reaches the DDL as it is, which is what <c>CA1857</c> reports (#109).
+    /// </remarks>
+    public readonly void AppendLiteral([ConstantExpected] string literal) => _text.Append(literal);
 
     /// <summary>A name, delimited.</summary>
     public readonly void AppendFormatted(Identifier identifier) => _text.Append(_dialect.Delimit(identifier));

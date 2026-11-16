@@ -254,4 +254,20 @@ public sealed class PublicSurfaceTests
             types);
         Assert.IsFalse(holes.Any(m => m.IsGenericMethod), "A generic AppendFormatted<T> would accept a string.");
     }
+
+    /// <summary>
+    /// The literal parts are the compiler's constants. The handler is public, so AppendLiteral can be
+    /// called by hand; its one overload expects a constant, which a contributor's build checks (#109,
+    /// KernelProbeTests E11).
+    /// </summary>
+    [TestMethod]
+    public void The_handler_takes_a_constant_for_a_literal()
+    {
+        var literal = typeof(SqlHandler).GetMethods().Where(m => m.Name == "AppendLiteral").ToList();
+
+        Assert.HasCount(1, literal);
+        var parameter = literal[0].GetParameters().Single();
+        Assert.AreEqual(typeof(string), parameter.ParameterType);
+        Assert.IsTrue(parameter.IsDefined(typeof(System.Diagnostics.CodeAnalysis.ConstantExpectedAttribute)), "AppendLiteral takes any string without [ConstantExpected].");
+    }
 }
