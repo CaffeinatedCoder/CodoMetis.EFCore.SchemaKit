@@ -48,7 +48,25 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
     // Readers of an earlier package's annotations. They are made without the dialect, so asking
     // for them builds nothing a context without declarations must not build.
-    private IReadOnlyList<ILegacyDeclarationSource> Legacy => field ??= [.. services.GetServices<ILegacyDeclarationSource>()];
+    private IReadOnlyList<ILegacyDeclarationSource> Legacy => field ??= OneReaderForEachAnnotation([.. services.GetServices<ILegacyDeclarationSource>()]);
+
+    // One annotation has one reader, as one owner has one contributor. Two would each read the
+    // same objects out of a snapshot: one copy pairs with what the model declares, and the other
+    // is left over where the diff starts, so it is dropped while the model still declares it,
+    // and the next diff is empty (#108). A reader says its annotation only once it is made, so
+    // this is asked here and not where the reader is added.
+    private static IReadOnlyList<ILegacyDeclarationSource> OneReaderForEachAnnotation(IReadOnlyList<ILegacyDeclarationSource> readers)
+    {
+        Dictionary<string, ILegacyDeclarationSource> byAnnotation = new(StringComparer.Ordinal);
+        foreach (var reader in readers)
+        {
+            if (!byAnnotation.TryAdd(reader.Annotation, reader))
+                throw new InvalidOperationException(SchemaKitStrings.TwoReadersForOneAnnotation(
+                    reader.Annotation, byAnnotation[reader.Annotation].GetType(), reader.GetType()));
+        }
+
+        return readers;
+    }
 
     private bool IsSqlite => services.GetRequiredService<IDatabaseProvider>().Name == "Microsoft.EntityFrameworkCore.Sqlite";
 

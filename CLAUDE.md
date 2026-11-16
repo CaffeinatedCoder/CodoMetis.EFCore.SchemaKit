@@ -236,6 +236,11 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   declarations** (`AddLegacyDeclarationReader`, marked like the rest of the contract). It
   translates and decides nothing: what the old format could say and the declaration cannot is
   thrown, never left out. It takes no dialect, since it runs before anything is resolved.
+- **One annotation has one reader, as one owner has one contributor** (#108). Two reader classes
+  for one annotation each read the same objects out of a snapshot: one copy pairs with the model's
+  declaration and the other is dropped by the migration, while the model still declares it. The
+  planner refuses the pair at the first diff, naming both. Not the registration: a reader says
+  its annotation only once it is made.
 - **`SchemaContributorRegistry` is a diff-time service.** A contributor may take the dialect, which
   reads the design-time model, so the registry must never be a constructor parameter of the differ
   or the generator.
