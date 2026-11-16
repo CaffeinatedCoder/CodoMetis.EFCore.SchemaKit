@@ -11,8 +11,9 @@ SchemaKit refuses its snapshot ([below](#what-cannot-move-yet)). Each later prev
 entries of what it adds ([#73](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/73)).
 
 A preview's snapshot carries no promise yet: the stored form of a declaration may change in a later
-preview, which may then ask you to scaffold your migrations again. The permanent promise starts at
-`11.0.0`.
+preview, which may then ask you to scaffold your migrations again. That does not change a database
+you already built, so try a preview on a copy of your database, or one you can build again, and
+keep 5.x on the rest. The permanent promise starts at `11.0.0`.
 
 ## Before you start
 

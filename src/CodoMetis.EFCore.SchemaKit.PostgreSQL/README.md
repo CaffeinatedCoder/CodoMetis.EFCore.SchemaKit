@@ -28,7 +28,8 @@ its own version; update the two together. It is built against EF Core 11 and
 
 This is a preview. Any API may change between previews, and so may the stored form of a
 declaration in the model snapshot: a later preview may ask for the migrations to be scaffolded
-again. The permanent promise starts at `11.0.0`. What the preview does not do yet is listed in the
+again. That does not change a database already built, so try a preview on a database you can
+build again. The permanent promise starts at `11.0.0`. What the preview does not do yet is listed in the
 [README](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#what-it-does-not-do-yet).
 
 Coming from `EFCore.ComplexIndexes` 5.x:
