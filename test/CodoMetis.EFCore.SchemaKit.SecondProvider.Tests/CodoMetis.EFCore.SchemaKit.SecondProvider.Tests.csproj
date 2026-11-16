@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>CodoMetis.EFCore.SchemaKit.SecondProvider.Tests</RootNamespace>
+        <!-- The snapshot harness drives EF's design-time services, which are EF-internal.
+             SK9001 is the kernel's experimental contract, which this project is written against. -->
+        <NoWarn>$(NoWarn);EF1001;SK9001;1591</NoWarn>
+    </PropertyGroup>
+
+    <!--
+        The kernel alone, and through its public surface alone: the kernel grants this assembly no
+        InternalsVisibleTo, as it grants the PostgreSQL package none. That is the point of the
+        project (#119): a contributor for a second provider, and for a third, written the way a
+        package outside the repository has to write one. PublicContractTests holds the absence.
+
+        Nothing here ships. The contributors are evidence for the contract's shape, not the
+        beginning of CodoMetis.EFCore.SchemaKit.SqlServer (#29).
+    -->
+    <ItemGroup>
+        <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Npgsql EF rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; everything follows it. -->
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0-rc.3.26522.148" />
+        <!-- As in the kernel's tests: SqlClient 7.1.0 asks for a version with two advisories (issue 67). -->
+        <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.23" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0-rc.3.26522.148" />
+        <PackageReference Include="MSTest" Version="4.5.2" />
+    </ItemGroup>
+
+    <!-- One copy: what scaffolds and compiles a model snapshot. It names nothing internal to the kernel. -->
+    <ItemGroup>
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/Snapshots.cs" Link="Harness/Snapshots.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    </ItemGroup>
+
+</Project>

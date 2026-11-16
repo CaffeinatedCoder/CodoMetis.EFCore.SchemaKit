@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.csproj" />
+    <Project Path="test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.csproj" />
     <Project Path="test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tests.csproj" />
   </Folder>
 </Solution>
