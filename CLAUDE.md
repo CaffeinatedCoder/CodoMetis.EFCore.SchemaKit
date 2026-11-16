@@ -576,8 +576,9 @@ here yet are listed in #152, each with what has to exist first.
   prerelease there and never Latest.
 - **`— unreleased` stands for the date of the version being prepared,** and of no other section
   (`ChangelogConsistencyTests`). The commit that is tagged puts the date there; `release.yml`
-  refuses a tag while it stands. A dry run stops at it too, from the commit that opens a version
-  to the one that dates it (#151). The heading is read to its line's last character, as the
+  refuses a tag while it stands. A run from a branch goes on with a warning and notes that say
+  it is a dry run, as for a version with no section, so a dry run reaches `publish`'s approval
+  from `main` while it is headed `— unreleased` (#151). The heading is read to its line's last character, as the
   step's `grep` reads it, and the step is handed the changelog itself, with the date put in.
 - **`verify` writes one CycloneDX SBOM per package** with the tool `.config/dotnet-tools.json`
   pins, before the pack checks, so that the packed folder is uploaded as it was checked, and
