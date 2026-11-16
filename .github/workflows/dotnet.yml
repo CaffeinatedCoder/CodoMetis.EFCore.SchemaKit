@@ -19,6 +19,15 @@ on:
 permissions:
   contents: read
 
+# `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`. A step that names no shell runs as
+# `bash -e {0}`, where the status of `dotnet test … | tee` is tee's: a failed test left the step
+# green, and with it the lane, the gate and a release (#150). Set for the whole file and not per
+# script, so a step added later has it too. Set here although release.yml sets it as well: a
+# caller's default does not reach the workflow it calls.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # The kernel, the PostgreSQL package and their tests. No database but SQLite: models are built and
   # scripts generated, and EF Core's own design-time composition is driven in process. Built in
