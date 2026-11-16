@@ -171,6 +171,11 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   what makes "nothing reaches the DDL unquoted" a property of the types. `KernelProbeTests` compiles
   each forbidden form against the shipping assembly; `PublicSurfaceTests` holds the handler's
   overloads to the list.
+- **The guarantee is the holes', not the handler's** (#109). `SqlHandler` is public because the
+  compiler builds it in the contributor's assembly, so `AppendLiteral` can be called by hand with
+  any string, and nothing can stop that call. Its parameter is `[ConstantExpected]`: a value that
+  is not a constant is CA1857, a warning in a contributor's build and an error here. The kernel
+  probes run the SDK's .NET analyzers for it (`E11`).
 - **Values come from the dialect:** `ISchemaDialect.Identifier` checks the length, `Operator` the
   operator grammar. None of the value types has a public constructor taking text.
 - **`SchemaSql` appends the provider's statement terminator** and refuses a statement that brings

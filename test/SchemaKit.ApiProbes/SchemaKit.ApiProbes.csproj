@@ -41,6 +41,20 @@
         <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" Aliases="kernel" />
     </ItemGroup>
 
+    <!--
+        The .NET analyzers the SDK runs on every project, copied beside the tests: the kernel probes
+        compile a snippet as a contributor's build does, and a rule of the contract can be one of
+        theirs (CA1857 on SqlHandler.AppendLiteral, #109). The SDK adds them as Analyzer items in a
+        file imported after this one, so they are read in a target, not at evaluation.
+    -->
+    <Target Name="CopyNetAnalyzersForProbes" AfterTargets="Build">
+        <ItemGroup>
+            <_ProbeAnalyzer Include="@(Analyzer)" Condition="'%(Filename)' == 'Microsoft.CodeAnalysis.NetAnalyzers' Or '%(Filename)' == 'Microsoft.CodeAnalysis.CSharp.NetAnalyzers'" />
+        </ItemGroup>
+        <Error Condition="'@(_ProbeAnalyzer->Count())' != '2'" Text="The SDK's .NET analyzers were not found among the Analyzer items: the kernel probes need them." />
+        <Copy SourceFiles="@(_ProbeAnalyzer)" DestinationFolder="$(OutDir)netanalyzers" SkipUnchangedFiles="true" />
+    </Target>
+
     <ItemGroup>
         <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     </ItemGroup>

@@ -183,7 +183,9 @@ Three properties hold across the stages, and each is a probe:
   `TableRef`, `SqlName`, `SqlOperator`, `SqlFragment`, `int` and `bool`; a `string` hole is CS1503
   (`E1.string-in-ddl`). `Identifier` and `SqlFragment` have no public constructor and no conversion
   from `string` (`E2.fragment-from-string` CS1729, `E3.identifier-from-string` CS0029); only the
-  dialect makes an `Identifier`, after checking its length.
+  dialect makes an `Identifier`, after checking its length. The guarantee is the holes': the
+  handler is public, as the compiler needs it, and a hand-built one's `AppendLiteral` expects a
+  constant, which a contributor's build checks (CA1857, #109).
 - **Every switch is over a union its owner closed.** The declaration union, the descriptor's
   method fragment, the option singletons, `KeyTarget`, `NameClaim`, `SchemaPlacement`,
   `SchemaDiagnostic`: each switch in the prototype has no discard, so a new case is CS8509 at every
