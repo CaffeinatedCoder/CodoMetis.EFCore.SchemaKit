@@ -275,6 +275,11 @@ internal static class SchemaKitStrings
     public static string LegacyReaderReturnedNull(Type reader)
         => $"'{reader.FullName}'.Read returned null, or a list that holds one. An annotation reads into its declarations, or Read throws.";
 
+    public static string TwoReadersForOneAnnotation(string annotation, Type first, Type second)
+        => $"Two readers read the annotation '{annotation}': '{first.FullName}' and '{second.FullName}'. Each would read " +
+           "the same objects out of a model snapshot, and the second copy would be dropped by a migration while the model " +
+           "still declares it. One annotation has one reader: register one of them.";
+
     public static string LegacyAnnotationIsNotText(string entity, string annotation, Type? found)
         => $"{entity} carries the annotation '{annotation}' with a value of type {found?.Name ?? "null"}, and it is read as text. " +
            "Its objects would be left out of every migration, so it is not skipped.";

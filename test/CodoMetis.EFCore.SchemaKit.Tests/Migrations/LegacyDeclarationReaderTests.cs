@@ -18,6 +18,15 @@ public sealed class OldGuardReader : LegacyDeclarationReader<TestGuard>
         => [new TestGuard.Unique([new GuardKey(value)]) { Name = "ux_animal" }];
 }
 
+/// <summary>A second class for the same annotation, as two packages that both took over from one earlier package would bring.</summary>
+public sealed class AnotherOldGuardReader : LegacyDeclarationReader<TestGuard>
+{
+    public override string Annotation => OldGuardReader.Name;
+
+    protected override IEnumerable<TestGuard> Read(IReadOnlyEntityType entityType, string value)
+        => [new TestGuard.Unique([new GuardKey(value)]) { Name = "ux_animal" }];
+}
+
 public sealed class NullReader : LegacyDeclarationReader<TestGuard>
 {
     public override string Annotation => OldGuardReader.Name;
@@ -206,5 +215,31 @@ public sealed class LegacyDeclarationReaderTests
         static void Twice(IServiceCollection services) => services.AddLegacyDeclarationReader<OldGuardReader>().AddLegacyDeclarationReader<OldGuardReader>();
 
         Assert.HasCount(1, Diff<LegacyModels.InTheOldFormat, LegacyModels.Undeclared>(Twice));
+    }
+
+    /// <summary>
+    /// Two classes for one annotation are both kept, and each reads the object out of the
+    /// snapshot. One copy pairs with the model's declaration; the other was dropped, by a migration
+    /// to the model that declares it, and the diff after that was empty (#108).
+    /// </summary>
+    [TestMethod]
+    public void Two_readers_of_one_annotation_are_refused()
+    {
+        static void Both(IServiceCollection services) => services.AddLegacyDeclarationReader<OldGuardReader>().AddLegacyDeclarationReader<AnotherOldGuardReader>();
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => Diff<LegacyModels.InTheOldFormat, LegacyModels.Declared>(Both));
+
+        StringAssert.Contains(refused.Message, "Two readers read the annotation 'Old:Guard'");
+        StringAssert.Contains(refused.Message, typeof(OldGuardReader).FullName!);
+        StringAssert.Contains(refused.Message, typeof(AnotherOldGuardReader).FullName!);
+    }
+
+    /// <summary>The registration is wrong whatever the models hold: it is refused before a snapshot with the annotation comes along.</summary>
+    [TestMethod]
+    public void Two_readers_of_one_annotation_are_refused_where_no_model_holds_it()
+    {
+        static void Both(IServiceCollection services) => services.AddLegacyDeclarationReader<OldGuardReader>().AddLegacyDeclarationReader<AnotherOldGuardReader>();
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => Diff<LegacyModels.Undeclared, LegacyModels.Undeclared>(Both));
     }
 }
