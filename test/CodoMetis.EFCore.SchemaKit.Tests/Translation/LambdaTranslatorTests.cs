@@ -257,6 +257,28 @@ public sealed class LambdaTranslatorTests
     {
         Assert.AreEqual("{Grade} = 'A'", P(x => x.Grade == 'A'));
         Assert.AreEqual("'A' <> {Grade}", P(x => 'A' != x.Grade));
+        Assert.AreEqual("{Grade} = 'A'", P(x => x.Grade == 65));
+    }
+
+    /// <summary>
+    /// A number no char has wrapped round to another char: <c>x.Grade == 65601</c>, which C# never
+    /// holds, was stored as <c>{Grade} = 'A'</c>, and <c>x.Grade &gt; -1</c>, which it always holds,
+    /// as a comparison with U+FFFF (#168). Refused on either side, written or captured.
+    /// </summary>
+    [TestMethod]
+    public void A_char_compared_with_a_number_no_char_has_is_refused()
+    {
+        var captured = 65601;
+
+        foreach (var translate in new Func<string>[]
+                 {
+                     () => P(x => x.Grade == 65601),
+                     () => P(x => x.Grade < 70000),
+                     () => P(x => x.Grade > -1),
+                     () => P(x => 65536 != x.Grade),
+                     () => P(x => x.Grade == captured),
+                 })
+            StringAssert.Contains(Refused(translate), "which no char has");
     }
 
     /// <summary>
