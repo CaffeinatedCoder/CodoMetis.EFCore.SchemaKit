@@ -400,8 +400,18 @@ internal static class LambdaTranslator
         => Converted(node) is { } operand
         && (Nullable.GetUnderlyingType(operand.Type) ?? operand.Type) == typeof(char);
 
+    // A number no char has would wrap round to another char (65601 to 'A'), and the comparison C#
+    // answers alike for every row would hold for some rows only (#168).
     private static char? CharCode(System.Linq.Expressions.Expression node, ParameterExpression root)
-        => !DependsOnParameter(node, root) && Evaluate(node) is int code ? (char)code : null;
+    {
+        if (DependsOnParameter(node, root) || Evaluate(node) is not int code)
+            return null;
+
+        if (code < char.MinValue || code > char.MaxValue)
+            throw new NotSupportedException(SchemaKitStrings.NotACharacter(node, code));
+
+        return (char)code;
+    }
 
     private static bool IsHasValue(System.Linq.Expressions.Expression node, ParameterExpression root)
         => node is MemberExpression { Member.Name: nameof(Nullable<int>.HasValue), Expression: { } target }

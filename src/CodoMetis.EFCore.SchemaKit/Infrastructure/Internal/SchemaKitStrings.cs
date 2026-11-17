@@ -230,6 +230,11 @@ internal static class SchemaKitStrings
         => $"The expression '{node}' compares an enum. How an enum is stored depends on the property's value conversion, " +
            $"which is not known where the lambda is written: the comparison could be against a number on a text column. {WriteItAsSql}";
 
+    public static string NotACharacter(System.Linq.Expressions.Expression node, int code)
+        => $"The expression '{node}' compares a char with {code}, which no char has. C# compares the char as a number, so " +
+           "the comparison has one answer for every row, while the column is compared with a character and the number " +
+           $"would be stored as another one. Compare the property with a char ('A'); where a number is meant: {WriteItAsSql}";
+
     public static string ConversionNotTranslated(System.Linq.Expressions.Expression node, Type from, Type to)
         => $"The expression '{node}' converts {TypeName(from)} to {TypeName(to)}. A declaration has no spelling for a conversion: " +
            "it would be left out, and the database would read the value as it is stored, so (int)x.Amount == 2 would hold " +

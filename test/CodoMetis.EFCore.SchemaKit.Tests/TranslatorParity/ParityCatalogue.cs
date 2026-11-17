@@ -355,7 +355,8 @@ internal static class ParityCatalogue
     // conversion for a pair it promotes to by itself, and the cast carries it for the others
     // ((short)x.Byte, which it then promotes to int). A char is left to the rows above: it is in
     // the table for the comparison with a char, and against a number it is no comparison a
-    // database makes.
+    // database makes. A number some char has is written as that char, and one no char has is refused (#168);
+    // LambdaTranslatorTests holds both.
     private static IEnumerable<ParityCase> Conversions(IReadOnlyList<Operand> operands)
     {
         foreach (var (from, to) in LambdaTranslator.SilentConversions.Where(c => c.From != typeof(char)))
