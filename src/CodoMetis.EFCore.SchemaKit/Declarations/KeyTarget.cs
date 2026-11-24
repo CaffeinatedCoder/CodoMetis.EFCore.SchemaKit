@@ -68,12 +68,15 @@ public closed record KeyTarget
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(spelling);
 
-        // The translator writes a property as one placeholder and nothing around it. Anything it
-        // wrote besides is SQL, and SQL is an expression however short.
+        // Checked here, where the lambda is written, and SQL when the model is finalized. Which of
+        // the two cases it is does not wait: a lambda that names a property and nothing else is a
+        // path, and a path needs no binding.
+        var unbound = UnboundLambda.Of(key, spelling, isPredicate: false);
 #pragma warning disable SK9001 // The kernel's own translator writes placeholders; this is where they become segments.
-        var template = SqlTemplate.FromPlaceholders(LambdaTranslator.Expression(key));
+        return SqlTemplate.FromPlaceholders(unbound.Translate()).SingleColumn is { } path
+            ? new Column(path)
+            : new Template(SqlTemplate.Unbound(unbound));
 #pragma warning restore SK9001
-        return template.SingleColumn is { } path ? new Column(path) : new Template(template);
     }
 
     // A record's `with` goes through init and not through the constructor, so the rule is in both.
@@ -126,9 +129,7 @@ public sealed record Predicate(SqlTemplate Template)
     {
         ArgumentNullException.ThrowIfNull(predicate);
         ArgumentNullException.ThrowIfNull(spelling);
-#pragma warning disable SK9001 // The kernel's own translator writes placeholders; this is where they become segments.
-        return new Predicate(SqlTemplate.FromPlaceholders(LambdaTranslator.Predicate(predicate)));
-#pragma warning restore SK9001
+        return new Predicate(SqlTemplate.Unbound(UnboundLambda.Of(predicate, spelling, isPredicate: true)));
     }
 
     /// <summary>
@@ -142,10 +143,9 @@ public sealed record Predicate(SqlTemplate Template)
         if (Template.Equals(other.Template) || EndsWithConjunct(other.Template)) return this;
 
 #pragma warning disable SK9001 // The parentheses and the AND are the kernel's own text.
-        return new Predicate(SqlTemplate.Of(
-        [
-            new SqlSegment.Text("("), .. Template.Segments, new SqlSegment.Text(") AND ("), .. other.Template.Segments, new SqlSegment.Text(")"),
-        ]));
+        return new Predicate(SqlTemplate.Join(Text("("), Template, Text(") AND ("), other.Template, Text(")")));
+
+        static SqlTemplate Text(string sql) => SqlTemplate.Of([new SqlSegment.Text(sql)]);
 #pragma warning restore SK9001
     }
 
@@ -157,43 +157,56 @@ public sealed record Predicate(SqlTemplate Template)
     // hand-written SQL that reads ") AND (" is not this method's text.
     private bool EndsWithConjunct(SqlTemplate other)
     {
-        var whole = Flat(Template);
-        var ending = $" AND ({Flat(other)})";
+        // A lambda that is not bound yet is told from another by a number of its own, the same
+        // number for the same lambda on both sides.
+        List<object> lambdas = [];
+        var whole = Flat(Template, lambdas);
+        var ending = $" AND ({Flat(other, lambdas)})";
         return whole.EndsWith(ending, StringComparison.Ordinal) && IsOneGroup(whole.AsSpan(0, whole.Length - ending.Length));
     }
 
     private const char Escape = '\u0001';
     private const char ColumnMark = '\u0002';
     private const char RawMark = '\u0003';
+    private const char LambdaMark = '\u0004';
 
     /// <summary>
-    /// The segments in one string: a package's text as it is, a column and hand-written SQL each
-    /// between two marks of their kind. A mark that is part of a segment's text is escaped, so no
-    /// text can pass for a segment of another kind.
+    /// The parts in one string: a package's text as it is, and a column, hand-written SQL and a
+    /// lambda each between two marks of their kind. A mark that is part of a segment's text is
+    /// escaped, so no text can pass for a part of another kind.
     /// </summary>
-    private static string Flat(SqlTemplate template)
+    private static string Flat(SqlTemplate template, List<object> lambdas)
     {
-#pragma warning disable SK9001 // The kernel reads the segments of its own value.
+#pragma warning disable SK9001 // The kernel reads the parts of its own value.
         StringBuilder text = new();
-        foreach (var segment in template.Segments)
+        foreach (var part in template.Parts)
         {
-            _ = segment switch
+            _ = part switch
             {
                 SqlSegment.Text written  => Append(written.Sql),
                 SqlSegment.Column column => Append(column.Path, ColumnMark),
                 SqlSegment.Raw raw       => Append(raw.Sql, RawMark),
+                _                        => Append(Number(part).ToString(System.Globalization.CultureInfo.InvariantCulture), LambdaMark),
             };
         }
 
         return text.ToString();
 #pragma warning restore SK9001
 
+        int Number(object lambda)
+        {
+            var index = lambdas.IndexOf(lambda);
+            if (index >= 0) return index;
+            lambdas.Add(lambda);
+            return lambdas.Count - 1;
+        }
+
         StringBuilder Append(string content, char? mark = null)
         {
             if (mark is { } opening) text.Append(opening);
             foreach (var ch in content)
             {
-                if (ch is Escape or ColumnMark or RawMark) text.Append(Escape);
+                if (ch is Escape or ColumnMark or RawMark or LambdaMark) text.Append(Escape);
                 text.Append(ch);
             }
 

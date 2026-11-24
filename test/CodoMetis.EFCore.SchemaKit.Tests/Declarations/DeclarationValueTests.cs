@@ -28,9 +28,15 @@ public sealed class DeclarationValueTests
         public DateOnly? RevokedOn { get; set; }
     }
 
-    private static KeyTarget Key<T>(Expression<Func<Person, T>> key) => KeyTarget.Of(key, SqlSpelling.PostgreSql);
+    // What the factories return is not SQL until a model is finalized. These tests are about the
+    // SQL, so each value is bound as the convention binds it.
+    private static KeyTarget Key<T>(Expression<Func<Person, T>> key)
+        => KeyTarget.Of(key, SqlSpelling.PostgreSql) is KeyTarget.Template template ? new KeyTarget.Template(Bound(template.Sql)) : KeyTarget.Of(key, SqlSpelling.PostgreSql);
 
-    private static Predicate Where<T>(Expression<Func<T, bool>> condition) => Predicate.Of(condition, SqlSpelling.PostgreSql);
+    private static SqlTemplate Bound(SqlTemplate template)
+        => template.Bind(lambda => CodoMetis.EFCore.SchemaKit.Metadata.Internal.DeclarationBinder.Bind(lambda, null!));
+
+    private static Predicate Where<T>(Expression<Func<T, bool>> condition) => new(Bound(Predicate.Of(condition, SqlSpelling.PostgreSql).Template));
 
     [TestMethod]
     public void A_lambda_that_names_a_property_is_a_column()
@@ -143,6 +149,74 @@ public sealed class DeclarationValueTests
     [DataRow("({A} = 'it''s (') AND ({C})", "{C}", "({A} = 'it''s (') AND ({C})")]
     public void Only_a_conjunct_And_itself_wrote_is_taken_for_one(string template, string added, string expected)
         => Assert.AreEqual(expected, new Predicate(SqlTemplate.FromPlaceholders(template)).And(new Predicate(SqlTemplate.FromPlaceholders(added))).Template.ToString());
+
+    // ---- a lambda between the call and the finalized model ---------------------------------------------
+
+    /// <summary>
+    /// A lambda is SQL when its model is finalized (issue 114). Until then the value holds the
+    /// lambda: it says so, shows the lambda in a message, and refuses to hand out segments.
+    /// </summary>
+    [TestMethod]
+    public void A_lambda_is_not_sql_where_it_is_written()
+    {
+        var condition = Predicate.Of<Person>(x => x.RevokedOn == null, SqlSpelling.PostgreSql);
+        var expression = (KeyTarget.Template)KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name.ToLower()), SqlSpelling.PostgreSql);
+
+        Assert.IsFalse(condition.Template.IsBound);
+        Assert.IsFalse(expression.Sql.IsBound);
+        Assert.AreEqual("x => (x.RevokedOn == null)", condition.Template.ToString());
+        StringAssert.Contains(
+            Assert.ThrowsExactly<InvalidOperationException>(() => condition.Template.Segments).Message,
+            "a lambda becomes SQL when its model is finalized");
+
+        Assert.IsTrue(Bound(condition.Template).IsBound);
+        Assert.IsTrue(SqlTemplate.FromPlaceholders("{A}").IsBound);
+    }
+
+    /// <summary>A lambda that names a property and nothing else is a path, and a path waits for nothing.</summary>
+    [TestMethod]
+    public void A_lambda_that_is_one_property_is_a_column_at_once()
+        => Assert.AreEqual(new KeyTarget.Column("Name"), KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name), SqlSpelling.PostgreSql));
+
+    /// <summary>
+    /// Two lambdas are one value when their trees are, which is what lets a declaration said twice
+    /// be refused where it is written. A value read from outside the lambda is part of the tree
+    /// as the value it had at the call.
+    /// </summary>
+    [TestMethod]
+    public void Two_lambdas_that_say_the_same_are_one_value()
+    {
+        var tag = "blocked";
+        var literal = Predicate.Of<Person>(x => x.Tag != "blocked", SqlSpelling.PostgreSql);
+        var captured = Predicate.Of<Person>(x => x.Tag != tag, SqlSpelling.PostgreSql);
+
+        Assert.AreEqual(literal, captured);
+        Assert.AreEqual(literal.GetHashCode(), captured.GetHashCode());
+        Assert.AreNotEqual(literal, Predicate.Of<Person>(x => x.Tag != "other", SqlSpelling.PostgreSql));
+
+        // The local changes after the call; the declaration does not.
+        tag = "other";
+        Assert.AreEqual(literal, captured);
+        Assert.AreEqual("({Tag} <> 'blocked' OR {Tag} IS NULL)", Bound(captured.Template).ToString());
+    }
+
+    /// <summary>A convention adds a condition to one that is not bound yet, and adding it again changes nothing.</summary>
+    [TestMethod]
+    public void And_adds_to_a_lambda_that_is_not_bound()
+    {
+        var active = Predicate.Of<Person>(x => x.RevokedOn == null, SqlSpelling.PostgreSql);
+        var ranked = Predicate.Of<Person>(x => x.Rank > 0, SqlSpelling.PostgreSql);
+        var byHand = new Predicate(SqlTemplate.FromPlaceholders("{Tag} IS NOT NULL"));
+
+        Assert.AreEqual(active, active.And(Predicate.Of<Person>(x => x.RevokedOn == null, SqlSpelling.PostgreSql)));
+        Assert.AreEqual(active.And(ranked), active.And(ranked).And(ranked));
+        Assert.AreEqual(active.And(byHand), active.And(byHand).And(byHand));
+        Assert.AreNotEqual(active.And(ranked), active.And(ranked).And(active));
+
+        Assert.IsFalse(active.And(byHand).Template.IsBound);
+        Assert.AreEqual("({RevokedOn} IS NULL) AND ({Rank} > 0)", Bound(active.And(ranked).Template).ToString());
+        Assert.AreEqual("({RevokedOn} IS NULL) AND ({Tag} IS NOT NULL)", Bound(active.And(byHand).Template).ToString());
+    }
 
     /// <summary>
     /// SQL written by hand is never taken for what <c>And</c> wrote, whatever it reads like: its

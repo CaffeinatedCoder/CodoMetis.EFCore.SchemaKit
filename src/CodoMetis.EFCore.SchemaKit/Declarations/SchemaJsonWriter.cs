@@ -36,18 +36,21 @@ public sealed class SchemaJsonWriter
     private readonly bool _forIdentity;
     private readonly bool _silent;
 
-    internal SchemaJsonWriter(Utf8JsonWriter json, bool forIdentity)
-        : this(json, new HashSet<string>(StringComparer.Ordinal), root: true, forIdentity, silent: false)
+    private readonly TemplateWriting _templates;
+
+    internal SchemaJsonWriter(Utf8JsonWriter json, bool forIdentity, TemplateWriting templates)
+        : this(json, new HashSet<string>(StringComparer.Ordinal), root: true, forIdentity, silent: false, templates)
     {
     }
 
-    private SchemaJsonWriter(Utf8JsonWriter json, HashSet<string> names, bool root, bool forIdentity, bool silent)
+    private SchemaJsonWriter(Utf8JsonWriter json, HashSet<string> names, bool root, bool forIdentity, bool silent, TemplateWriting templates)
     {
         _json = json;
         _names = names;
         _root = root;
         _forIdentity = forIdentity;
         _silent = silent;
+        _templates = templates;
     }
 
     /// <summary>
@@ -55,7 +58,7 @@ public sealed class SchemaJsonWriter
     /// stored like everything else and left out of the declaration's identity, so two declarations
     /// that differ only here are one object.
     /// </summary>
-    public SchemaJsonWriter Operational => new(_json, _names, _root, _forIdentity, silent: _silent || _forIdentity);
+    public SchemaJsonWriter Operational => new(_json, _names, _root, _forIdentity, silent: _silent || _forIdentity, _templates);
 
     /// <summary>A string.</summary>
     public void String(string name, string value)
@@ -128,6 +131,21 @@ public sealed class SchemaJsonWriter
 
     private void WriteTemplate(string name, SqlTemplate value)
     {
+        if (!value.IsBound)
+        {
+            // Asked of the stored value, where an operational property is written too.
+            _templates.SawUnbound = true;
+
+            // What a message shows of a declaration that is not bound yet. It is never stored.
+            if (_templates.Bind is null && _templates.AsWritten)
+            {
+                _json.WriteCanonicalString(name, value.ToString());
+                return;
+            }
+
+            value = value.Bind(_templates.Bind ?? throw new InvalidOperationException(SchemaKitStrings.DeclarationNotBound(value.ToString())));
+        }
+
         _json.WriteStartArray(name);
         foreach (var segment in value.Segments)
         {
@@ -191,7 +209,7 @@ public sealed class SchemaJsonWriter
         _json.WriteEndArray();
     }
 
-    private SchemaJsonWriter Nested() => new(_json, new HashSet<string>(StringComparer.Ordinal), root: false, _forIdentity, _silent);
+    private SchemaJsonWriter Nested() => new(_json, new HashSet<string>(StringComparer.Ordinal), root: false, _forIdentity, _silent, _templates);
 
     /// <summary>Checks the name and says whether the property is written at all.</summary>
     private bool Claim(string name)
@@ -209,6 +227,19 @@ public sealed class SchemaJsonWriter
 }
 
 /// <summary>The property names of a stored declaration that are the kernel's.</summary>
+/// <summary>What a writer does with a template that holds a lambda which is not bound yet.</summary>
+internal sealed class TemplateWriting
+{
+    /// <summary>Makes segments of a lambda. With it, a declaration is written as it is stored.</summary>
+    public Func<Translation.Internal.UnboundLambda, SqlTemplate>? Bind { get; init; }
+
+    /// <summary>Without <see cref="Bind" />: write the lambda as C# prints it, for a message, where the writer otherwise refuses.</summary>
+    public bool AsWritten { get; init; }
+
+    /// <summary>Whether the declaration that was written holds such a template, in any property.</summary>
+    public bool SawUnbound { get; set; }
+}
+
 internal static class DeclarationCodecNames
 {
     public const string Kind = "$kind";

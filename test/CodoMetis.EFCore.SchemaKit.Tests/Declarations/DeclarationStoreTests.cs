@@ -251,7 +251,7 @@ public sealed class DeclarationStoreTests
         forward.Declare(declarations);
         backward.Declare(declarations.Reverse());
 
-        var byKey = declarations.OrderBy(DeclarationCodec.Key, StringComparer.Ordinal).ToList();
+        var byKey = declarations.OrderBy(d => DeclarationCodec.Key(d), StringComparer.Ordinal).ToList();
         CollectionAssert.AreEqual(byKey, forward.GetDeclarations<TestGuard>().ToList());
         CollectionAssert.AreEqual(byKey, backward.GetDeclarations<TestGuard>().ToList());
 

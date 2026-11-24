@@ -173,6 +173,17 @@ internal static class SchemaKitStrings
     public static string SegmentNotAPropertyPath(string path)
         => $"'{path}' is not a property path. A path is property names separated by dots, such as 'Address.City'.";
 
+    public static string TemplateNotBound(string template)
+        => $"The SQL of '{template}' is not there yet: a lambda becomes SQL when its model is finalized. Read the declaration from the " +
+           "finalized model, or compare and combine it as it is.";
+
+    public static string DeclarationNotBound(string declaration)
+        => $"The declaration {declaration} holds a lambda that is not bound, and its stored form was asked for. That is a defect in SchemaKit.";
+
+    public static string BoundToOneKey(string entity, string first, string second)
+        => $"Two declarations on {entity} are one object: {first} and {second} were written differently and are the same once their " +
+           "lambdas are SQL. Remove one of them; a declaration never replaces another.";
+
     public const string TemplateWithoutSegments = "SQL in a declaration has at least one segment.";
 
     public static string NotAPropertyPath(string entity, string path)

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
+using CodoMetis.EFCore.SchemaKit.Translation.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit.Declarations.Internal;
 
@@ -50,27 +51,43 @@ internal static class DeclarationCodec
         return parts.Length == 3 && parts[1].Length > 0 && parts[2].Length > 0 ? parts[1] : null;
     }
 
-    public static string Key(ISchemaObject declaration)
+    /// <summary>
+    /// Whether the declaration holds a lambda that is not bound yet. Its stored form does not exist
+    /// until its model is finalized; its name, if it has one, is its key already.
+    /// </summary>
+    public static bool IsUnbound(ISchemaObject declaration)
+    {
+        Validate(declaration);
+        TemplateWriting templates = new() { AsWritten = true };
+        Json(declaration, forIdentity: false, templates);
+        return templates.SawUnbound;
+    }
+
+    /// <param name="declaration">The declaration.</param>
+    /// <param name="bind">What makes segments of a lambda, for a declaration that is not bound yet; null for one that is.</param>
+    public static string Key(ISchemaObject declaration, Func<UnboundLambda, SqlTemplate>? bind = null)
     {
         Validate(declaration);
         var identity = declaration.Name is { } name
             ? $"name\n{declaration.Kind}\n{Fold(name, declaration.NameComparison)}"
-            : $"content\n{declaration.Kind}\n{Json(declaration, forIdentity: true)}";
+            : $"content\n{declaration.Kind}\n{Json(declaration, forIdentity: true, new TemplateWriting { Bind = bind })}";
 
         return KeyPrefix(declaration.Owner) + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..16];
     }
 
-    public static string Value(ISchemaObject declaration)
+    /// <param name="declaration">The declaration.</param>
+    /// <param name="bind">What makes segments of a lambda, for a declaration that is not bound yet; null for one that is.</param>
+    public static string Value(ISchemaObject declaration, Func<UnboundLambda, SqlTemplate>? bind = null)
     {
         Validate(declaration);
-        return Json(declaration, forIdentity: false);
+        return Json(declaration, forIdentity: false, new TemplateWriting { Bind = bind });
     }
 
-    /// <summary>What a message calls the declaration: its owner, its kind, and its name or its content.</summary>
+    /// <summary>What a message calls the declaration: its owner, its kind, and its name or its content, a lambda as C# prints it.</summary>
     public static string Describe(ISchemaObject declaration)
         => declaration.Name is { } name
             ? $"{declaration.Owner} {declaration.Kind} '{name}'"
-            : $"{declaration.Owner} {declaration.Kind} {Json(declaration, forIdentity: true)}";
+            : $"{declaration.Owner} {declaration.Kind} {Json(declaration, forIdentity: true, new TemplateWriting { AsWritten = true })}";
 
     public static bool SameName(string left, string right, SchemaNameComparison comparison)
         => string.Equals(Fold(left, comparison), Fold(right, comparison), StringComparison.Ordinal);
@@ -186,7 +203,7 @@ internal static class DeclarationCodec
             throw new InvalidOperationException(SchemaKitStrings.InvalidEpoch(declaration.Owner, declaration.Kind, declaration.Epoch));
     }
 
-    private static string Json(ISchemaObject declaration, bool forIdentity)
+    private static string Json(ISchemaObject declaration, bool forIdentity, TemplateWriting templates)
     {
         using var stream = new MemoryStream();
         using (var json = new Utf8JsonWriter(stream, Options))
@@ -200,7 +217,7 @@ internal static class DeclarationCodec
                 if (declaration.Name is { } name) json.WriteCanonicalString(DeclarationCodecNames.Name, name);
             }
 
-            declaration.Write(new SchemaJsonWriter(json, forIdentity));
+            declaration.Write(new SchemaJsonWriter(json, forIdentity, templates));
             json.WriteEndObject();
         }
 

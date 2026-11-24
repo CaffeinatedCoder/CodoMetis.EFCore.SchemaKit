@@ -254,6 +254,30 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   a package turns its own text or a 5.x filter into segments, never in what is stored.
 - **`v` is 3.** A `v` of 2 is `11.0.0-preview.1`'s, SQL as one string, and is refused with a
   message that says to scaffold again: what a string leaves out cannot be read back (#9).
+- **A declaration with a lambda is held as it was written until its model is finalized** (#179,
+  the second slice of #114; measured first in spike F). `SqlTemplate.IsBound` says which state a
+  template is in; unbound it compares by its lambda's tree, is added to with `And`, shows the
+  lambda in `ToString()` and refuses `Segments`. `UnboundLambda.Of` makes every value the lambda
+  reads from outside a constant, at the call: left in the tree, a local would be read when the
+  model is finalized. The entity type holds the declaration itself as the annotation's value:
+  under its final key when it has a name, and otherwise under `CodoMetis:{Owner}:~{number}`,
+  numbered in the order written, which no stored key can be.
+- **`SchemaKitBindingConvention` binds, last among the finalizing conventions.** It writes each
+  held declaration with a writer that makes segments of its lambdas, and stores key and value as
+  for any other. The contributor's `Write` is all it needs, so the contract has no member for
+  binding. A finalized model, its runtime model, a snapshot and a compiled model hold text
+  alone, and a snapshot's model is finalized without the convention.
+- **The refusal of a repeated declaration has two moments.** At the call: a name that is taken,
+  bound or not, and a declaration without a name that equals one already held, lambda trees
+  included. When the model is finalized: two that were written differently and are one key once
+  they are SQL, named in the order written, against each other or against one stored already.
+- **`GetDeclarations`, `FindDeclaration` and `Redeclare` work in both states.** Before the model
+  is finalized they hand out the declarations as written; `Redeclare` keeps a held declaration's
+  place. `DeclarationCodec.Key` and `Value` take what binds a lambda, and without it refuse a
+  declaration that is not bound.
+- **Nothing in the contract binds a lambda without a model.** A package's test of what a lambda
+  is spelled as declares it on a model and reads it from the finalized one, as
+  `Harness/Bound.cs` of the second provider's tests does.
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
 - **A contributor derives from `SchemaContributor<,>`.** The interface is what the kernel calls, not
@@ -387,8 +411,11 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
 - **It is 5.x's translator, ported with its rules unchanged.** Each comment in it that names a
   failure records one that happened. Do not simplify a rule because it looks redundant: a stored
   template must come out the same, and `LambdaTranslatorTests` holds each one.
-- **A lambda becomes a template where it is written,** with `{Path}` placeholders the resolver
-  fills in. No service is needed, which is what lets a declaration be a value in `OnModelCreating`.
+- **A lambda is checked where it is written and becomes SQL when its model is finalized** (#179).
+  The factory translates it once and throws the result away, so a refusal is still on the
+  consumer's line. No service is needed at either moment, which is what lets a declaration be a
+  value in `OnModelCreating`. The translator asks nothing of the model yet (#180), so both
+  translations are the same text.
 - **Spelled as the provider's queries spell it,** character for character: an index serves only a
   query whose expression matches it. The spellings are PostgreSQL's; SQL Server's come with #29.
 - **A comparison that can be NULL is written as EF Core writes it.** `x.Tag != "blocked"` keeps the

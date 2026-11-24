@@ -12,6 +12,7 @@ One section per version, newest first, in the form
 
 - SQL in a declaration is stored as segments, format `v` 3: text, and each column by its property path. A model snapshot scaffolded with `11.0.0-preview.1` is refused with a message that says so; remove the migrations scaffolded with the preview and scaffold them again ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
 - `Predicate` and `KeyTarget.Template` hold a `SqlTemplate` and are no longer made from a string. In the contract, `SchemaResolver.Template` takes a `SqlTemplate`, and `SchemaJsonWriter` and `SchemaJsonReader` have `Template` and `OptionalTemplate` ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
+- A lambda in a declaration becomes SQL when its model is finalized, and is checked where it is written as before. Until then `GetDeclarations`, `FindDeclaration` and `Redeclare` hand out the declaration as it was written, and `SqlTemplate.IsBound` is false for its lambdas. Two declarations without a name that are written differently and are the same SQL are refused when the model is finalized, where they were refused at the second call ([#179](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/179)).
 
 ### Changed
 
