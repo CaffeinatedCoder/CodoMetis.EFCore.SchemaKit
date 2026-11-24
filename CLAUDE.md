@@ -102,11 +102,11 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
    apply time from the model present then.
 6. **A declaration never replaces another silently.** `Declare` throws on a repeated key;
    `Redeclare` is the only replacing path.
-7. **Templates at declaration, epochs for resolution.** A lambda becomes provider-specific
-   placeholder text where it is written. Changing how a path resolves needs a new epoch, and the
-   golden corpus fails the build without one.
-   **Decided 2026-11-24 (#114), not built yet:** a lambda is checked where it is written, bound
-   when the model is finalized and stored as segments. Until that lands the code does the above.
+7. **Checked at declaration, bound at finalization, epochs for resolution** (#114, decided
+   2026-11-24). A lambda is checked where it is written and becomes provider-specific SQL when
+   its model is finalized, stored as segments and never rendered again from a tree. Changing how
+   a path resolves needs a new epoch, and the golden corpus fails the build without one. The
+   binding reads nothing from the model yet (#180).
 8. **Contributors answer `Plan` and `ImpactOf`,** both mandatory, both closed unions.
 9. **No `IF EXISTS` on a drop, no `DROP … IF EXISTS` before an `ADD`.** A collision fails.
 10. **A declaration for a provider that is not the active one is an error,** unless the options
