@@ -18,7 +18,7 @@ SPIKE_PG="Host=localhost;Username=postgres;Password=…;Database=spike_b" spikes
 
 The script packs spike A's kit (`SpikeKit.Package/`), copies `consumer/` to a directory **outside the
 repository**, restores it through a private package cache and package source mapping, and drives the
-real `dotnet ef` (11.0.0-rc.3). Each row is judged by scaffolded content or by what the database
+real `dotnet ef` (11.0.0; first on 11.0.0-rc.3). Each row is judged by scaffolded content or by what the database
 holds. The kit's statement is a real `CREATE INDEX`, so "the database holds both indexes" is read
 from the catalog.
 

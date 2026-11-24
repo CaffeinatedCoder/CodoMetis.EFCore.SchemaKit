@@ -31,9 +31,6 @@
         <PackageReference Include="CodoMetis.EFCore.SchemaKit" Version="$(SchemaKitVersion)" Condition="'$(SpikeProvider)' != 'NPGSQL'" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(NpgsqlEfVersion)" Condition="'$(SpikeProvider)' == 'NPGSQL'" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="$(EfVersion)" Condition="'$(SpikeProvider)' == 'SQLSERVER'" />
-        <!-- Not used by this project: as in spike B's consumer, Microsoft.EntityFrameworkCore.SqlServer
-             brings a System.Security.Cryptography.Pkcs with two advisories (issue 67). -->
-        <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.23" Condition="'$(SpikeProvider)' == 'SQLSERVER'" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(EfVersion)" Condition="'$(SpikeProvider)' == 'SQLITE'" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EfVersion)" PrivateAssets="all" />
     </ItemGroup>

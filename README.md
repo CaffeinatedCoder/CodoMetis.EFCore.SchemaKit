@@ -118,10 +118,11 @@ members), and SchemaKit leaves those to them.
 ## Platform
 
 - .NET 11 (`net11.0`).
-- EF Core 11 and `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`. Npgsql's rc.3 depends on
-  EF Core `11.0.0-rc.3.26522.148` exactly, so the packages are built against that, and SchemaKit
-  ships previews until Npgsql ships 11.0.0. A project that references EF Core 11.0.0 beside it
-  restores with `NU1608` warnings from Npgsql's pin, and 11.0.0 is what it resolves.
+- EF Core 11 and `Npgsql.EntityFrameworkCore.PostgreSQL` 11, from 11.0.0 of both. The packages
+  are built and tested against 11.0.0.
+- `11.0.0-preview.1` was built against Npgsql's `11.0.0-rc.3`, and that is what it restores by
+  itself. A project that references `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0 beside it
+  restores EF Core 11.0.0 and Npgsql 11.0.0 without a warning.
 - PostgreSQL 16 and 18, the two versions CI runs on.
 
 ## Build

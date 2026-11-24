@@ -66,8 +66,8 @@ dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
 # The consumer smoke test, on the server SCHEMAKIT_TEST_PG names; a folder of .nupkg as the argument tests those
 SCHEMAKIT_TEST_PG="Host=localhost;Username=postgres;Password=…;Database=postgres" test/ConsumerSmokeTest/run.sh
 
-# The same with the consumer on another EF Core than the packages reference (NU1608 where a package pins it)
-SMOKE_EF_VERSION=11.0.0 SCHEMAKIT_TEST_PG="…" test/ConsumerSmokeTest/run.sh
+# The same with the consumer on a later EF Core than the packages' floor
+SMOKE_EF_VERSION=<version> SCHEMAKIT_TEST_PG="…" test/ConsumerSmokeTest/run.sh
 
 # Spike B, the first version of the consumer smoke test; SPIKE_PG turns on the PostgreSQL paths
 spikes/B.DesignTime/run.sh
@@ -656,13 +656,17 @@ A guard is not done until it has been shown to fail without what it guards.
 
 ## Upstream pins
 
-Npgsql EF `11.0.0-rc.3` depends on EF Core `[11.0.0-rc.3.26522.148]`, exactly. Every EF reference
-in the repository stays on rc.3 until Npgsql ships 11.0.0, although EF Core 11.0.0 is out. A stable
-package cannot depend on a prerelease, so SchemaKit ships previews until then.
+Npgsql EF 11.0.0 depends on EF Core `[11.0.0, 12.0.0)`, and the two packages reference their
+upstream by the same range: the kernel `Microsoft.EntityFrameworkCore.Relational`, the PostgreSQL
+package `Npgsql.EntityFrameworkCore.PostgreSQL` (#174). Every test project, the probes and the
+spikes reference 11.0.0, the floor: what is tested is the lowest version the packages promise.
+Nothing upstream is a prerelease any more, so nothing upstream keeps SchemaKit one.
 
-A consumer that references EF Core 11.0.0 directly gets NU1608 for Npgsql's pin and a build. The
-smoke test passed every row that way on 2026-11-14 (`SMOKE_EF_VERSION=11.0.0`, PostgreSQL 18.4,
-#143): it says such a consumer works, not that the pins may move.
+Npgsql EF 11.0.0 brings the driver Npgsql 11.0.0; rc.3 ran on 10.0.3.
+
+The published `11.0.0-preview.1` depends on rc.3. A consumer that references Npgsql EF 11.0.0
+beside it restores 11.0.0 of everything without a warning (measured 2026-11-24, restore and build
+only).
 
 The probes drive Roslyn `5.12.0-1.26504.105` from the dotnet-tools feed
 (`test/SchemaKit.ApiProbes/nuget.config` says why).

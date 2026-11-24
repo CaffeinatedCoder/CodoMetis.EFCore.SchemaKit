@@ -22,9 +22,8 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <!-- rc.3 pins EF Core to [11.0.0-rc.3.26522.148]. Everything stays on rc.3 until Npgsql
-             ships 11.0.0. -->
-        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
+        <!-- The floor of the packages, as in the solution. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0" />
         <!-- The compiler the probes drive in-process: the one the rc.2 SDK ships, from the
              dotnet-tools feed (see nuget.config for why not nuget.org's 5.9.0). -->
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0-1.26504.105" />

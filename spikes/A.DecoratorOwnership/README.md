@@ -15,7 +15,8 @@ dotnet test spikes/A.DecoratorOwnership/A.DecoratorOwnership.csproj
 ```
 
 No database is contacted: models are built and create scripts generated offline, on EF Core
-`11.0.0-rc.3` (Npgsql's pin).
+11.0.0 (run again on 2026-11-24, when Npgsql EF 11.0.0 moved the floors; before that on
+`11.0.0-rc.3`).
 
 ## What it takes
 

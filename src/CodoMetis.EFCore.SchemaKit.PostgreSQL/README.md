@@ -24,7 +24,7 @@ The migration adds `btree_gist` when an element needs it, then the constraint, a
 The package depends on
 [CodoMetis.EFCore.SchemaKit](https://www.nuget.org/packages/CodoMetis.EFCore.SchemaKit) at exactly
 its own version; update the two together. It is built against EF Core 11 and
-`Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`.
+`Npgsql.EntityFrameworkCore.PostgreSQL` 11, from 11.0.0 of both.
 
 This is a preview. Any API may change between previews, and so may the stored form of a
 declaration in the model snapshot: a later preview may ask for the migrations to be scaffolded

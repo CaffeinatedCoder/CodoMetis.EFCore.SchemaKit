@@ -46,8 +46,8 @@
     </Target>
 
     <ItemGroup>
-        <!-- rc.3 pins EF Core to [11.0.0-rc.3.26522.148]; the floor moves to 11.0.0 when Npgsql ships its own. -->
-        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0-rc.3" />
+        <!-- The range Npgsql EF 11.0.0 gives EF Core itself: this major, from its first release. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="[11.0.0, 12.0.0)" />
     </ItemGroup>
 
     <!-- The package's own README, which is what nuget.org shows. Its links are absolute: nuget.org
