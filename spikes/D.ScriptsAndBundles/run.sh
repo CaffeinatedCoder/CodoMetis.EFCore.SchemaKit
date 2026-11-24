@@ -127,6 +127,10 @@ echo "Work directory: $work"
 echo
 
 export NUGET_PACKAGES=$work/packages
+# The SDK records where a local tool's files are under its home, by tool and version, and keeps an
+# entry whose folder is gone: a later run then finds no dotnet-ef (issue 175). A home of the run's
+# own goes with the run.
+export DOTNET_CLI_HOME=$work/home
 cp "$root/global.json" "$work/global.json"
 cat > "$work/nuget.config" <<EOF
 <?xml version="1.0" encoding="utf-8"?>

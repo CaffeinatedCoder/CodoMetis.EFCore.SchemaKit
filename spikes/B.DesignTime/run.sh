@@ -18,8 +18,11 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 here=$root/spikes/B.DesignTime
 work=${1:-$(mktemp -d)}
 mkdir -p "$work"
-work=$(cd "$work" && pwd)
-case "$work/" in "$root"/*) echo "The work directory must be outside the repository: $work" >&2; exit 2 ;; esac
+# The physical path, as in spike D and the consumer smoke test: on macOS mktemp's folder is under a
+# symbolic link, dotnet ef builds the project under the resolved path, and the next build under
+# the other spelling takes that build's deps.json and runtimeconfig.json for another's and deletes them.
+work=$(cd "$work" && pwd -P)
+case "$work/" in "$(cd "$root" && pwd -P)"/*) echo "The work directory must be outside the repository: $work" >&2; exit 2 ;; esac
 
 ef_version=11.0.0
 results=$work/results.md
@@ -40,6 +43,10 @@ none_in() { local file=$1; shift; for needle in "$@"; do grep -qF -- "$needle" "
 # ---- the feed -------------------------------------------------------------------------------------
 
 export NUGET_PACKAGES=$work/packages
+# The SDK records where a local tool's files are under its home, by tool and version, and keeps an
+# entry whose folder is gone: a later run then finds no dotnet-ef (issue 175). A home of the run's
+# own goes with the run.
+export DOTNET_CLI_HOME=$work/home
 export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
 feed=$work/feed
 rm -rf "$feed"
