@@ -21,7 +21,7 @@ mkdir -p "$work"
 work=$(cd "$work" && pwd)
 case "$work/" in "$root"/*) echo "The work directory must be outside the repository: $work" >&2; exit 2 ;; esac
 
-ef_version=11.0.0-rc.3.26522.148
+ef_version=11.0.0
 results=$work/results.md
 failures=0
 : > "$results"

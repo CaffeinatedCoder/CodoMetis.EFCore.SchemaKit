@@ -356,7 +356,8 @@ Measured in the review of 2026-11-14 and checked again since.
   in `grants` with its constraints: Npgsql writes `SET SCHEMA` only when the new schema is not
   null. A constraint rebuilt in the same migration fails with `42P01`. This is the Down of every
   move into a schema. It is Npgsql's to fix; #105 tracks the report upstream.
-- **EF Core 11.0.0 beside Npgsql's rc.3.** `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0-rc.3
-  depends on EF Core `11.0.0-rc.3.26522.148` exactly. A project that references EF Core 11.0.0
-  restores with `NU1608` warnings, one per EF Core package Npgsql pins that the project lifts, and
-  11.0.0 is what resolves. SchemaKit is built against rc.3.
+- **`11.0.0-preview.1` restores Npgsql's rc.3.** It was built against
+  `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`, which depends on EF Core
+  `11.0.0-rc.3.26522.148` exactly. Reference `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0 in the
+  project as well: it then restores EF Core 11.0.0 and Npgsql 11.0.0 without a warning. The
+  packages after `preview.1` reference 11.0.0 themselves.

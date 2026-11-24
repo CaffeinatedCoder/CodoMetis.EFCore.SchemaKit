@@ -637,8 +637,10 @@ yes), Q10 and Q11 (TypeKit on .NET 11), Q13 (operator classes typed by CLR type)
 
 ## 8. What stays uncertain
 
-- Spikes A and B passed, on EF Core `11.0.0-rc.3`. They have to be run again when Npgsql ships
-  11.0.0 and the floors move, since both rest on EF's composition order, which no API promises.
+- Spikes A and B passed, on EF Core `11.0.0-rc.3`, and again on 11.0.0 on 2026-11-24, when Npgsql
+  shipped 11.0.0 and the floors moved (#174): A's 69 conditions, and every path of B, those on
+  PostgreSQL 18 included. Both rest on EF's composition order, which no API promises, so a later EF Core
+  can still move it.
 - Spike B's SQL Server consumer ran the paths that need no database only.
 - Nothing here was compiled against the GA SDK.
 - Npgsql's rc.3 facts come from its source and tests, not from a run on this machine.
