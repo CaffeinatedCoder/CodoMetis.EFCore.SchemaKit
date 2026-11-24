@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        Spike F (#177, for #114): can a declaration be bound when the model is finalized, and what
+        does a convention see there?
+
+        Throwaway code. SpikeKit.cs is what the kernel would do, in miniature, on EF Core alone;
+        Questions.cs is one test per question of the issue, on Npgsql, SQL Server and SQLite. No
+        database is contacted: models are built and snapshots scaffolded offline.
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>SchemaKit.Spikes.F</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- EF Core and Npgsql EF at one version: the floor of the packages. -->
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0" />
+        <PackageReference Include="MSTest" Version="4.5.2" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    </ItemGroup>
+
+</Project>

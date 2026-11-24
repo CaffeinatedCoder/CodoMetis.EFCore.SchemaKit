@@ -24,7 +24,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedOtherKinds/` of one with the kinds nothing reads yet (indexes, a temporal constraint). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
 | `test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests` | The second provider (#119): two contributors nobody ships, written against the kernel's public contract alone, since the kernel grants the assembly no `InternalsVisibleTo`. A filtered nonclustered index with included columns on SQL Server and an index on an expression on SQLite, each with a dialect, and their tests: the SQL Server one on a live SQL Server 2022 (`Integration/`), the SQLite one on a database file. A comment that begins `Audit:` marks what the contract could not say |
-| `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, and E, the impact table of the plan's section 3.7 measured on live servers. B is the consumer smoke test until the real one replaces it |
+| `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, E, the impact table of the plan's section 3.7 measured on live servers, and F, which binds a declaration when the model is finalized and says what a convention sees there (no type mapping on a property yet: the mapping source is asked), for #114. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
 | `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing. `Mixed/` references the kernel at another version than the PostgreSQL package's, which NuGet builds with NU1608, and must be refused (#113) |
@@ -78,6 +78,9 @@ spikes/D.ScriptsAndBundles/run.sh
 
 # Spike E, the impact table; SPIKE_E_PG16, SPIKE_E_PG18 and SPIKE_E_MSSQL are connection strings (its README)
 dotnet test spikes/E.ImpactTable/E.ImpactTable.csproj
+
+# Spike F, binding at model finalization; no server
+dotnet test spikes/F.Binder/F.Binder.csproj
 ```
 
 `global.json` pins SDK `11.0.100` with `rollForward: latestPatch`. A machine with only a prerelease
@@ -102,6 +105,8 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
 7. **Templates at declaration, epochs for resolution.** A lambda becomes provider-specific
    placeholder text where it is written. Changing how a path resolves needs a new epoch, and the
    golden corpus fails the build without one.
+   **Decided 2026-11-24 (#114), not built yet:** a lambda is checked where it is written, bound
+   when the model is finalized and stored as segments. Until that lands the code does the above.
 8. **Contributors answer `Plan` and `ImpactOf`,** both mandatory, both closed unions.
 9. **No `IF EXISTS` on a drop, no `DROP … IF EXISTS` before an `ADD`.** A collision fails.
 10. **A declaration for a provider that is not the active one is an error,** unless the options
