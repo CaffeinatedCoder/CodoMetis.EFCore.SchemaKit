@@ -388,7 +388,7 @@ public static class Models
             new PgExclusion.Gist(
             [
                 .. pg.Equal(x => x.GranteeId).Overlaps(x => x.Period).Elements,
-                new ExclusionElement(new KeyTarget.Template("lower(\"Note\")"), new ExclusionOperator("=")),
+                new ExclusionElement(new KeyTarget.Template(SqlTemplate.Raw("lower(\"Note\")")), new ExclusionOperator("=")),
             ]) { Name = OverNotes },
         ]);
     }
@@ -495,7 +495,7 @@ public static class Models
     /// <summary><see cref="Scheduling" /> under its name with one more condition.</summary>
     public sealed class SchedulingWithAnotherCondition : ITestModel
     {
-        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod.AndWhere(new Predicate("{Note} IS NOT NULL"))]);
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [ActivePeriod.AndWhere(new Predicate(SqlTemplate.FromPlaceholders("{Note} IS NOT NULL")))]);
     }
 
     /// <summary><see cref="Scheduling" /> under its name with another operator on the period: adjacent, not overlapping.</summary>

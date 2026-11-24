@@ -550,6 +550,6 @@ public sealed class SqlServerIndexMigrationTests
         var code = CodoMetis.EFCore.SchemaKit.Tests.Harness.Snapshots.Of(context).Code;
 
         StringAssert.Contains(code, "b.HasAnnotation(\"CodoMetis:Probe.SqlServerIndex:");
-        StringAssert.Contains(code, """{\"$kind\":\"nonclustered\",\"v\":2,\"r\":1,\"name\":\"IX_orders_open\",\"keys\":[\"CustomerId\"],\"include\":[\"Total\"],\"where\":\"{ShippedAt} IS NULL\",\"unique\":false}""");
+        StringAssert.Contains(code, """{\"$kind\":\"nonclustered\",\"v\":3,\"r\":1,\"name\":\"IX_orders_open\",\"keys\":[\"CustomerId\"],\"include\":[\"Total\"],\"where\":[{\"col\":\"ShippedAt\"},\" IS NULL\"],\"unique\":false}""");
     }
 }

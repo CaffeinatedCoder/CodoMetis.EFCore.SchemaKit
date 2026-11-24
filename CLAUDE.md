@@ -237,8 +237,18 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   takes a lambda without a spelling. A lambda that is one property is a
   `Column`, anything else a `Template`; the two are rendered and named differently.
   `Predicate.And` takes for a conjunct only what it wrote itself, `(…) AND (other)` with the
-  first parenthesis closing right before the `AND`: a hand-written `{A} OR {B} AND ({C})` ends the
-  same way and is no conjunction (#83).
+  first parenthesis closing right before the `AND`: `{A} OR {B} AND ({C})` ends the same way and
+  is no conjunction (#83). SQL written by hand is never taken for it, being another kind of segment.
+- **SQL in a declaration is a `SqlTemplate`: segments, stored as they are** (#178, the first slice
+  of #114). A string in the stored list is text a package wrote, which names no column;
+  `{"col":…}` is a column by its property path; `{"raw":…}` is SQL written by hand, which makes
+  the object read the whole table, also beside a column. A literal is package text.
+  `DeclarationCodecTests` holds the form verbatim, and every other shape is refused. The template
+  is unmarked and shows no SQL string; what makes one (`SqlTemplate.FromPlaceholders`, `Raw`, `Of`)
+  and its `Segments` are the contract's, marked on the member. `{Path}` is looked for once, where
+  a package turns its own text or a 5.x filter into segments, never in what is stored.
+- **`v` is 3.** A `v` of 2 is `11.0.0-preview.1`'s, SQL as one string, and is refused with a
+  message that says to scaffold again: what a string leaves out cannot be read back (#9).
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
 - **A contributor derives from `SchemaContributor<,>`.** The interface is what the kernel calls, not
@@ -422,10 +432,11 @@ what is still missing: JSON members, TPC).
   Refusing it there lets the first `migrations add` pass and fails every diff after it.
 - **The column is asked of the declared property** (`GetColumnName(storeObject)`), never looked up
   by name in the table.
-- **A placeholder is `{Path}` outside single-quoted literals, and only when the content is a
-  property path.** Everything else stays as written, array literals included.
-- **A fragment records what it reads,** and composition keeps it. SQL without a placeholder depends
-  on the whole table. `SqlFragment` still compares by its text alone.
+- **The resolver scans nothing.** A template arrives as segments: text is written as it is, a
+  column segment is resolved by its path.
+- **A fragment records what it reads,** and composition keeps it. SQL written by hand depends on
+  the whole table, beside the columns it names by a path; a package's own text on nothing.
+  `SqlFragment` still compares by its text alone.
 - **`StoreType(path)` is the column's type as the model states it,** asked of the declared
   property in the table like its column. A snapshot records it, so both sides answer alike.
 - **A default name is built from tokens, not from SQL:** a column's name, a template's letters and
@@ -452,7 +463,8 @@ what is still missing).
   without an error. It still delimits through Npgsql's helper, which writes a lower-case name bare:
   `ALTER TABLE role_grants`, not `"role_grants"`.
 - **`PgExclusion`'s stored form is a file format:** owner `Pg.Exclusion`, kinds `gist` and
-  `spgist`, an element's `column` or `sql` (exactly one) with its `op`, `where`, `deferral`.
+  `spgist`, an element's `column` or `sql` (exactly one, `sql` as segments) with its `op`,
+  `where` as segments, `deferral`.
   `PgExclusionDeclarationTests` holds two keys and two values verbatim.
 - **The stage types are the first guard, the `init` accessors the second.** `pg.Equal(…)` is an
   `ExclusionDraft<T>` that no factory takes; `with` and a snapshot go around the factory, so every
@@ -558,7 +570,7 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
 test project that hold them, ported from 5.x (#35). The guards of 5.x whose subject does not exist
 here yet are listed in #152, each with what has to exist first.
 
-- **The PostgreSQL package depends on the kernel at exactly its own version,** `[11.0.0-preview.1]`.
+- **The PostgreSQL package depends on the kernel at exactly its own version,** `[11.0.0-preview.2]`.
   Pack writes a project reference as a lower bound; the target `ExactKernelVersion` in the
   package's project file brackets it. It hooks `_GetProjectReferenceVersions`, a name of NuGet's
   that is no contract, so the test reads the packed `.nuspec` and not the project file.

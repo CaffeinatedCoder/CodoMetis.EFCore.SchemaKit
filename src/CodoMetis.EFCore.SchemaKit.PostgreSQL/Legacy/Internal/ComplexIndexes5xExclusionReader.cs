@@ -117,7 +117,7 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
         var described = name ?? string.Join(", ", elements.Select(element => element.Target switch
         {
             KeyTarget.Column column     => column.Path,
-            KeyTarget.Template template => template.Sql,
+            KeyTarget.Template template => template.Sql.ToString(),
         }));
 
         // The record refuses it too, as a declaration nobody should write. Here it is a constraint
@@ -138,7 +138,9 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
             // The epoch whose rules were measured against 5.x's, whatever a new declaration carries by then.
             Epoch = 1,
             Name = name,
-            Where = filter is null ? null : new Predicate(filter),
+            // Whether 5.x translated the filter from a lambda or took it as text, its format does not
+            // say. As text it may name a column outside a placeholder, so that is what it is read as.
+            Where = filter is null ? null : new Predicate(SqlTemplate.Raw(filter)),
 
             // 5.x wrote INITIALLY DEFERRED only for a deferrable constraint.
             Deferral = (deferrable, initiallyDeferred) switch
@@ -175,11 +177,12 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
         }
 
         // 5.x emitted an expression as it was written, in parentheses. It holds no placeholder: a
-        // brace outside a literal is not SQL, so no constraint in a database has one.
+        // brace outside a literal is not SQL, so no constraint in a database has one. It is SQL
+        // written by hand, whole.
         KeyTarget target = (path, expression) switch
         {
             ({ Length: > 0 }, null) => new KeyTarget.Column(path),
-            (null, { Length: > 0 }) => new KeyTarget.Template(expression),
+            (null, { Length: > 0 }) => new KeyTarget.Template(SqlTemplate.Of([new SqlSegment.Raw(expression)])),
             _                       => throw new InvalidOperationException(PgStrings.LegacyExclusionUnreadable(entity, "a part needs exactly one of 'path' and 'expr'")),
         };
 

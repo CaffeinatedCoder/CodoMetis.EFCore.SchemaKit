@@ -28,7 +28,7 @@ public static class People
     public const string Name = "IX_people_lower_name";
 
     /// <summary>People by their name without regard to case: an index on an expression, which EF Core has no API for.</summary>
-    public static readonly ProbeSqliteIndex ByLowerName = new(new KeyTarget.Template("lower({Name})")) { Name = Name };
+    public static readonly ProbeSqliteIndex ByLowerName = new(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Name})"))) { Name = Name };
 
     private static EntityTypeBuilder<Person> Persons(ModelBuilder modelBuilder, string table = "People")
         => modelBuilder.Entity<Person>().ToTable(table);
@@ -106,14 +106,14 @@ public static class People
     public sealed class IndexedByEmail : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template("lower({Email})")) { Name = Name });
+            => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Email})"))) { Name = Name });
     }
 
     /// <summary>The same index, and the column it reads altered.</summary>
     public sealed class IndexedByARequiredEmail : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template("lower({Email})")) { Name = Name })
+            => Persons(modelBuilder).DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Email})"))) { Name = Name })
                 .Property(x => x.Email).IsRequired();
     }
 
@@ -163,7 +163,7 @@ public static class People
         public static void Build(ModelBuilder modelBuilder)
             => Persons(modelBuilder).DeclareProbe(
                 ByLowerName with { Name = "IX_Ä" },
-                new ProbeSqliteIndex(new KeyTarget.Template("lower({Email})")) { Name = "IX_ä" });
+                new ProbeSqliteIndex(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Email})"))) { Name = "IX_ä" });
     }
 }
 

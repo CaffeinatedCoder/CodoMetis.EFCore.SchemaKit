@@ -420,7 +420,7 @@ internal sealed class TestResolver(TableRef table, ISchemaDialect dialect) : Sch
         return new SqlFragment(dialect.Delimit(column), [new Dependency.Column(table, column)], path);
     }
 
-    public override SqlFragment Template(string template) => throw new NotSupportedException();
+    public override SqlFragment Template(SqlTemplate template) => throw new NotSupportedException();
 
     public override string StoreType(string path) => throw new NotSupportedException();
 }

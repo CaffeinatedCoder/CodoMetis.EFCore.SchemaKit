@@ -306,7 +306,7 @@ internal static class ParitySweep
         {
             try
             {
-                rendered[row] = resolver.Template(template).ToString();
+                rendered[row] = resolver.Template(SqlTemplate.FromPlaceholders(template)).ToString();
             }
             catch (InvalidOperationException e)
             {

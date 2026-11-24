@@ -109,6 +109,48 @@ public sealed class SchemaJsonWriter
         _json.WriteEndArray();
     }
 
+    /// <summary>SQL as a declaration holds it: a list in which a string is text a package wrote, <c>{"col":…}</c> a column by its property path and <c>{"raw":…}</c> SQL written by hand.</summary>
+    /// <param name="name">The property name.</param>
+    /// <param name="value">The template.</param>
+    public void Template(string name, SqlTemplate value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (Claim(name)) WriteTemplate(name, value);
+    }
+
+    /// <summary>SQL as a declaration holds it, or nothing when it is null.</summary>
+    /// <param name="name">The property name.</param>
+    /// <param name="value">The template, or null.</param>
+    public void OptionalTemplate(string name, SqlTemplate? value)
+    {
+        if (Claim(name) && value is not null) WriteTemplate(name, value);
+    }
+
+    private void WriteTemplate(string name, SqlTemplate value)
+    {
+        _json.WriteStartArray(name);
+        foreach (var segment in value.Segments)
+        {
+            switch (segment)
+            {
+                case SqlSegment.Text text:
+                    _json.WriteCanonicalStringValue(name, text.Sql);
+                    break;
+                case SqlSegment.Column column:
+                    _json.WriteStartObject();
+                    _json.WriteCanonicalString(DeclarationCodecNames.Column, column.Path);
+                    _json.WriteEndObject();
+                    break;
+                case SqlSegment.Raw raw:
+                    _json.WriteStartObject();
+                    _json.WriteCanonicalString(DeclarationCodecNames.Raw, raw.Sql);
+                    _json.WriteEndObject();
+                    break;
+            }
+        }
+        _json.WriteEndArray();
+    }
+
     /// <summary>A nested object.</summary>
     public void Object(string name, Action<SchemaJsonWriter> write)
     {
@@ -173,6 +215,12 @@ internal static class DeclarationCodecNames
     public const string Version = "v";
     public const string Epoch = "r";
     public const string Name = "name";
+
+    /// <summary>In a template, the property of a segment that is a column: its property path.</summary>
+    public const string Column = "col";
+
+    /// <summary>In a template, the property of a segment that is SQL written by hand.</summary>
+    public const string Raw = "raw";
 
     public static bool IsReserved(string name) => name is Kind or Version or Epoch or Name;
 }

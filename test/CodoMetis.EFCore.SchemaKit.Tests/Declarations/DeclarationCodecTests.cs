@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using CodoMetis.EFCore.SchemaKit.Declarations.Internal;
@@ -106,6 +107,8 @@ public sealed class DeclarationCodecTests
         static object Default(Type type)
             => type == typeof(string) ? ""
                 : type == typeof(IEnumerable<string>) ? Array.Empty<string>()
+                // A template has no default: it holds at least one segment.
+                : type == typeof(SqlTemplate) ? SqlTemplate.FromPlaceholders("x")
                 : type == typeof(Action<SchemaJsonWriter>) ? new Action<SchemaJsonWriter>(_ => { })
                 : type == typeof(Action<SchemaJsonWriter, string>) ? new Action<SchemaJsonWriter, string>((_, _) => { })
                 : Activator.CreateInstance(type)!;
@@ -114,14 +117,14 @@ public sealed class DeclarationCodecTests
     [TestMethod]
     public void An_optional_writer_method_writes_nothing_for_null_and_the_value_otherwise()
     {
-        Assert.AreEqual("""{"$kind":"written","v":2,"r":1}""", Json(w =>
+        Assert.AreEqual("""{"$kind":"written","v":3,"r":1}""", Json(w =>
         {
             w.OptionalString("s", null);
             w.OptionalBoolean("b", null);
             w.OptionalInt32("i", null);
             w.OptionalObject<string>("o", null, (_, _) => { });
         }));
-        Assert.AreEqual("""{"$kind":"written","v":2,"r":1,"s":"","b":false,"i":0,"o":{}}""", Json(w =>
+        Assert.AreEqual("""{"$kind":"written","v":3,"r":1,"s":"","b":false,"i":0,"o":{}}""", Json(w =>
         {
             w.OptionalString("s", "");
             w.OptionalBoolean("b", false);
@@ -184,16 +187,17 @@ public sealed class DeclarationCodecTests
     /// and only for that one is updating the answer.
     /// </summary>
     [TestMethod]
-    [DataRow("3", "The snapshot was written by a newer SchemaKit")]
+    [DataRow("4", "The snapshot was written by a newer SchemaKit")]
+    [DataRow("2", "That is the format of 11.0.0-preview.1, which this version does not read: it kept SQL as one string")]
     [DataRow("1", "That is an older format, which this version does not read")]
     [DataRow("0", "That is an older format")]
     [DataRow("-1", "That is an older format")]
     [DataRow(null, "A format version is a whole number")]
-    [DataRow("\"2\"", "A format version is a whole number")]
+    [DataRow("\"3\"", "A format version is a whole number")]
     [DataRow("2.5", "A format version is a whole number")]
     [DataRow("true", "A format version is a whole number")]
     [DataRow("null", "A format version is a whole number")]
-    [DataRow("[2]", "A format version is a whole number")]
+    [DataRow("[3]", "A format version is a whole number")]
     [DataRow("99999999999", "A format version is a whole number")]
     public void A_format_version_this_version_does_not_know_is_refused(string? version, string reason)
     {
@@ -204,9 +208,11 @@ public sealed class DeclarationCodecTests
 
         var error = Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Read<TestGuard>("K", edited));
 
-        StringAssert.Contains(error.Message, $"The annotation 'K' has the format version {version ?? "none"}; this version of SchemaKit reads 2. {reason}");
-        Assert.AreEqual(version == "3", error.Message.Contains("newer", StringComparison.Ordinal) && error.Message.Contains("Update the package", StringComparison.Ordinal),
+        StringAssert.Contains(error.Message, $"The annotation 'K' has the format version {version ?? "none"}; this version of SchemaKit reads 3. {reason}");
+        Assert.AreEqual(version == "4", error.Message.Contains("newer", StringComparison.Ordinal) && error.Message.Contains("Update the package", StringComparison.Ordinal),
             "Only a higher version was written by a newer package.");
+        Assert.AreEqual(version == "2", error.Message.Contains("scaffold them again", StringComparison.Ordinal),
+            "Only the preview's format is one to scaffold again.");
     }
 
     /// <summary>
@@ -214,11 +220,11 @@ public sealed class DeclarationCodecTests
     /// meant is not known, so neither is taken.
     /// </summary>
     [TestMethod]
-    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[],"nullsDistinct":false,"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'nullsDistinct' twice")]
-    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[],"nullsDistinct":true,"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'nullsDistinct' twice")]
-    [DataRow("""{"$kind":"unique","v":2,"v":2,"r":1,"keys":[],"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'v' twice")]
-    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[{"column":"A","descending":false},{"column":"B","column":"C","descending":false}],"nullsDistinct":true,"include":[],"concurrently":false}""", "'K.keys[1]' has the property 'column' twice")]
-    [DataRow("""{"$kind":"unique","v":2,"r":1,"keys":[],"nullsDistinct":true,"include":[],"where":{"template":"a","template":"b"},"concurrently":false}""", "'K.where' has the property 'template' twice")]
+    [DataRow("""{"$kind":"unique","v":3,"r":1,"keys":[],"nullsDistinct":false,"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'nullsDistinct' twice")]
+    [DataRow("""{"$kind":"unique","v":3,"r":1,"keys":[],"nullsDistinct":true,"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'nullsDistinct' twice")]
+    [DataRow("""{"$kind":"unique","v":3,"v":3,"r":1,"keys":[],"nullsDistinct":true,"include":[],"concurrently":false}""", "'K' has the property 'v' twice")]
+    [DataRow("""{"$kind":"unique","v":3,"r":1,"keys":[{"column":"A","descending":false},{"column":"B","column":"C","descending":false}],"nullsDistinct":true,"include":[],"concurrently":false}""", "'K.keys[1]' has the property 'column' twice")]
+    [DataRow("""{"$kind":"unique","v":3,"r":1,"keys":[],"nullsDistinct":true,"include":[],"where":{"template":"a","template":"b"},"concurrently":false}""", "'K.where' has the property 'template' twice")]
     public void A_property_that_is_stored_twice_is_refused(string value, string message)
     {
         var error = Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Read<TestGuard>("K", value));
@@ -232,7 +238,7 @@ public sealed class DeclarationCodecTests
     public void The_value_the_repetitions_are_made_from_is_read()
     {
         var read = DeclarationCodec.Read<TestGuard>(
-            "K", """{"$kind":"unique","v":2,"r":1,"keys":[{"column":"A","descending":false}],"nullsDistinct":true,"include":[],"where":{"template":"a"},"concurrently":false}""");
+            "K", """{"$kind":"unique","v":3,"r":1,"keys":[{"column":"A","descending":false}],"nullsDistinct":true,"include":[],"where":{"template":"a"},"concurrently":false}""");
 
         Assert.AreEqual(new TestGuard.Unique([new GuardKey("A")]) { Where = new GuardFilter("a") }, read);
     }
@@ -279,7 +285,7 @@ public sealed class DeclarationCodecTests
     [TestMethod]
     public void A_nested_object_may_use_the_names_the_kernel_reserves_at_the_top()
         => Assert.AreEqual(
-            """{"$kind":"written","v":2,"r":1,"key":{"name":"x","v":1}}""",
+            """{"$kind":"written","v":3,"r":1,"key":{"name":"x","v":1}}""",
             Json(w => w.Object("key", k => { k.String("name", "x"); k.Int32("v", 1); })));
 
     [TestMethod]
@@ -296,8 +302,58 @@ public sealed class DeclarationCodecTests
     [TestMethod]
     public void An_operator_stays_readable_in_the_stored_text()
         => Assert.AreEqual(
-            """{"$kind":"written","v":2,"r":1,"op":"&&","text":"a < b > 'c' + \"d\""}""",
+            """{"$kind":"written","v":3,"r":1,"op":"&&","text":"a < b > 'c' + \"d\""}""",
             Json(w => { w.String("op", "&&"); w.String("text", "a < b > 'c' + \"d\""); }));
+
+    // ---- SQL is stored as segments ---------------------------------------------------------------------
+
+    private static readonly SqlTemplate Mixed = SqlTemplate.Of(
+    [
+        new SqlSegment.Text("lower("), new SqlSegment.Column("Email.Value"), new SqlSegment.Text(") = 'a{b}' AND "), new SqlSegment.Raw("x > \"y\""),
+    ]);
+
+    /// <summary>
+    /// The form of SQL in a snapshot: a string is text a package wrote, and a column and SQL
+    /// written by hand are each an object with the one property of their kind. It is a file format.
+    /// </summary>
+    [TestMethod]
+    public void A_template_is_stored_as_its_segments()
+    {
+        Assert.AreEqual(
+            """{"$kind":"written","v":3,"r":1,"sql":["lower(",{"col":"Email.Value"},") = 'a{b}' AND ",{"raw":"x > \"y\""}]}""",
+            Json(w => { w.Template("sql", Mixed); w.OptionalTemplate("none", null); }));
+
+        Assert.AreEqual(Mixed, ReadTemplate("""{"sql":["lower(",{"col":"Email.Value"},") = 'a{b}' AND ",{"raw":"x > \"y\""}]}"""));
+        Assert.IsNull(ReadTemplate("{}"));
+    }
+
+    /// <summary>
+    /// A segment this version does not know is not left out: the SQL without it would be another
+    /// condition. The preview's form, one string with placeholders, is among them.
+    /// </summary>
+    [TestMethod]
+    [DataRow("""{"sql":"lower({A})"}""")]
+    [DataRow("""{"sql":[]}""")]
+    [DataRow("""{"sql":[""]}""")]
+    [DataRow("""{"sql":[1]}""")]
+    [DataRow("""{"sql":[null]}""")]
+    [DataRow("""{"sql":[["x"]]}""")]
+    [DataRow("""{"sql":[{}]}""")]
+    [DataRow("""{"sql":[{"col":""}]}""")]
+    [DataRow("""{"sql":[{"col":"a b"}]}""")]
+    [DataRow("""{"sql":[{"col":1}]}""")]
+    [DataRow("""{"sql":[{"raw":""}]}""")]
+    [DataRow("""{"sql":[{"col":"A","raw":"x"}]}""")]
+    [DataRow("""{"sql":[{"lit":"'x'"}]}""")]
+    [DataRow("""{"sql":[{"Col":"A"}]}""")]
+    public void A_template_in_another_shape_is_refused(string json)
+        => StringAssert.Contains(Assert.ThrowsExactly<InvalidOperationException>(() => ReadTemplate(json)).Message, "'sql'");
+
+    private static SqlTemplate? ReadTemplate(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return new SchemaJsonReader(document.RootElement, "K").OptionalTemplate("sql");
+    }
 
     // ---- strings are written by one rule, on every runtime ---------------------------------------------
 
@@ -329,7 +385,7 @@ public sealed class DeclarationCodecTests
             .Select(c => (char)c)) + "\U0001F600";
 
         Assert.AreEqual(
-            $$"""{"$kind":"written","v":2,"r":1,"a":"{{all}}","b":"{{all}}","c":["{{all}}"]}""",
+            $$"""{"$kind":"written","v":3,"r":1,"a":"{{all}}","b":"{{all}}","c":["{{all}}"]}""",
             Json(w =>
             {
                 w.String("a", all);
@@ -340,7 +396,7 @@ public sealed class DeclarationCodecTests
         // The kind and the name, which the kernel writes. U+0378 has never been assigned.
         var kind = "k\u0378\U0001F600";
         var shaped = new Shaped("A", kind, all, 1);
-        Assert.AreEqual($$"""{"$kind":"{{kind}}","v":2,"r":1,"name":"{{all}}"}""", DeclarationCodec.Value(shaped));
+        Assert.AreEqual($$"""{"$kind":"{{kind}}","v":3,"r":1,"name":"{{all}}"}""", DeclarationCodec.Value(shaped));
         Assert.AreEqual(shaped.Name, JsonNode.Parse(DeclarationCodec.Value(shaped))!["name"]!.GetValue<string>(), "What was written must read back as the string it was.");
     }
 
@@ -379,7 +435,7 @@ public sealed class DeclarationCodecTests
         var nested = Assert.ThrowsExactly<InvalidOperationException>(() => Json(w => w.Object("o", o => o.Boolean(name, true))));
         StringAssert.Contains(nested.Message, "A property name is made of ASCII letters, digits and '_'");
 
-        Assert.AreEqual("""{"$kind":"written","v":2,"r":1,"aZ_09":true}""", Json(w => w.Boolean("aZ_09", true)));
+        Assert.AreEqual("""{"$kind":"written","v":3,"r":1,"aZ_09":true}""", Json(w => w.Boolean("aZ_09", true)));
     }
 
     // ---- what a declaration must be --------------------------------------------------------------------
@@ -577,6 +633,7 @@ public sealed class DeclarationCodecTests
                 : type == typeof(bool) || type == typeof(bool?) ? true
                 : type == typeof(int) || type == typeof(int?) ? 1
                 : type == typeof(IEnumerable<string>) ? new[] { "x" }
+                : type == typeof(SqlTemplate) ? SqlTemplate.FromPlaceholders("lower({A})")
                 : type == typeof(Action<SchemaJsonWriter>) ? new Action<SchemaJsonWriter>(w => w.String("inner", "x"))
                 : type == typeof(Action<SchemaJsonWriter, string>) ? new Action<SchemaJsonWriter, string>((w, item) => w.String("inner", item))
                 : throw new NotSupportedException($"No value for a parameter of type {type}: add one, so the new writer method is covered.");

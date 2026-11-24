@@ -50,7 +50,7 @@ public sealed class DeclarationStoreTests
         var annotation = Stored(entity).Single();
         Assert.AreEqual("CodoMetis:Test.Guard:08dd2f43dd31aea1", annotation.Name);
         Assert.AreEqual(
-            """{"$kind":"unique","v":2,"r":1,"name":"ux_people_email","keys":[{"column":"Email","descending":false}],"nullsDistinct":false,"include":["Name"],"where":{"template":"{DeletedAt} IS NULL AND {Rank} <> 0"},"concurrently":true}""",
+            """{"$kind":"unique","v":3,"r":1,"name":"ux_people_email","keys":[{"column":"Email","descending":false}],"nullsDistinct":false,"include":["Name"],"where":{"template":"{DeletedAt} IS NULL AND {Rank} <> 0"},"concurrently":true}""",
             annotation.Value);
     }
 

@@ -261,17 +261,17 @@ public abstract class SchemaResolver
     public abstract SqlFragment Column(string path);
 
     /// <summary>
-    /// SQL in which each <c>{Path}</c> is replaced by that path's column, delimited. A placeholder
-    /// is recognised outside single-quoted literals only, and only when its content is a property
-    /// path; any other text, braces included, stays as written.
+    /// The SQL of a template in <see cref="Table" />: its text as written, and each column it
+    /// reads by a path as that path's column, delimited.
     /// </summary>
     /// <remarks>
-    /// SQL with no placeholder is taken to read every column of the table: a column it names
-    /// directly cannot be seen, so nothing less would be safe to assume.
+    /// The fragment reads the columns of its paths. Where a segment is SQL written by hand it reads
+    /// every column of the table besides: a column such SQL names directly cannot be seen, so
+    /// nothing less would be safe to assume.
     /// </remarks>
     /// <param name="template">The SQL, as the declaration holds it.</param>
-    /// <exception cref="InvalidOperationException">A placeholder names no property, or one with no column in the table.</exception>
-    public abstract SqlFragment Template(string template);
+    /// <exception cref="InvalidOperationException">A path names no property, or one with no column in the table.</exception>
+    public abstract SqlFragment Template(SqlTemplate template);
 
     /// <summary>
     /// The store type of a property path's column, as the model states it: <c>integer</c>,

@@ -1,6 +1,6 @@
 <Project>
     <PropertyGroup>
-        <Version>11.0.0-preview.1</Version>
+        <Version>11.0.0-preview.2</Version>
         <Authors>CaffeinatedCoder</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageProjectUrl>https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit</PackageProjectUrl>

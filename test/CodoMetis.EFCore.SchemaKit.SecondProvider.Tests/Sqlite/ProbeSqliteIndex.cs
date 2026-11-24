@@ -38,13 +38,13 @@ public sealed record ProbeSqliteIndex(KeyTarget Key) : ISchemaDeclaration<ProbeS
     public void Write(SchemaJsonWriter writer)
     {
         writer.OptionalString("column", (Key as KeyTarget.Column)?.Path);
-        writer.OptionalString("sql", (Key as KeyTarget.Template)?.Sql);
+        writer.OptionalTemplate("sql", (Key as KeyTarget.Template)?.Sql);
         writer.Boolean("unique", IsUnique);
     }
 
     public static ProbeSqliteIndex Read(SchemaDeclarationHeader header, SchemaJsonReader reader)
     {
-        KeyTarget key = (reader.OptionalString("column"), reader.OptionalString("sql")) switch
+        KeyTarget key = (reader.OptionalString("column"), reader.OptionalTemplate("sql")) switch
         {
             ({ } path, null)     => new KeyTarget.Column(path),
             (null, { } template) => new KeyTarget.Template(template),

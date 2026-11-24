@@ -267,20 +267,27 @@ public sealed class SchemaResolverTests
     }
 
     /// <summary>
-    /// A column named outside a placeholder cannot be seen, and no scan of SQL can prove there is
-    /// none. SQL without a placeholder is therefore taken to read every column of its table.
+    /// A column named in SQL written by hand cannot be seen, and no scan of SQL can prove there is
+    /// none. Such SQL is therefore taken to read every column of its table, beside the columns it
+    /// names by a path. Text a package wrote reads the columns of its paths and nothing else.
     /// </summary>
     [TestMethod]
-    public void A_template_without_a_placeholder_depends_on_the_whole_table()
+    public void Sql_written_by_hand_depends_on_the_whole_table()
     {
         using var sides = Resolve(Provider.Npgsql);
 
         foreach (var (side, resolver) in sides.Both)
         {
-            var fragment = resolver.Template("deleted_at IS NULL AND note <> '{Name}'");
-
+            var fragment = resolver.Template(SqlTemplate.Raw("deleted_at IS NULL AND note <> '{Name}'"));
             Assert.AreEqual("deleted_at IS NULL AND note <> '{Name}'", fragment.ToString(), side);
             CollectionAssert.AreEqual(new Dependency[] { new Dependency.WholeTable(resolver.Table) }, fragment.Dependencies.ToList(), side);
+
+            var mixed = resolver.Template(SqlTemplate.Raw("{Name} > note"));
+            Assert.AreEqual($"{sides.D("full_name")} > note", mixed.ToString(), side);
+            CollectionAssert.AreEqual(new[] { sides.Column("full_name"), new Dependency.WholeTable(resolver.Table) }, mixed.Dependencies.ToList(), side);
+
+            var written = resolver.Template(SqlTemplate.FromPlaceholders("1 = 1"));
+            Assert.AreEqual(0, written.Dependencies.Count, side);
         }
     }
 
@@ -299,7 +306,7 @@ public sealed class SchemaResolverTests
         Assert.AreEqual("(lower({Address.City}) <> '{x}' AND {Email} IS NOT NULL)", template);
         foreach (var (side, resolver) in sides.Both)
         {
-            var fragment = resolver.Template(template);
+            var fragment = resolver.Template(SqlTemplate.FromPlaceholders(template));
 
             Assert.AreEqual($"(lower({sides.D("town")}) <> '{{x}}' AND {sides.D("Email")} IS NOT NULL)", fragment.ToString(), side);
             CollectionAssert.AreEqual(new[] { sides.Column("town"), sides.Column("Email") }, fragment.Dependencies.ToList(), side);
@@ -410,7 +417,7 @@ public sealed class SchemaResolverTests
         CollectionAssert.AreEqual(
             new Dependency[] { new Dependency.Column(persons, dialect.Identifier("display_name")), new Dependency.Column(persons, dialect.Identifier("town")) },
             template.Dependencies.ToList());
-        CollectionAssert.AreEqual(new Dependency[] { new Dependency.WholeTable(persons) }, renamed.Template("1 = 1").Dependencies.ToList());
+        CollectionAssert.AreEqual(new Dependency[] { new Dependency.WholeTable(persons) }, renamed.Template(SqlTemplate.Raw("1 = 1")).Dependencies.ToList());
 
         Assert.AreEqual("EX_people_full_name_lowerfullnametown", renamed.Name(null, "EX", [column, template]).Name);
         Assert.AreEqual(
@@ -447,4 +454,10 @@ public sealed class SchemaResolverTests
 
         StringAssert.Contains(Refused(() => factory.Create(report, Declaration)), "Report declares Test.Guard trigger, but is not mapped to a table");
     }
+}
+
+/// <summary>A template as a package's own text with placeholders, which is what these tests write.</summary>
+internal static class ResolverTemplates
+{
+    public static SqlFragment Template(this SchemaResolver resolver, string template) => resolver.Template(SqlTemplate.FromPlaceholders(template));
 }

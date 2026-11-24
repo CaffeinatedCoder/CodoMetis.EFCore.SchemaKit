@@ -452,6 +452,6 @@ public sealed class SqliteExpressionIndexTests
         var code = CodoMetis.EFCore.SchemaKit.Tests.Harness.Snapshots.Of(context).Code;
 
         StringAssert.Contains(code, "b.HasAnnotation(\"CodoMetis:Probe.SqliteIndex:");
-        StringAssert.Contains(code, """{\"$kind\":\"index\",\"v\":2,\"r\":1,\"name\":\"IX_people_lower_name\",\"sql\":\"lower({Name})\",\"unique\":false}""");
+        StringAssert.Contains(code, """{\"$kind\":\"index\",\"v\":3,\"r\":1,\"name\":\"IX_people_lower_name\",\"sql\":[\"lower(\",{\"col\":\"Name\"},\")\"],\"unique\":false}""");
     }
 }

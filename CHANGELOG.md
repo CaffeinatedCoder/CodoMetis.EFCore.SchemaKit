@@ -6,6 +6,18 @@ One section per version, newest first, in the form
 <!-- The date replaces "unreleased" in the commit that is tagged. release.yml refuses a tag whose
      heading is not `## [x.y.z] — yyyy-mm-dd`, so this heading stops a tag until then. -->
 
+## [11.0.0-preview.2] — unreleased
+
+### Breaking
+
+- SQL in a declaration is stored as segments, format `v` 3: text, and each column by its property path. A model snapshot scaffolded with `11.0.0-preview.1` is refused with a message that says so; remove the migrations scaffolded with the preview and scaffold them again ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
+- `Predicate` and `KeyTarget.Template` hold a `SqlTemplate` and are no longer made from a string. In the contract, `SchemaResolver.Template` takes a `SqlTemplate`, and `SchemaJsonWriter` and `SchemaJsonReader` have `Template` and `OptionalTemplate` ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
+
+### Changed
+
+- Both packages are built against EF Core 11.0.0 and `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0, and depend on `[11.0.0, 12.0.0)` of them ([#174](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/174)).
+- The expression and the condition of an exclusion constraint read from a 5.x snapshot are SQL written by hand: the constraint is taken to read every column of its table ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
+
 ## [11.0.0-preview.1] — 2026-11-17
 
 The first preview, for `net11.0`, EF Core 11 with `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`, and PostgreSQL 16 and 18. It declares exclusion constraints only: indexes, SQL Server, SQLite and the rest are [not in it yet](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#what-it-does-not-do-yet). The stored form of a declaration in a model snapshot is not final in a preview, and a later preview may ask for the migrations to be scaffolded again. That does not change a database already built, so a database built from a preview is one to build again; the permanent promise starts at `11.0.0` ([#9](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/9)).

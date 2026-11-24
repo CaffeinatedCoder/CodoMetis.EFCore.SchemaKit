@@ -83,7 +83,7 @@ public closed record PgExclusion : IPostgresObject, ISchemaDeclaration<PgExclusi
             Gist gist     => Elements(gist),
             SpGist spGist => Element(spGist),
         };
-        writer.OptionalString("where", Where?.Template);
+        writer.OptionalTemplate("where", Where?.Template);
         writer.String("deferral", Deferral.Token);
 
         bool Elements(Gist gist)
@@ -116,7 +116,7 @@ public closed record PgExclusion : IPostgresObject, ISchemaDeclaration<PgExclusi
         {
             Name = header.Name,
             Epoch = header.Epoch,
-            Where = reader.OptionalString("where") is { } where ? new Predicate(where) : null,
+            Where = reader.OptionalTemplate("where") is { } where ? new Predicate(where) : null,
             Deferral = Deferral.Parse(reader.String("deferral")),
         };
     }
@@ -127,14 +127,14 @@ public closed record PgExclusion : IPostgresObject, ISchemaDeclaration<PgExclusi
     private static void WriteElement(SchemaJsonWriter writer, ExclusionElement element)
     {
         writer.OptionalString("column", (element.Target as KeyTarget.Column)?.Path);
-        writer.OptionalString("sql", (element.Target as KeyTarget.Template)?.Sql);
+        writer.OptionalTemplate("sql", (element.Target as KeyTarget.Template)?.Sql);
         writer.String("op", element.Operator.Token);
     }
 
     private static ExclusionElement ReadElement(SchemaJsonReader reader)
     {
         var column = reader.OptionalString("column");
-        var sql = reader.OptionalString("sql");
+        var sql = reader.OptionalTemplate("sql");
         KeyTarget target = (column, sql) switch
         {
             ({ } path, null)     => new KeyTarget.Column(path),
