@@ -355,6 +355,37 @@ public sealed class DeclarationCodecTests
         return new SchemaJsonReader(document.RootElement, "K").OptionalTemplate("sql");
     }
 
+    /// <summary>
+    /// A lambda that is not bound makes its declaration one to hold until the model is finalized,
+    /// wherever the declaration keeps it: in an operational property too, which the key leaves out
+    /// and the stored value does not. Written with what binds it, the declaration is as any other.
+    /// </summary>
+    [TestMethod]
+    public void A_lambda_that_is_not_bound_is_found_in_every_property_and_written_once_it_is_bound()
+    {
+        var lambda = Predicate.Of<Resolution.Person>(x => x.Name == null, SqlSpelling.PostgreSql).Template;
+        static SqlTemplate Bind(CodoMetis.EFCore.SchemaKit.Translation.Internal.UnboundLambda unbound)
+            => CodoMetis.EFCore.SchemaKit.Metadata.Internal.DeclarationBinder.Bind(unbound, null!);
+
+        var plain = new Written(w => w.Template("sql", lambda));
+        var optional = new Written(w => w.OptionalTemplate("sql", lambda));
+        var operational = new Written(w => { w.String("a", "x"); w.Operational.Template("sql", lambda); });
+        var nested = new Written(w => w.Object("o", o => o.Template("sql", lambda)));
+
+        foreach (var declaration in new[] { plain, optional, operational, nested })
+        {
+            Assert.IsTrue(DeclarationCodec.IsUnbound(declaration));
+            StringAssert.Contains(DeclarationCodec.Value(declaration, Bind), """
+                "sql":[{"col":"Name"}," IS NULL"]
+                """.Trim());
+            StringAssert.Contains(Assert.ThrowsExactly<InvalidOperationException>(() => DeclarationCodec.Value(declaration)).Message, "is not bound");
+        }
+
+        Assert.IsFalse(DeclarationCodec.IsUnbound(new Written(w => w.Template("sql", SqlTemplate.FromPlaceholders("{A}")))));
+        Assert.AreEqual(DeclarationCodec.Key(new Written(w => w.String("a", "x"))), DeclarationCodec.Key(operational, Bind));
+        StringAssert.Contains(DeclarationCodec.Describe(plain), "x => (x.Name == null)");
+    }
+
     // ---- strings are written by one rule, on every runtime ---------------------------------------------
 
     [TestMethod]

@@ -12,12 +12,16 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace CodoMetis.EFCore.SchemaKit.Metadata.Internal;
 
-/// <summary>Adds <see cref="SchemaKitWiringConvention" /> to every model the context builds.</summary>
+/// <summary>Adds <see cref="SchemaKitWiringConvention" /> and <see cref="SchemaKitBindingConvention" /> to every model the context builds.</summary>
 internal sealed class SchemaKitConventionSetPlugin(IServiceProvider services) : IConventionSetPlugin
 {
     public ConventionSet ModifyConventions(ConventionSet conventionSet)
     {
         conventionSet.ModelInitializedConventions.Add(new SchemaKitWiringConvention(services));
+
+        // Last among those that run when a model is finalized: what a declaration is bound from
+        // is the model as every other convention left it.
+        conventionSet.ModelFinalizingConventions.Add(new SchemaKitBindingConvention());
         return conventionSet;
     }
 }

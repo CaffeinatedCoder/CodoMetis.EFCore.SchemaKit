@@ -40,11 +40,30 @@ public static class SchemaDeclarationExtensions
         ArgumentNullException.ThrowIfNull(declarations);
         SchemaKitModelStamp.Require(entityType.Model, entityType.DisplayName());
 
-        Dictionary<string, (ISchemaObject Declaration, string Value)> added = new(StringComparer.Ordinal);
+        // A declaration that holds a lambda is not SQL until the model is finalized, so it is held
+        // as it is until then (issue 114). With a name its key is known now and is checked as any
+        // other; without one its key is its content, and here it is compared as it was written.
+        Dictionary<string, (ISchemaObject Declaration, object Value)> added = new(StringComparer.Ordinal);
+        List<ISchemaObject> unbound = [];
         foreach (var declaration in declarations)
         {
             ArgumentNullException.ThrowIfNull(declaration, nameof(declarations));
             SchemaKitModelStamp.Require(entityType.Model, entityType.DisplayName(), declaration.Owner, declaration.GetType());
+
+            var isUnbound = DeclarationCodec.IsUnbound(declaration);
+            if (isUnbound && declaration.Name is null)
+            {
+                if (unbound.Find(declaration.Equals) is { } earlierUnbound)
+                    throw new InvalidOperationException(SchemaKitStrings.DeclaredTwice(
+                        entityType.DisplayName(), DeclarationCodec.Describe(earlierUnbound), DeclarationCodec.Describe(declaration)));
+                if (UnboundDeclarations.Of(entityType, declaration.Owner).Any(held => held.Declaration.Equals(declaration)))
+                    throw new InvalidOperationException(SchemaKitStrings.AlreadyDeclared(
+                        entityType.DisplayName(), DeclarationCodec.Describe(declaration)));
+
+                unbound.Add(declaration);
+                continue;
+            }
+
             var key = DeclarationCodec.Key(declaration);
 
             if (added.TryGetValue(key, out var earlier))
@@ -54,11 +73,13 @@ public static class SchemaDeclarationExtensions
                 throw new InvalidOperationException(SchemaKitStrings.AlreadyDeclared(
                     entityType.DisplayName(), DeclarationCodec.Describe(declaration)));
 
-            added.Add(key, (declaration, DeclarationCodec.Value(declaration)));
+            added.Add(key, (declaration, isUnbound ? declaration : DeclarationCodec.Value(declaration)));
         }
 
         foreach (var (key, (_, value)) in added)
             entityType.SetAnnotation(key, value);
+        foreach (var declaration in unbound)
+            entityType.SetAnnotation(UnboundDeclarations.NextKey(entityType, declaration.Owner), declaration);
     }
 
     /// <summary>
@@ -78,26 +99,43 @@ public static class SchemaDeclarationExtensions
         SchemaKitModelStamp.Require(entityType.Model, entityType.DisplayName(), TDeclaration.OwnerId, typeof(TDeclaration));
 
         var current = Stored<TDeclaration>(entityType).ToList();
-        Dictionary<string, (TDeclaration Declaration, string Value)> result = new(StringComparer.Ordinal);
 
-        foreach (var (_, _, declaration) in current)
+        // What each declaration becomes, and under which key: its own for one that is SQL or has a
+        // name, and for one that is neither the place it was written at, so that it keeps its turn.
+        List<(string? Key, object Value, TDeclaration Declaration, string? Was)> result = [];
+        foreach (var (was, _, declaration) in current)
         {
             var amended = amend(declaration) ?? throw new InvalidOperationException(SchemaKitStrings.AmendReturnedNull(entityType.DisplayName()));
-            var key = DeclarationCodec.Key(amended);
+            var isUnbound = DeclarationCodec.IsUnbound(amended);
+            var key = isUnbound && amended.Name is null ? null : DeclarationCodec.Key(amended);
 
-            if (result.TryGetValue(key, out var earlier))
+            var earlier = result.Find(r => key is null ? r.Key is null && r.Declaration.Equals(amended) : r.Key == key);
+            if (earlier.Declaration is not null)
                 throw new InvalidOperationException(SchemaKitStrings.RedeclaredOntoOneKey(
                     entityType.DisplayName(), DeclarationCodec.Describe(earlier.Declaration), DeclarationCodec.Describe(amended)));
 
-            result.Add(key, (amended, DeclarationCodec.Value(amended)));
+            result.Add((key, isUnbound ? amended : DeclarationCodec.Value(amended), amended, was));
         }
 
-        var changed = current.Count(c => !result.TryGetValue(c.Key, out var kept) || kept.Value != c.Value);
+        var kept = result
+            .Select(r => r.Key ?? (UnboundDeclarations.IsHeldKey(r.Was!) ? r.Was! : null))
+            .ToList();
+        var changed = current.Count(c =>
+        {
+            var index = kept.IndexOf(c.Key);
+            return index < 0 || !result[index].Value.Equals(c.Value);
+        });
 
-        foreach (var (key, _, _) in current.Where(c => !result.ContainsKey(c.Key)))
+        foreach (var (key, _, _) in current)
             entityType.RemoveAnnotation(key);
-        foreach (var (key, (_, value)) in result)
-            entityType.SetAnnotation(key, value);
+        for (var i = 0; i < result.Count; i++)
+        {
+            if (kept[i] is { } key) entityType.SetAnnotation(key, result[i].Value);
+        }
+        for (var i = 0; i < result.Count; i++)
+        {
+            if (kept[i] is null) entityType.SetAnnotation(UnboundDeclarations.NextKey(entityType, TDeclaration.OwnerId), result[i].Value);
+        }
 
         return changed;
     }
@@ -138,15 +176,55 @@ public static class SchemaDeclarationExtensions
         };
     }
 
-    private static IEnumerable<(string Key, string Value, TDeclaration Declaration)> Stored<TDeclaration>(IReadOnlyEntityType entityType)
+    // In the order of their keys, and a declaration that is held for binding after those, in the
+    // order written.
+    private static IEnumerable<(string Key, object Value, TDeclaration Declaration)> Stored<TDeclaration>(IReadOnlyEntityType entityType)
         where TDeclaration : class, ISchemaDeclaration<TDeclaration>
     {
         var prefix = DeclarationCodec.KeyPrefix(TDeclaration.OwnerId);
         return entityType.GetAnnotations()
             .Where(a => a.Name.StartsWith(prefix, StringComparison.Ordinal))
             .OrderBy(a => a.Name, StringComparer.Ordinal)
-            .Select(a => a.Value is string value
-                ? (a.Name, value, DeclarationCodec.Read<TDeclaration>(a.Name, value))
-                : throw new InvalidOperationException(SchemaKitStrings.DeclarationNotJson(a.Name)));
+            .Select(a => a.Value switch
+            {
+                string value             => (a.Name, (object)value, DeclarationCodec.Read<TDeclaration>(a.Name, value)),
+                TDeclaration declaration => (a.Name, declaration, declaration),
+                _                        => throw new InvalidOperationException(SchemaKitStrings.DeclarationNotJson(a.Name)),
+            });
+    }
+}
+
+/// <summary>
+/// The declarations an entity type holds as they were written, until its model is finalized: each
+/// has a lambda that is not SQL yet. One with a name is under the key it will keep. One without is
+/// under a key no stored declaration can have, numbered in the order it was written.
+/// </summary>
+internal static class UnboundDeclarations
+{
+    // A stored key ends in sixteen hexadecimal digits.
+    private const char Held = '~';
+
+    public static bool IsHeldKey(string key) => key.LastIndexOf(':') is var colon and >= 0 && colon + 1 < key.Length && key[colon + 1] == Held;
+
+    public static string NextKey(IReadOnlyEntityType entityType, string owner)
+    {
+        var prefix = DeclarationCodec.KeyPrefix(owner) + Held;
+        var next = entityType.GetAnnotations()
+            .Where(a => a.Name.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(a => int.Parse(a.Name.AsSpan(prefix.Length), System.Globalization.CultureInfo.InvariantCulture) + 1)
+            .DefaultIfEmpty(0)
+            .Max();
+        return prefix + next.ToString("D8", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Every declaration held for binding, of one owner or of all: those with a name first, then the others in the order written.</summary>
+    public static IEnumerable<(string Key, ISchemaObject Declaration)> Of(IReadOnlyEntityType entityType, string? owner = null)
+    {
+        var prefix = owner is null ? DeclarationCodec.Prefix : DeclarationCodec.KeyPrefix(owner);
+        return entityType.GetAnnotations()
+            .Where(a => a.Name.StartsWith(prefix, StringComparison.Ordinal) && a.Value is ISchemaObject)
+            .OrderBy(a => IsHeldKey(a.Name))
+            .ThenBy(a => a.Name, StringComparer.Ordinal)
+            .Select(a => (a.Name, (ISchemaObject)a.Value!));
     }
 }

@@ -24,7 +24,7 @@ public sealed class SqlServerSpellingLiveTests
     private static string Filtered(string name, string filter) => $"CREATE INDEX {name} ON Flags (CustomerId) WHERE {filter}";
 
     private static string Spelled(System.Linq.Expressions.Expression<Func<Flagged, bool>> filter)
-        => Predicate.Of(filter, SqlSpelling.PostgreSql).Template.ToString().Replace("{Active}", "[Active]").Replace("{Tag}", "[Tag]");
+        => Bound.Where(filter).Replace("{Active}", "[Active]").Replace("{Tag}", "[Tag]");
 
     private static int Refused(SqlServerDatabase database, string statement)
         => Assert.ThrowsExactly<SqlException>(() => database.Execute(statement)).Number;

@@ -34,13 +34,24 @@ public sealed class PgExclusionDeclarationTests
     {
         var constraint = Pg.Exclusion(Pg.Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period));
 
-        Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Note})")), constraint.Elements[0].Target);
+        // An expression, and not SQL yet: it is bound when its model is finalized. What it is stored
+        // as is held by An_unnamed_constraint_with_an_expression_is_stored_as_this.
+        var expression = (KeyTarget.Template)constraint.Elements[0].Target;
+        Assert.IsFalse(expression.Sql.IsBound);
+        Assert.AreEqual("x => x.Note.ToLower()", expression.Sql.ToString());
         Assert.AreEqual(new KeyTarget.Column("Period"), constraint.Elements[1].Target);
     }
 
     [TestMethod]
-    public void The_filter_is_translated_where_it_is_written()
-        => Assert.AreEqual("{RevokedOn} IS NULL", Models.ActivePeriod.Where!.Template.ToString());
+    public void The_filter_is_sql_in_the_finalized_model_and_not_before()
+    {
+        Assert.IsFalse(Models.ActivePeriod.Where!.Template.IsBound);
+        Assert.AreEqual("x => (x.RevokedOn == null)", Models.ActivePeriod.Where.Template.ToString());
+
+        var declared = Entity<EveryCase>().FindDeclaration<PgExclusion>(Models.Name)!;
+        Assert.IsTrue(declared.Where!.Template.IsBound);
+        Assert.AreEqual("{RevokedOn} IS NULL", declared.Where.Template.ToString());
+    }
 
     /// <summary>The translator's refusal reaches the declaration: nothing is stored that no SQL was written for.</summary>
     [TestMethod]
@@ -112,7 +123,8 @@ public sealed class PgExclusionDeclarationTests
         Assert.AreEqual(unfiltered.AndWhere(active), unfiltered.AndWhere(active).AndWhere(active));
 
         var both = Models.ActivePeriod.AndWhere(active);
-        Assert.AreEqual("({RevokedOn} IS NULL) AND ({Note} IS NOT NULL)", both.Where!.Template.ToString());
+        // The first condition is a lambda that is not bound yet, and is added to all the same.
+        Assert.AreEqual("(x => (x.RevokedOn == null)) AND ({Note} IS NOT NULL)", both.Where!.Template.ToString());
         Assert.AreEqual(both, both.AndWhere(active));
     }
 
@@ -178,10 +190,20 @@ public sealed class PgExclusionDeclarationTests
         public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().DeclarePostgres(_ => Declared);
     }
 
-    /// <summary>Every case and every option comes back from the read model as the value that was declared.</summary>
+    /// <summary>
+    /// Every case and every option comes back from the read model as the value that was declared,
+    /// with a lambda as the SQL it was bound to.
+    /// </summary>
     [TestMethod]
     public void The_read_model_returns_the_values_that_were_declared()
-        => CollectionAssert.AreEquivalent(EveryCase.Declared, Entity<EveryCase>().GetDeclarations<PgExclusion>().ToList());
+        => CollectionAssert.AreEquivalent(
+            new[]
+            {
+                EveryCase.Declared[0] with { Where = new Predicate(SqlTemplate.FromPlaceholders("{RevokedOn} IS NULL")) },
+                EveryCase.Declared[1],
+                EveryCase.Declared[2],
+            },
+            Entity<EveryCase>().GetDeclarations<PgExclusion>().ToList());
 
     private static PgExclusion ReadBack(string value)
     {

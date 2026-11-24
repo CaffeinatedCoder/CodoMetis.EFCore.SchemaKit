@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
+using CodoMetis.EFCore.SchemaKit.Translation.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit;
 
@@ -77,19 +78,35 @@ public closed record SqlSegment
 /// migration is planned; nothing looks for a column inside its text.
 /// </summary>
 /// <remarks>
+/// <para>
 /// A consumer gets one from a provider's factory and hands it on. What it is made of is the
 /// contract's, for the package that writes it and the contributor that resolves it.
+/// </para>
+/// <para>
+/// A template made from a lambda is not bound until its model is finalized: it holds the lambda,
+/// and becomes segments then (<see cref="IsBound" />). It compares, and is added to another, in
+/// either state; read from a finalized model or a snapshot it is always bound.
+/// </para>
 /// </remarks>
 public sealed class SqlTemplate : IEquatable<SqlTemplate>
 {
 #pragma warning disable SK9001 // The segments are the contract's; the template that holds them is a consumer's value.
-    private readonly ValueList<SqlSegment> _segments;
+    // A segment, or a lambda that is not bound yet. Neighbouring text of one kind is one part.
+    private readonly ValueList<object> _parts;
 
-    private SqlTemplate(ValueList<SqlSegment> segments) => _segments = segments;
+    private SqlTemplate(ValueList<object> parts) => _parts = parts;
+
+    /// <summary>
+    /// Whether the template is segments throughout. One made from a lambda is not, from the call
+    /// that wrote it until its model is finalized.
+    /// </summary>
+    public bool IsBound => _parts.All(part => part is SqlSegment);
 
     /// <summary>The segments, in their order. No two neighbours are text of the same kind, and none is empty.</summary>
+    /// <exception cref="InvalidOperationException">The template holds a lambda that is not bound yet.</exception>
     [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
-    public ValueList<SqlSegment> Segments => _segments;
+    public ValueList<SqlSegment> Segments
+        => IsBound ? [.. _parts.Cast<SqlSegment>()] : throw new InvalidOperationException(SchemaKitStrings.TemplateNotBound(ToString()));
 
     /// <summary>A template of these segments. Neighbouring text of one kind becomes one segment.</summary>
     /// <param name="segments">The segments, at least one.</param>
@@ -97,24 +114,46 @@ public sealed class SqlTemplate : IEquatable<SqlTemplate>
     public static SqlTemplate Of(IEnumerable<SqlSegment> segments)
     {
         ArgumentNullException.ThrowIfNull(segments);
+        return OfParts(segments, nameof(segments));
+    }
 
-        List<SqlSegment> merged = [];
-        foreach (var segment in segments)
+    /// <summary>A template that is a lambda, to be bound when its model is finalized.</summary>
+    internal static SqlTemplate Unbound(UnboundLambda lambda) => new([lambda]);
+
+    /// <summary>The parts of several templates in a row, bound or not: how a condition is added to another.</summary>
+    internal static SqlTemplate Join(params ReadOnlySpan<SqlTemplate> templates)
+    {
+        List<object> parts = [];
+        foreach (var template in templates) parts.AddRange(template._parts);
+        return OfParts(parts, nameof(templates));
+    }
+
+    /// <summary>The template with each lambda replaced by what <paramref name="bind" /> makes of it.</summary>
+    internal SqlTemplate Bind(Func<UnboundLambda, SqlTemplate> bind)
+        => IsBound ? this : OfParts(_parts.SelectMany(part => part is UnboundLambda lambda ? bind(lambda)._parts : [part]), nameof(bind));
+
+    /// <summary>The parts, for the kernel's own comparison of two templates in either state.</summary>
+    internal ValueList<object> Parts => _parts;
+
+    private static SqlTemplate OfParts(IEnumerable<object> parts, string name)
+    {
+        List<object> merged = [];
+        foreach (var part in parts)
         {
-            ArgumentNullException.ThrowIfNull(segment, nameof(segments));
-            merged.Add((merged.Count > 0 ? merged[^1] : null, segment) switch
+            ArgumentNullException.ThrowIfNull(part, name);
+            merged.Add((merged.Count > 0 ? merged[^1] : null, part) switch
             {
                 (SqlSegment.Text last, SqlSegment.Text next) => Replace(new SqlSegment.Text(last.Sql + next.Sql)),
                 (SqlSegment.Raw last, SqlSegment.Raw next)   => Replace(new SqlSegment.Raw(last.Sql + next.Sql)),
-                _                                            => segment,
+                _                                            => part,
             });
         }
 
         return merged.Count > 0
             ? new SqlTemplate([.. merged])
-            : throw new ArgumentException(SchemaKitStrings.TemplateWithoutSegments, nameof(segments));
+            : throw new ArgumentException(SchemaKitStrings.TemplateWithoutSegments, name);
 
-        SqlSegment Replace(SqlSegment joined)
+        object Replace(SqlSegment joined)
         {
             merged.RemoveAt(merged.Count - 1);
             return joined;
@@ -143,22 +182,23 @@ public sealed class SqlTemplate : IEquatable<SqlTemplate>
     public static SqlTemplate Raw(string template) => Parse(template, static text => new SqlSegment.Raw(text));
 
     /// <summary>Whether the template is one column and nothing else, and then its path.</summary>
-    internal string? SingleColumn => _segments is [SqlSegment.Column column] ? column.Path : null;
+    internal string? SingleColumn => _parts is [SqlSegment.Column column] ? column.Path : null;
 
     /// <summary>
-    /// The template in one line, for a message: a column as <c>{Path}</c>. It is not the stored
-    /// form and not SQL, and nothing reads it back.
+    /// The template in one line, for a message: a column as <c>{Path}</c>, and a lambda that is
+    /// not bound yet as C# prints it. It is not the stored form and not SQL, and nothing reads it back.
     /// </summary>
     public override string ToString()
     {
         StringBuilder text = new();
-        foreach (var segment in _segments)
+        foreach (var part in _parts)
         {
-            _ = segment switch
+            _ = part switch
             {
                 SqlSegment.Text written  => text.Append(written.Sql),
                 SqlSegment.Column column => text.Append('{').Append(column.Path).Append('}'),
                 SqlSegment.Raw raw       => text.Append(raw.Sql),
+                _                        => text.Append(part),
             };
         }
 
@@ -166,13 +206,13 @@ public sealed class SqlTemplate : IEquatable<SqlTemplate>
     }
 
     /// <inheritdoc />
-    public bool Equals(SqlTemplate? other) => other is not null && _segments.Equals(other._segments);
+    public bool Equals(SqlTemplate? other) => other is not null && _parts.Equals(other._parts);
 
     /// <inheritdoc />
     public override bool Equals(object? obj) => Equals(obj as SqlTemplate);
 
     /// <inheritdoc />
-    public override int GetHashCode() => _segments.GetHashCode();
+    public override int GetHashCode() => _parts.GetHashCode();
 
     private static SqlTemplate Parse(string template, Func<string, SqlSegment> written)
     {

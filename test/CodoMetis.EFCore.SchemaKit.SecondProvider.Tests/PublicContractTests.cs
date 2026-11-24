@@ -91,11 +91,11 @@ public sealed class PublicContractTests
             typeof(SqlSpelling).GetProperties(BindingFlags.Public | BindingFlags.Static).Where(p => p.PropertyType == typeof(SqlSpelling)).Select(p => p.Name).ToList());
 
         // SQL Server has no boolean expression that is a column (SqlServerSpellingLiveTests), and no TRUE.
-        Assert.AreEqual("{Active}", Predicate.Of<Flagged>(x => x.Active, SqlSpelling.PostgreSql).Template.ToString());
-        Assert.AreEqual("{Active} = TRUE", Predicate.Of<Flagged>(x => x.Active == true, SqlSpelling.PostgreSql).Template.ToString());
+        Assert.AreEqual("{Active}", Bound.Where<Flagged>(x => x.Active));
+        Assert.AreEqual("{Active} = TRUE", Bound.Where<Flagged>(x => x.Active == true));
 
         // Neither SQL Server nor SQLite has btrim, nor a string that begins with E.
-        Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("""btrim({Name}, E' \t\n\r')""")), KeyTarget.Of((Flagged x) => x.Name.Trim(), SqlSpelling.PostgreSql));
+        Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("""btrim({Name}, E' \t\n\r')""")), Bound.Key((Flagged x) => x.Name.Trim()));
     }
 
     /// <summary>
@@ -106,7 +106,7 @@ public sealed class PublicContractTests
     [TestMethod]
     public void SQLite_refuses_what_the_one_spelling_writes_for_Trim()
     {
-        var trimmed = ((KeyTarget.Template)KeyTarget.Of((Person x) => x.Name.Trim(), SqlSpelling.PostgreSql)).Sql.ToString().Replace("{Name}", "\"Name\"");
+        var trimmed = ((KeyTarget.Template)Bound.Key((Person x) => x.Name.Trim())).Sql.ToString().Replace("{Name}", "\"Name\"");
         Assert.AreEqual("""btrim("Name", E' \t\n\r')""", trimmed);
 
         using var database = new SqliteDatabase();
