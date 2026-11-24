@@ -71,6 +71,42 @@ public sealed class ComplexIndexes5xExclusionReaderTests
             Diff<MovedModels.SlotUnderGistDeferrable>(deferred));
     }
 
+    /// <summary>
+    /// Whether 5.x translated a filter or took it as text, its format does not say, so a filter
+    /// may name a column outside a placeholder. It is read as SQL written by hand: the constraint
+    /// reads the whole table, and a column that is dropped has the constraint out of its way.
+    /// Read as a package's own text, the migration would drop the column under a constraint
+    /// whose condition reads it, which PostgreSQL refuses (2BP01).
+    /// </summary>
+    [TestMethod]
+    public void A_filter_of_5x_may_read_a_column_it_does_not_name_by_a_path()
+    {
+        const string filtered = """[{"parts":[{"path":"During","op":"&&"}],"filter":"\"Note\" <> ''"}]""";
+
+        var operations = LegacyFixture.DiffFrom<SlotWithTheSameFilter>(source => source.Entity<Slot>(slot =>
+        {
+            slot.Property<string>("Note");
+            slot.HasAnnotation(Annotation, filtered);
+        })).Shape();
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                """ALTER TABLE "Slot" DROP CONSTRAINT "EX_Slot_During";""",
+                "DropColumnOperation",
+                """ALTER TABLE "Slot" ADD CONSTRAINT "EX_Slot_During" EXCLUDE USING gist ("During" WITH &&) WHERE ("Note" <> '');""",
+            },
+            operations);
+    }
+
+    /// <summary>The constraint 5.x left, declared with the same condition, on a table that no longer has the column the condition names.</summary>
+    private sealed class SlotWithTheSameFilter : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<Slot>().DeclarePostgres(pg =>
+                [pg.Exclusion(pg.Overlaps(x => x.During)) with { Where = new Predicate(SqlTemplate.Raw("\"Note\" <> ''")) }]);
+    }
+
     /// <summary>The constraint is in the database. A reader that passed over it would have the next migration create it again.</summary>
     [TestMethod]
     [DataRow("""[{"parts":[{"path":"Id","op":"="}]}]""", "whose elements are all compared with '='")]

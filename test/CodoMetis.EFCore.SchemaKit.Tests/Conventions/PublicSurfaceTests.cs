@@ -85,6 +85,10 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SqlHandler",
         "CodoMetis.EFCore.SchemaKit.SqlName",
         "CodoMetis.EFCore.SchemaKit.SqlOperator",
+        "CodoMetis.EFCore.SchemaKit.SqlSegment",
+        "CodoMetis.EFCore.SchemaKit.SqlSegment+Column",
+        "CodoMetis.EFCore.SchemaKit.SqlSegment+Raw",
+        "CodoMetis.EFCore.SchemaKit.SqlSegment+Text",
         "CodoMetis.EFCore.SchemaKit.SqlSpelling",
         "CodoMetis.EFCore.SchemaKit.TableRef",
     ];
@@ -99,6 +103,7 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.KeyTarget+Column",
         "CodoMetis.EFCore.SchemaKit.KeyTarget+Template",
         "CodoMetis.EFCore.SchemaKit.Predicate",
+        "CodoMetis.EFCore.SchemaKit.SqlTemplate",
         "CodoMetis.EFCore.SchemaKit.ValueList",
         "CodoMetis.EFCore.SchemaKit.ValueList`1",
     ];

@@ -34,13 +34,13 @@ public sealed class PgExclusionDeclarationTests
     {
         var constraint = Pg.Exclusion(Pg.Equal(x => x.Note!.ToLower()).Overlaps(x => x.Period));
 
-        Assert.AreEqual(new KeyTarget.Template("lower({Note})"), constraint.Elements[0].Target);
+        Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Note})")), constraint.Elements[0].Target);
         Assert.AreEqual(new KeyTarget.Column("Period"), constraint.Elements[1].Target);
     }
 
     [TestMethod]
     public void The_filter_is_translated_where_it_is_written()
-        => Assert.AreEqual("{RevokedOn} IS NULL", Models.ActivePeriod.Where!.Template);
+        => Assert.AreEqual("{RevokedOn} IS NULL", Models.ActivePeriod.Where!.Template.ToString());
 
     /// <summary>The translator's refusal reaches the declaration: nothing is stored that no SQL was written for.</summary>
     [TestMethod]
@@ -105,14 +105,14 @@ public sealed class PgExclusionDeclarationTests
     [TestMethod]
     public void A_condition_is_added_once()
     {
-        var active = new Predicate("{Note} IS NOT NULL");
+        var active = new Predicate(SqlTemplate.FromPlaceholders("{Note} IS NOT NULL"));
         var unfiltered = Models.ActivePeriod with { Where = null };
 
         Assert.AreEqual(active, unfiltered.AndWhere(active).Where);
         Assert.AreEqual(unfiltered.AndWhere(active), unfiltered.AndWhere(active).AndWhere(active));
 
         var both = Models.ActivePeriod.AndWhere(active);
-        Assert.AreEqual("({RevokedOn} IS NULL) AND ({Note} IS NOT NULL)", both.Where!.Template);
+        Assert.AreEqual("({RevokedOn} IS NULL) AND ({Note} IS NOT NULL)", both.Where!.Template.ToString());
         Assert.AreEqual(both, both.AndWhere(active));
     }
 
@@ -138,7 +138,7 @@ public sealed class PgExclusionDeclarationTests
 
         Assert.AreEqual("CodoMetis:Pg.Exclusion:6c399f7765274bfa", annotation.Name);
         Assert.AreEqual(
-            """{"$kind":"gist","v":2,"r":1,"name":"ex_role_grant_active_period","elements":[{"column":"GranteeId","op":"="},{"column":"RoleId","op":"="},{"column":"Period","op":"&&"}],"where":"{RevokedOn} IS NULL","deferral":"initiallyDeferred"}""",
+            """{"$kind":"gist","v":3,"r":1,"name":"ex_role_grant_active_period","elements":[{"column":"GranteeId","op":"="},{"column":"RoleId","op":"="},{"column":"Period","op":"&&"}],"where":[{"col":"RevokedOn"}," IS NULL"],"deferral":"initiallyDeferred"}""",
             annotation.Value);
     }
 
@@ -147,9 +147,9 @@ public sealed class PgExclusionDeclarationTests
     {
         var annotation = Stored(Entity<Models.Unnamed>()).Single();
 
-        Assert.AreEqual("CodoMetis:Pg.Exclusion:b96083373ed84f8f", annotation.Name);
+        Assert.AreEqual("CodoMetis:Pg.Exclusion:4dad9b7fc86bbbb2", annotation.Name);
         Assert.AreEqual(
-            """{"$kind":"gist","v":2,"r":1,"elements":[{"column":"GranteeId","op":"="},{"sql":"lower({Note})","op":"="},{"column":"Period","op":"&&"}],"deferral":"notDeferrable"}""",
+            """{"$kind":"gist","v":3,"r":1,"elements":[{"column":"GranteeId","op":"="},{"sql":["lower(",{"col":"Note"},")"],"op":"="},{"column":"Period","op":"&&"}],"deferral":"notDeferrable"}""",
             annotation.Value);
     }
 
@@ -163,7 +163,7 @@ public sealed class PgExclusionDeclarationTests
     {
         var stored = Stored(Entity<Models.TwoUnnamedThatDifferInTheCondition>()).Select(a => a.Name).Order(StringComparer.Ordinal).ToList();
 
-        CollectionAssert.AreEqual(new[] { "CodoMetis:Pg.Exclusion:a689767db5f37c5e", "CodoMetis:Pg.Exclusion:fe399bda900e9b95" }, stored);
+        Assert.AreEqual("CodoMetis:Pg.Exclusion:0a13ef47017ef78b, CodoMetis:Pg.Exclusion:a689767db5f37c5e", string.Join(", ", stored));
     }
 
     private sealed class EveryCase : ITestModel
@@ -172,7 +172,7 @@ public sealed class PgExclusionDeclarationTests
         [
             Models.ActivePeriod,
             Models.ActivePeriod with { Name = null, Deferral = Deferral.InitiallyImmediate, Where = null },
-            new PgExclusion.SpGist(new ExclusionElement(new KeyTarget.Template("({Period})"), new ExclusionOperator("-|-"))) { Name = "ex_adjacent", Where = new Predicate("{Note} = 'it''s'") },
+            new PgExclusion.SpGist(new ExclusionElement(new KeyTarget.Template(SqlTemplate.FromPlaceholders("({Period})")), new ExclusionOperator("-|-"))) { Name = "ex_adjacent", Where = new Predicate(SqlTemplate.FromPlaceholders("{Note} = 'it''s'")) },
         ];
 
         public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().DeclarePostgres(_ => Declared);
@@ -196,12 +196,15 @@ public sealed class PgExclusionDeclarationTests
     /// else: a declaration that comes out of a snapshot as another one is a migration nobody asked for.
     /// </summary>
     [TestMethod]
-    [DataRow("""{"$kind":"brin","v":2,"r":1,"elements":[{"column":"Period","op":"&&"}],"deferral":"notDeferrable"}""", "kind 'brin'")]
-    [DataRow("""{"$kind":"gist","v":2,"r":1,"elements":[{"column":"Period","op":"&&"}],"deferral":"sometimes"}""", "'sometimes'")]
-    [DataRow("""{"$kind":"gist","v":2,"r":1,"elements":[{"column":"Period","op":"&&"}]}""", "deferral")]
-    [DataRow("""{"$kind":"gist","v":2,"r":1,"elements":[{"column":"Period","sql":"{Period}","op":"&&"}],"deferral":"notDeferrable"}""", "exactly one")]
-    [DataRow("""{"$kind":"gist","v":2,"r":1,"elements":[{"op":"&&"}],"deferral":"notDeferrable"}""", "exactly one")]
-    [DataRow("""{"$kind":"gist","v":2,"r":1,"elements":[{"column":"Period","op":"&&","ops":"range_ops"}],"deferral":"notDeferrable"}""", "ops")]
+    [DataRow("""{"$kind":"brin","v":3,"r":1,"elements":[{"column":"Period","op":"&&"}],"deferral":"notDeferrable"}""", "kind 'brin'")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"column":"Period","op":"&&"}],"deferral":"sometimes"}""", "'sometimes'")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"column":"Period","op":"&&"}]}""", "deferral")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"column":"Period","sql":[{"col":"Period"}],"op":"&&"}],"deferral":"notDeferrable"}""", "exactly one")]
+    // The preview's form of SQL, one string, and text in two pieces where the writer writes one.
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"column":"Period","op":"&&"}],"where":"{RevokedOn} IS NULL","deferral":"notDeferrable"}""", "'where' that is not a list")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"column":"Period","op":"&&"}],"where":[{"col":"RevokedOn"}," IS"," NULL"],"deferral":"notDeferrable"}""", "that is not the one that was stored")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"op":"&&"}],"deferral":"notDeferrable"}""", "exactly one")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"elements":[{"column":"Period","op":"&&","ops":"range_ops"}],"deferral":"notDeferrable"}""", "ops")]
     public void A_stored_form_this_version_does_not_know_is_refused(string value, string expected)
     {
         var refusal = Assert.Throws<Exception>(() => ReadBack(value));

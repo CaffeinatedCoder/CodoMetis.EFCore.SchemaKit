@@ -38,7 +38,7 @@ public static class Sales
     {
         Name = Name,
         Include = ["Total"],
-        Where = new Predicate("{ShippedAt} IS NULL"),
+        Where = new Predicate(SqlTemplate.FromPlaceholders("{ShippedAt} IS NULL")),
     };
 
     private static EntityTypeBuilder<Order> Orders(ModelBuilder modelBuilder, string table = "Orders", string? schema = null)
@@ -75,7 +75,7 @@ public static class Sales
     public sealed class IndexedOnTheShipped : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("{ShippedAt} IS NOT NULL") });
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate(SqlTemplate.FromPlaceholders("{ShippedAt} IS NOT NULL")) });
     }
 
     public sealed class IndexedWithTheNoteIncluded : ITestModel
@@ -108,19 +108,19 @@ public static class Sales
     public sealed class FilteredByRawSql : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("[ShippedAt] IS NULL") });
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate(SqlTemplate.Raw("[ShippedAt] IS NULL")) });
     }
 
     public sealed class FilteredByRawSqlAndTheNoteRenamed : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("[ShippedAt] IS NULL") }).Property(x => x.Note).HasColumnName("Remark");
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate(SqlTemplate.Raw("[ShippedAt] IS NULL")) }).Property(x => x.Note).HasColumnName("Remark");
     }
 
     public sealed class FilteredByRawSqlAndItsColumnRenamed : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate("[SentAt] IS NULL") }).Property(x => x.ShippedAt).HasColumnName("SentAt");
+            => Orders(modelBuilder).DeclareProbe(Open with { Where = new Predicate(SqlTemplate.Raw("[SentAt] IS NULL")) }).Property(x => x.ShippedAt).HasColumnName("SentAt");
     }
 
     // ── A table in a schema of its own: every statement has to say the schema ──
@@ -332,7 +332,7 @@ public static class Sales
 
     // ── Two tables ──
 
-    private static readonly ProbeIndex Unpaid = new(["CustomerId"]) { Name = Name, Include = ["Total"], Where = new Predicate("{PaidAt} IS NULL") };
+    private static readonly ProbeIndex Unpaid = new(["CustomerId"]) { Name = Name, Include = ["Total"], Where = new Predicate(SqlTemplate.FromPlaceholders("{PaidAt} IS NULL")) };
 
     private static EntityTypeBuilder<Invoice> Invoices(ModelBuilder modelBuilder)
     {
@@ -441,6 +441,6 @@ public static class Sales
     public sealed class OpenNumbersAreUnique : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
-            => Orders(modelBuilder).DeclareProbe(new ProbeIndex(["Number"]) { Name = "UX_orders_open_number", IsUnique = true, Where = new Predicate("{ShippedAt} IS NULL") });
+            => Orders(modelBuilder).DeclareProbe(new ProbeIndex(["Number"]) { Name = "UX_orders_open_number", IsUnique = true, Where = new Predicate(SqlTemplate.FromPlaceholders("{ShippedAt} IS NULL")) });
     }
 }

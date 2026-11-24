@@ -137,6 +137,8 @@ internal static class SchemaKitStrings
         {
             null => "A format version is a whole number: the snapshot was edited by hand or is damaged.",
             var higher when higher > known => "The snapshot was written by a newer SchemaKit: reading it as the older format would resolve it wrongly. Update the package.",
+            2 => "That is the format of 11.0.0-preview.1, which this version does not read: it kept SQL as one string, and what a " +
+                 "string leaves out cannot be read back. Remove the migrations scaffolded with the preview and scaffold them again.",
             _ => "That is an older format, which this version does not read: reading it as the newer one would resolve it wrongly.",
         };
 
@@ -167,6 +169,11 @@ internal static class SchemaKitStrings
            $"Stored: {stored}. What it read writes: {rewritten}. Read must keep every property it takes from the reader.";
 
     // ---- resolution ------------------------------------------------------------------------------
+
+    public static string SegmentNotAPropertyPath(string path)
+        => $"'{path}' is not a property path. A path is property names separated by dots, such as 'Address.City'.";
+
+    public const string TemplateWithoutSegments = "SQL in a declaration has at least one segment.";
 
     public static string NotAPropertyPath(string entity, string path)
         => $"'{path}' on {entity} is not a property path. A path is property names separated by dots, such as 'Address.City'.";

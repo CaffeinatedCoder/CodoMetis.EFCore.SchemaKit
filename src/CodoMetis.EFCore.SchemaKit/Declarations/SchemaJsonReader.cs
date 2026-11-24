@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using CodoMetis.EFCore.SchemaKit.Declarations.Internal;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit;
@@ -59,6 +60,51 @@ public sealed class SchemaJsonReader
         return [.. array.EnumerateArray().Select(item
             => item.ValueKind == JsonValueKind.String ? item.GetString()! : throw Malformed(name, "a list of strings"))];
     }
+
+    /// <summary>SQL that was written with <see cref="SchemaJsonWriter.Template" />.</summary>
+    /// <param name="name">The property name.</param>
+    public SqlTemplate Template(string name) => OptionalTemplate(name) ?? throw Missing(name);
+
+    /// <summary>SQL that was written with <see cref="SchemaJsonWriter.OptionalTemplate" />, or null when nothing was.</summary>
+    /// <param name="name">The property name.</param>
+    public SqlTemplate? OptionalTemplate(string name)
+    {
+        if (Find(name, JsonValueKind.Array) is not { } array) return null;
+
+        // A segment is a string, or an object with the one property of its kind. Anything else is
+        // a segment this version does not know, and leaving it out would be another condition.
+        List<SqlSegment> segments = [];
+        foreach (var item in array.EnumerateArray())
+        {
+            segments.Add(item.ValueKind switch
+            {
+                JsonValueKind.String when item.GetString() is { Length: > 0 } text => new SqlSegment.Text(text),
+                JsonValueKind.Object when Only(item) is var (kind, value) && value.Length > 0 => kind switch
+                {
+                    DeclarationCodecNames.Column when Resolution.Internal.ModelSchemaResolver.IsPropertyPath(value) => new SqlSegment.Column(value),
+                    DeclarationCodecNames.Raw => new SqlSegment.Raw(value),
+                    _ => throw Malformed(name, TemplateShape),
+                },
+                _ => throw Malformed(name, TemplateShape),
+            });
+        }
+
+        return segments.Count > 0 ? SqlTemplate.Of(segments) : throw Malformed(name, TemplateShape);
+
+        static (string Kind, string Value)? Only(JsonElement item)
+        {
+            (string, string)? only = null;
+            foreach (var property in item.EnumerateObject())
+            {
+                if (only is not null || property.Value.ValueKind != JsonValueKind.String) return null;
+                only = (property.Name, property.Value.GetString()!);
+            }
+
+            return only;
+        }
+    }
+
+    private const string TemplateShape = "SQL as segments: a list in which each item is a string that is not empty, {\"col\": a property path} or {\"raw\": SQL}";
 
     /// <summary>A nested object that was written.</summary>
     public T Object<T>(string name, Func<SchemaJsonReader, T> read)

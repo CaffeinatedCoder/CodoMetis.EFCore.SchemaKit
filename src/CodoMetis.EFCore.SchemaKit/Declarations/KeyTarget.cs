@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using System.Text;
 using CodoMetis.EFCore.SchemaKit.Translation.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit;
@@ -33,20 +34,20 @@ public closed record KeyTarget
         } = Required(Path, nameof(Path));
     }
 
-    /// <summary>An expression: SQL in which each <c>{Path}</c> stands for that path's column.</summary>
+    /// <summary>An expression: SQL, and the columns it reads by their property paths.</summary>
     /// <remarks>
-    /// The SQL is one provider's, as its queries spell it, and this is its stored form in this
-    /// preview. The form is not final before 11.0.0.
+    /// The SQL is one provider's, as its queries spell it. It comes from that provider's factory;
+    /// it is not made from text.
     /// </remarks>
-    /// <param name="Sql">The SQL, with its placeholders.</param>
-    public sealed record Template(string Sql) : KeyTarget
+    /// <param name="Sql">The expression.</param>
+    public sealed record Template(SqlTemplate Sql) : KeyTarget
     {
-        /// <summary>The SQL, with its placeholders.</summary>
-        public string Sql
+        /// <summary>The expression.</summary>
+        public SqlTemplate Sql
         {
             get;
-            init => field = Required(value, nameof(Sql));
-        } = Required(Sql, nameof(Sql));
+            init => field = value ?? throw new ArgumentNullException(nameof(Sql));
+        } = Sql ?? throw new ArgumentNullException(nameof(Sql));
     }
 
     /// <summary>
@@ -66,13 +67,13 @@ public closed record KeyTarget
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(spelling);
-        var template = LambdaTranslator.Expression(key);
 
         // The translator writes a property as one placeholder and nothing around it. Anything it
         // wrote besides is SQL, and SQL is an expression however short.
-        return template.Length > 2 && template[0] == '{' && template[^1] == '}' && template.AsSpan(1, template.Length - 2).IndexOfAny('{', '}') < 0
-            ? new Column(template[1..^1])
-            : new Template(template);
+#pragma warning disable SK9001 // The kernel's own translator writes placeholders; this is where they become segments.
+        var template = SqlTemplate.FromPlaceholders(LambdaTranslator.Expression(key));
+#pragma warning restore SK9001
+        return template.SingleColumn is { } path ? new Column(path) : new Template(template);
     }
 
     // A record's `with` goes through init and not through the constructor, so the rule is in both.
@@ -84,29 +85,22 @@ public closed record KeyTarget
 }
 
 /// <summary>
-/// The condition of a partial index or a constraint, as it is stored: SQL in which each
-/// <c>{Path}</c> stands for that path's column.
+/// The condition of a partial index or a constraint: SQL, and the columns it reads by their
+/// property paths.
 /// </summary>
 /// <remarks>
-/// The SQL is one provider's, as its queries spell it, and this is its stored form in this
-/// preview. The form is not final before 11.0.0.
+/// The SQL is one provider's, as its queries spell it. It comes from that provider's factory; it is
+/// not made from text.
 /// </remarks>
-/// <param name="Template">The SQL, with its placeholders.</param>
-public sealed record Predicate(string Template)
+/// <param name="Template">The condition.</param>
+public sealed record Predicate(SqlTemplate Template)
 {
-    /// <summary>The SQL, with its placeholders.</summary>
-    public string Template
+    /// <summary>The condition.</summary>
+    public SqlTemplate Template
     {
         get;
-        init => field = Required(value);
-    } = Required(Template);
-
-    // A record's `with` goes through init and not through the constructor, so the rule is in both.
-    private static string Required(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(Template));
-        return value;
-    }
+        init => field = value ?? throw new ArgumentNullException(nameof(Template));
+    } = Template ?? throw new ArgumentNullException(nameof(Template));
 
     /// <summary>
     /// Translates a typed condition, where it is written. A comparison that can be NULL is written
@@ -132,7 +126,9 @@ public sealed record Predicate(string Template)
     {
         ArgumentNullException.ThrowIfNull(predicate);
         ArgumentNullException.ThrowIfNull(spelling);
-        return new Predicate(LambdaTranslator.Predicate(predicate));
+#pragma warning disable SK9001 // The kernel's own translator writes placeholders; this is where they become segments.
+        return new Predicate(SqlTemplate.FromPlaceholders(LambdaTranslator.Predicate(predicate)));
+#pragma warning restore SK9001
     }
 
     /// <summary>
@@ -143,19 +139,66 @@ public sealed record Predicate(string Template)
     public Predicate And(Predicate other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return Template == other.Template || EndsWithConjunct(other.Template)
-            ? this
-            : new Predicate($"({Template}) AND ({other.Template})");
+        if (Template.Equals(other.Template) || EndsWithConjunct(other.Template)) return this;
+
+#pragma warning disable SK9001 // The parentheses and the AND are the kernel's own text.
+        return new Predicate(SqlTemplate.Of(
+        [
+            new SqlSegment.Text("("), .. Template.Segments, new SqlSegment.Text(") AND ("), .. other.Template.Segments, new SqlSegment.Text(")"),
+        ]));
+#pragma warning restore SK9001
     }
 
     // Only what this method writes counts: "(…) AND (other)", where the first parenthesis closes
     // right before the AND. 5.x took any text that ends in " AND (other)" for it, and so does
     // "{A} OR {B} AND ({C})", which is A OR (B AND C): adding C to it changed nothing, and the
-    // condition stayed wider than the one asked for (#83).
-    private bool EndsWithConjunct(string other)
+    // condition stayed wider than the one asked for (#83). The comparison is of the segments,
+    // written out so that a column and hand-written SQL are told from the text between them:
+    // hand-written SQL that reads ") AND (" is not this method's text.
+    private bool EndsWithConjunct(SqlTemplate other)
     {
-        var ending = $" AND ({other})";
-        return Template.EndsWith(ending, StringComparison.Ordinal) && IsOneGroup(Template.AsSpan(0, Template.Length - ending.Length));
+        var whole = Flat(Template);
+        var ending = $" AND ({Flat(other)})";
+        return whole.EndsWith(ending, StringComparison.Ordinal) && IsOneGroup(whole.AsSpan(0, whole.Length - ending.Length));
+    }
+
+    private const char Escape = '\u0001';
+    private const char ColumnMark = '\u0002';
+    private const char RawMark = '\u0003';
+
+    /// <summary>
+    /// The segments in one string: a package's text as it is, a column and hand-written SQL each
+    /// between two marks of their kind. A mark that is part of a segment's text is escaped, so no
+    /// text can pass for a segment of another kind.
+    /// </summary>
+    private static string Flat(SqlTemplate template)
+    {
+#pragma warning disable SK9001 // The kernel reads the segments of its own value.
+        StringBuilder text = new();
+        foreach (var segment in template.Segments)
+        {
+            _ = segment switch
+            {
+                SqlSegment.Text written  => Append(written.Sql),
+                SqlSegment.Column column => Append(column.Path, ColumnMark),
+                SqlSegment.Raw raw       => Append(raw.Sql, RawMark),
+            };
+        }
+
+        return text.ToString();
+#pragma warning restore SK9001
+
+        StringBuilder Append(string content, char? mark = null)
+        {
+            if (mark is { } opening) text.Append(opening);
+            foreach (var ch in content)
+            {
+                if (ch is Escape or ColumnMark or RawMark) text.Append(Escape);
+                text.Append(ch);
+            }
+
+            return mark is { } closing ? text.Append(closing) : text;
+        }
     }
 
     /// <summary>Whether the text is one parenthesised group: its first parenthesis closes at its last character, quoted text aside.</summary>

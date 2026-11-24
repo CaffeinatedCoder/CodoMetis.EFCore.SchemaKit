@@ -50,7 +50,7 @@ public sealed record ProbeIndex(ValueList<string> Keys) : ISchemaDeclaration<Pro
     {
         writer.Strings("keys", Keys);
         writer.Strings("include", Include);
-        writer.OptionalString("where", Where?.Template);
+        writer.OptionalTemplate("where", Where?.Template);
         writer.Boolean("unique", IsUnique);
     }
 
@@ -60,7 +60,7 @@ public sealed record ProbeIndex(ValueList<string> Keys) : ISchemaDeclaration<Pro
             Name = header.Name,
             Epoch = header.Epoch,
             Include = reader.Strings("include"),
-            Where = reader.OptionalString("where") is { } where ? new Predicate(where) : null,
+            Where = reader.OptionalTemplate("where") is { } where ? new Predicate(where) : null,
             IsUnique = reader.Boolean("unique"),
         };
 }

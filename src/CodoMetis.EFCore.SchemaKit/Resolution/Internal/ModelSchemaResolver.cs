@@ -77,44 +77,43 @@ internal sealed class ModelSchemaResolver : SchemaResolver
                ?? throw new InvalidOperationException(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable));
     }
 
-    public override SqlFragment Template(string template)
+    public override SqlFragment Template(SqlTemplate template)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(template);
+        ArgumentNullException.ThrowIfNull(template);
 
-        StringBuilder sql = new(template.Length + 16);
-        StringBuilder token = new(template.Length);
+        StringBuilder sql = new();
+        StringBuilder token = new();
         List<Dependency> reads = [];
-        var inLiteral = false;
+        var byHand = false;
 
-        for (var i = 0; i < template.Length; i++)
+        foreach (var segment in template.Segments)
         {
-            var ch = template[i];
-
-            // A doubled quote inside a literal toggles twice, which leaves the state where it was.
-            if (ch == '\'') inLiteral = !inLiteral;
-
-            if (ch == '{' && !inLiteral)
+            switch (segment)
             {
-                var end = template.IndexOf('}', i + 1);
-                if (end > i + 1 && IsPropertyPath(template.AsSpan(i + 1, end - i - 1)))
-                {
-                    var (column, own) = ResolveColumn(template[(i + 1)..end]);
+                case SqlSegment.Text text:
+                    sql.Append(text.Sql);
+                    token.Append(text.Sql);
+                    break;
+
+                case SqlSegment.Raw raw:
+                    sql.Append(raw.Sql);
+                    token.Append(raw.Sql);
+                    byHand = true;
+                    break;
+
+                case SqlSegment.Column path:
+                    var (column, own) = ResolveColumn(path.Path);
                     sql.Append(Dialect.Delimit(column));
                     token.Append(own);
                     Dependency read = new Dependency.Column(Table, column);
                     if (!reads.Contains(read)) reads.Add(read);
-                    i = end;
-                    continue;
-                }
+                    break;
             }
-
-            sql.Append(ch);
-            token.Append(ch);
         }
 
-        // A column named outside a placeholder is invisible here, and no scan of SQL can prove there
-        // is none. So SQL that names no column through a placeholder is taken to read all of them.
-        if (reads.Count == 0) reads.Add(new Dependency.WholeTable(Table));
+        // A column named in SQL written by hand is invisible here, and no scan of SQL can prove
+        // there is none. So such SQL is taken to read every column, beside the ones it names by a path.
+        if (byHand) reads.Add(new Dependency.WholeTable(Table));
 
         return new SqlFragment(sql.ToString(), [.. reads], NameTokens.Of(token.ToString()));
     }

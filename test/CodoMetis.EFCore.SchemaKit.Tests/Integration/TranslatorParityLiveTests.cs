@@ -125,7 +125,7 @@ public sealed class TranslatorParityLiveTests
         var entityType = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(ParityRow))!;
         var expression = context.GetService<CodoMetis.EFCore.SchemaKit.Resolution.Internal.SchemaResolverFactory>()
             .Create(entityType, new Harness.TestGuard.Trigger("Id"))
-            .Template(CodoMetis.EFCore.SchemaKit.Translation.Internal.LambdaTranslator.Expression(key));
+            .Template(SqlTemplate.FromPlaceholders(CodoMetis.EFCore.SchemaKit.Translation.Internal.LambdaTranslator.Expression(key)));
 
         _server.Execute($"CREATE UNIQUE INDEX ux_parity_label ON {ParityModel.Table} (({expression}))");
         context.Rows.Add(Row(1));

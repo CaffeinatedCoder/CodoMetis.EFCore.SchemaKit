@@ -25,7 +25,7 @@
     </ItemGroup>
 
     <!--
-        The kernel is a dependency at exactly this package's version, `[11.0.0-preview.1]`.
+        The kernel is a dependency at exactly this package's version, `[11.0.0-preview.2]`.
 
         Pack writes a project reference as a lower bound. This package is written against a
         contract that is experimental until rc.1 and may change in any preview, so with a lower

@@ -14,8 +14,9 @@ namespace CodoMetis.EFCore.SchemaKit.Declarations.Internal;
 /// <para>
 /// <b>The value</b> is one JSON object, written by hand in a fixed order: <c>$kind</c>, <c>v</c>,
 /// <c>r</c>, <c>name</c> when there is one, then the declaration's own properties in the order it
-/// writes them. <c>v</c> is the format version; 2 is the first, the 5.x blobs being the format
-/// before it. A reader that meets another version refuses it.
+/// writes them. <c>v</c> is the format version. The 5.x blobs are the format before 2, which
+/// 11.0.0-preview.1 wrote with SQL as one string; 3 holds SQL as segments. A reader that meets
+/// another version refuses it.
 /// </para>
 /// <para>
 /// <b>The key</b> is <c>CodoMetis:{Owner}:{hash}</c>, the first 16 hex digits of SHA-256 over the
@@ -29,7 +30,7 @@ internal static class DeclarationCodec
     public const string Prefix = "CodoMetis:";
 
     /// <summary>The format this version writes and the only one it reads here. The 5.x readers are their own.</summary>
-    public const int FormatVersion = 2;
+    public const int FormatVersion = 3;
 
     // Strings do not go through this encoder: CanonicalJson writes them, by a rule that is the same
     // on every runtime and that keeps an operator readable in a snapshot ("&&", not "\u0026\u0026").
