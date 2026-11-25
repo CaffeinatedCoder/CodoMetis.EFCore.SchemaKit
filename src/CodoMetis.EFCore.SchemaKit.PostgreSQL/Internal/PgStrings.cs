@@ -38,9 +38,10 @@ internal static class PgStrings
            + $"'{method}'. PgExclusion declares GiST constraints, and SP-GiST constraints of one element. Before moving to "
            + "SchemaKit, remove the constraint in the 5.x project and apply that migration; afterwards keep it by hand-written SQL.";
 
-    public static string LegacyExclusionOnTpcRoot(string entity)
-        => $"The model snapshot holds exclusion constraints from {Legacy} on {entity}, the root of a TPC hierarchy. 5.x created "
-           + "a copy of each on every table of the hierarchy; this version resolves a declaration for its own table only and "
-           + "would lose track of the copies. A TPC hierarchy with exclusion constraints cannot move yet "
-           + "(https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43).";
+    public static string LegacyExclusionOnTpcRootBeforeCopies(string entity)
+        => $"The model snapshot holds exclusion constraints from {Legacy} on {entity}, a type of a TPC hierarchy with derived types, "
+           + "and was scaffolded before 5.5.0: the constraints are in the table of that type alone. SchemaKit creates such a "
+           + "constraint in every table of the hierarchy, as 5.x does from 5.5.0 on, and cannot say from this snapshot which tables "
+           + "have it. Before moving to SchemaKit, update the project to EFCore.ComplexIndexes 5.6, add a migration, which creates "
+           + "the constraints in the derived types' tables, and apply it.";
 }

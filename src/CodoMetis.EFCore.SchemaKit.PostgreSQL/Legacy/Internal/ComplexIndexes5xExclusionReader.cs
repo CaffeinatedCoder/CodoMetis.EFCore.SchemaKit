@@ -40,6 +40,13 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
 
     public override string Annotation => AnnotationName;
 
+    // 5.x's own reading of its version: a snapshot without the annotation is of the first.
+    private const string RenderingVersionAnnotation = "CustomIndex:RenderingVersion";
+
+    private const int CopiesOnEveryTable = 3;
+
+    private static int RenderingVersion(IReadOnlyModel model) => model.FindAnnotation(RenderingVersionAnnotation)?.Value is int version ? version : 1;
+
     protected override IEnumerable<PgExclusion> Read(IReadOnlyEntityType entityType, string value)
     {
         // 5.x read an empty annotation as no constraints, and so it is here.
@@ -47,12 +54,17 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
 
         var entity = entityType.ShortName();
 
-        // From its third rendering version on, 5.x gave every table of a TPC hierarchy its copy of
-        // a constraint declared on the root, under names it derived per table. A declaration is
-        // resolved for its own table only (#43), so read as one constraint the copies would be
-        // left in the database with nothing that knows them.
-        if (entityType.GetMappingStrategy() == RelationalAnnotationNames.TpcMappingStrategy && entityType.GetDirectlyDerivedTypes().Any())
-            throw new InvalidOperationException(PgStrings.LegacyExclusionOnTpcRoot(entity));
+        // From its third rendering version on (5.5.0), 5.x gave every table of a TPC hierarchy its
+        // copy of a constraint declared on a type above it, under names it derived per table. A
+        // declaration lands the same way, under the same names (#118), so such a constraint is
+        // read as any other. Before that version the constraint is in the declaring type's own
+        // table alone: read as a declaration it would say the derived types' tables hold copies
+        // that are not there, and the first migration after the move would try to drop them or
+        // never create them.
+        if (entityType.GetMappingStrategy() == RelationalAnnotationNames.TpcMappingStrategy
+            && entityType.GetDirectlyDerivedTypes().Any()
+            && RenderingVersion(entityType.Model) < CopiesOnEveryTable)
+            throw new InvalidOperationException(PgStrings.LegacyExclusionOnTpcRootBeforeCopies(entity));
 
         JsonDocument document;
         try

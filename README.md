@@ -95,7 +95,6 @@ SQL for fails in `OnModelCreating`, not in a migration.
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor until a create after SQLite's table rebuild is placed after it | [plan, section 3.12](design/schemakit-core-plan.md#312-other-providers-and-sqlite) |
-| A 5.x snapshot with an exclusion constraint on the root of a TPC hierarchy: refused | [#118](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118) |
 | A declaration on an entity split over two tables: resolved against its first table | [#118](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118) |
 | A declaration on a column only a derived type has, while the type shares its table: refused | [#85](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/85) |
 | A cast in a lambda that changes the value, such as `(int)x.Amount == 2`: refused | [#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103) |

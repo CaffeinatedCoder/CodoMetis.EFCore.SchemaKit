@@ -47,6 +47,37 @@ public sealed class LegacyHandoverLiveTests
         CollectionAssert.AreEqual(Array.Empty<string>(), LegacyFixture.DiffTo<MovedModels.Declared>().Shape());
     }
 
+    /// <summary>
+    /// The same for two TPC hierarchies (#189): 5.x's migration leaves a copy of each constraint
+    /// in every table, under the names a declaration here gives its copies, and a copy 5.x built
+    /// refuses its table's overlapping rows under SchemaKit's model.
+    /// </summary>
+    [TestMethod]
+    public void A_TPC_hierarchy_built_by_5x_holds_what_the_model_declared_here_creates()
+    {
+        using var built = new LiveDatabase();
+        using var context = LegacyFixture.Context<MovedModels.TpcDeclared>(built.ConnectionString);
+        Apply(context, LegacyFixture.TpcUp);
+
+        using var created = new LiveDatabase();
+        using (var fresh = LegacyFixture.Context<MovedModels.TpcDeclared>(created.ConnectionString))
+            fresh.Database.EnsureCreated();
+
+        var expected = created.Exclusions();
+        Assert.HasCount(8, expected);
+        CollectionAssert.AreEqual(expected, built.Exclusions());
+
+        context.AddRange(
+            new Legacy5x.CarRental { UnitId = 1, During = Days(1, 10) },
+            new Legacy5x.BoatRental { UnitId = 1, During = Days(20, 30) });
+        context.SaveChanges();
+
+        context.Add(new Legacy5x.CarRental { UnitId = 2, During = Days(5, 15) });
+        var refusal = (PostgresException)Assert.ThrowsExactly<DbUpdateException>(() => context.SaveChanges()).InnerException!;
+        Assert.AreEqual(PostgresErrorCodes.ExclusionViolation, refusal.SqlState);
+        Assert.AreEqual("EX_car_rentals_During", refusal.ConstraintName);
+    }
+
     /// <summary>What the handover is for: the constraints 5.x built keep refusing what they refused, under SchemaKit's model.</summary>
     [TestMethod]
     public void The_constraints_5x_built_still_refuse_an_overlap()

@@ -60,6 +60,31 @@ namespace Legacy5x
 
     public sealed class Truck : Vehicle;
 
+    public class Rental
+    {
+        public int Id { get; set; }
+        public int UnitId { get; set; }
+        public NpgsqlRange<DateOnly> During { get; set; }
+    }
+
+    public sealed class CarRental : Rental;
+
+    public sealed class BoatRental : Rental;
+
+    public abstract class Permit
+    {
+        public int Id { get; set; }
+        public int HolderId { get; set; }
+        public NpgsqlRange<DateOnly> During { get; set; }
+    }
+
+    public sealed class ParkingPermit : Permit;
+
+    public sealed class FishingPermit : Permit;
+
+    /// <summary>The same for the snapshot of the two TPC hierarchies.</summary>
+    public abstract class TpcContext : DbContext;
+
     /// <summary>What the scaffolded files' <c>[DbContext]</c> names. Nothing is made of it.</summary>
     public abstract class LegacyContext : DbContext;
 
@@ -133,6 +158,40 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
                 Leases(modelBuilder);
                 Slots(modelBuilder);
             }
+        }
+
+        private static void Hierarchies(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Rental>().UseTpcMappingStrategy().ToTable("rentals");
+            modelBuilder.Entity<CarRental>().ToTable("car_rentals");
+            modelBuilder.Entity<BoatRental>().ToTable("boat_rentals");
+            modelBuilder.Entity<Permit>().UseTpcMappingStrategy();
+            modelBuilder.Entity<ParkingPermit>().ToTable("parking_permits");
+            modelBuilder.Entity<FishingPermit>().ToTable("fishing_permits");
+        }
+
+        /// <summary>
+        /// The model of <c>Generator/Tpc.cs</c> after the move: each constraint declared once, on
+        /// the type 5.x had it on, and a copy of it in every table of the hierarchy below.
+        /// </summary>
+        public sealed class TpcDeclared : ITestModel
+        {
+            public static void Build(ModelBuilder modelBuilder)
+            {
+                Hierarchies(modelBuilder);
+                modelBuilder.Entity<Rental>().DeclarePostgres(pg =>
+                [
+                    pg.Exclusion(pg.Equal(x => x.UnitId).Overlaps(x => x.During), name: "ex_rental"),
+                    pg.Exclusion(pg.Overlaps(x => x.During)),
+                ]);
+                modelBuilder.Entity<Permit>().DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.HolderId).Overlaps(x => x.During), name: "ex_permit")]);
+            }
+        }
+
+        /// <summary>The two hierarchies with nothing declared.</summary>
+        public sealed class TpcNothingDeclared : ITestModel
+        {
+            public static void Build(ModelBuilder modelBuilder) => Hierarchies(modelBuilder);
         }
 
         /// <summary>The tables alone: what a consumer has who swapped the packages and declared nothing yet.</summary>
@@ -225,6 +284,17 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
         private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> Compiled = new(() => Compile(Folder));
 
         private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> CompiledOtherKinds = new(() => Compile(OtherKindsFolder));
+
+        /// <summary>The model with exclusion constraints on two TPC hierarchies, a copy in every table (#189).</summary>
+        public static string TpcFolder { get; } = Path.Combine(Fixtures, "ScaffoldedTpc");
+
+        private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> CompiledTpc = new(() => Compile(TpcFolder));
+
+        /// <summary>The 5.x snapshot of the TPC hierarchies as <c>dotnet ef</c> prepares it for a diff.</summary>
+        public static IRelationalModel TpcSnapshot(DbContext context) => Prepare(context, CompiledTpc.Value.Snapshot.Model);
+
+        /// <summary>What the 5.x migration of the TPC hierarchies does to a database, as 5.x scaffolded it.</summary>
+        public static IReadOnlyList<MigrationOperation> TpcUp => CompiledTpc.Value.Migration.UpOperations;
 
         /// <summary>The snapshot of the kinds nothing reads yet, as 5.x wrote it.</summary>
         public static IModel OtherKinds => CompiledOtherKinds.Value.Snapshot.Model;
