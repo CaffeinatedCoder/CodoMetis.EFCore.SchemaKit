@@ -284,6 +284,18 @@ public static class Models
         }
     }
 
+    /// <summary><see cref="SchedulingWithAComputedGrantee" />, and the table under another name in the same migration.</summary>
+    public sealed class SchedulingRenamedWithAComputedGrantee : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = modelBuilder.Entity<RoleGrant>().ToTable("grants_renamed");
+            grants.HasKey(x => x.Id).HasName("PK_role_grants");
+            grants.Property(x => x.GranteeId).HasComputedColumnSql("\"RoleId\" * 10", stored: true);
+            grants.DeclarePostgres(_ => [ActivePeriod]);
+        }
+    }
+
     /// <summary><see cref="Scheduling" />, and the column only the condition reads becomes a computed one.</summary>
     public sealed class SchedulingWithAComputedRevocation : ITestModel
     {

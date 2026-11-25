@@ -30,6 +30,10 @@ One section per version, newest first, in the form
 - Whether a column in a condition can be null is the model's answer, not the C# annotation's: `IsRequired()` on a `string?` leaves the null compensation out, and `IsRequired(false)` on a `string` puts it in ([#180](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/180)).
 - The expression and the condition of an exclusion constraint read from a 5.x snapshot are SQL written by hand: the constraint is taken to read every column of its table ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
 
+### Fixed
+
+- A 5.x snapshot with an empty list of exclusion constraints on a type of a TPC hierarchy is read as holding none, where one scaffolded before 5.5.0 was refused as if it held constraints ([#171](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/171)).
+
 ## [11.0.0-preview.1] — 2026-11-17
 
 The first preview, for `net11.0`, EF Core 11 with `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`, and PostgreSQL 16 and 18. It declares exclusion constraints only: indexes, SQL Server, SQLite and the rest are [not in it yet](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#what-it-does-not-do-yet). The stored form of a declaration in a model snapshot is not final in a preview, and a later preview may ask for the migrations to be scaffolded again. That does not change a database already built, so a database built from a preview is one to build again; the permanent promise starts at `11.0.0` ([#9](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/9)).

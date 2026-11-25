@@ -54,18 +54,6 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
 
         var entity = entityType.ShortName();
 
-        // From its third rendering version on (5.5.0), 5.x gave every table of a TPC hierarchy its
-        // copy of a constraint declared on a type above it, under names it derived per table. A
-        // declaration lands the same way, under the same names (#118), so such a constraint is
-        // read as any other. Before that version the constraint is in the declaring type's own
-        // table alone: read as a declaration it would say the derived types' tables hold copies
-        // that are not there, and the first migration after the move would try to drop them or
-        // never create them.
-        if (entityType.GetMappingStrategy() == RelationalAnnotationNames.TpcMappingStrategy
-            && entityType.GetDirectlyDerivedTypes().Any()
-            && RenderingVersion(entityType.Model) < CopiesOnEveryTable)
-            throw new InvalidOperationException(PgStrings.LegacyExclusionOnTpcRootBeforeCopies(entity));
-
         JsonDocument document;
         try
         {
@@ -80,6 +68,22 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
         {
             if (document.RootElement.ValueKind != JsonValueKind.Array)
                 throw new InvalidOperationException(PgStrings.LegacyExclusionUnreadable(entity, "it is not a list"));
+
+            // A list without an entry holds no constraint, whatever the entity type is mapped as:
+            // the kernel's own guard reads it so, and an empty annotation is read so above (#171).
+            if (document.RootElement.GetArrayLength() == 0) return [];
+
+            // From its third rendering version on (5.5.0), 5.x gave every table of a TPC hierarchy
+            // its copy of a constraint declared on a type above it, under names it derived per
+            // table. A declaration lands the same way, under the same names (#118), so such a
+            // constraint is read as any other. Before that version the constraint is in the
+            // declaring type's own table alone: read as a declaration it would say the derived
+            // types' tables hold copies that are not there, and the first migration after the
+            // move would try to drop them or never create them.
+            if (entityType.GetMappingStrategy() == RelationalAnnotationNames.TpcMappingStrategy
+                && entityType.GetDirectlyDerivedTypes().Any()
+                && RenderingVersion(entityType.Model) < CopiesOnEveryTable)
+                throw new InvalidOperationException(PgStrings.LegacyExclusionOnTpcRootBeforeCopies(entity));
 
             return [.. document.RootElement.EnumerateArray().Select(constraint => ReadConstraint(entity, constraint))];
         }

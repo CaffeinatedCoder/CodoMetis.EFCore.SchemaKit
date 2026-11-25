@@ -608,6 +608,11 @@ public sealed class PgExclusionLiveTests
     public void Making_an_element_column_a_computed_one() => AssertMigratesTo<Models.Scheduling, Models.SchedulingWithAComputedGrantee>(
         (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
 
+    /// <summary>The same with the table renamed in the same migration (#172): the constraint is there afterwards, on the table under its new name.</summary>
+    [TestMethod]
+    public void Making_an_element_column_a_computed_one_and_renaming_its_table() => AssertMigratesTo<Models.Scheduling, Models.SchedulingRenamedWithAComputedGrantee>(
+        (migrated, _) => StringAssert.StartsWith(migrated.Exclusions().Single(), "public.grants_renamed | "));
+
     [TestMethod]
     public void Making_a_computed_element_column_a_plain_one() => AssertMigratesTo<Models.SchedulingWithAComputedGrantee, Models.Scheduling>(
         (migrated, _) => CollectionAssert.AreEqual(new[] { Scheduling }, migrated.Exclusions()));

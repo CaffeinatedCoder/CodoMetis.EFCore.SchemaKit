@@ -425,6 +425,22 @@ public sealed class PgExclusionMigrationTests
             new[] { Extension, "AlterColumnOperation", Add },
             Contexts.Diff<Models.Scheduling, Models.SchedulingWithAComputedGrantee>().Shape());
 
+    /// <summary>
+    /// The same beside a rename of the table (#172). The change names the table as the target
+    /// has it and the constraint as the source has it, so the column is found by its name: looked
+    /// up with the table, it was not found, and the constraint was dropped first, which the
+    /// server would have done with the column anyway.
+    /// </summary>
+    [TestMethod]
+    public void An_element_column_that_becomes_computed_beside_a_rename_of_its_table_is_found_by_its_name()
+    {
+        var shape = Contexts.Diff<Models.Scheduling, Models.SchedulingRenamedWithAComputedGrantee>().Shape();
+
+        CollectionAssert.Contains(shape, "RenameTableOperation");
+        Assert.IsFalse(shape.Any(statement => statement.Contains("DROP CONSTRAINT", StringComparison.Ordinal)), string.Join("\n", shape));
+        Assert.AreEqual(Add.Replace("role_grants", "grants_renamed"), shape[^1]);
+    }
+
     /// <summary>The same for the column the condition reads: there PostgreSQL refuses the drop while the constraint exists.</summary>
     [TestMethod]
     public void A_condition_column_that_becomes_computed_needs_the_constraint_out_of_the_way()

@@ -173,5 +173,18 @@ public sealed class ComplexIndexes5xExclusionReaderTests
             var refused = Assert.ThrowsExactly<InvalidOperationException>(() => LegacyFixture.DiffFrom<MovedModels.SlotAlone>(source => Hierarchy(source, version)));
             StringAssert.Contains(refused.Message, "on Vehicle, a type of a TPC hierarchy with derived types, and was scaffolded before 5.5.0");
         }
+
+        // A list without an entry holds no constraint and is nothing to refuse, in a snapshot of
+        // any version (#171): neither it nor an empty annotation says a constraint exists.
+        foreach (var empty in new[] { "[]", "" })
+        {
+            var operations = LegacyFixture.DiffFrom<MovedModels.SlotAlone>(source =>
+            {
+                source.Entity<Vehicle>().UseTpcMappingStrategy().HasAnnotation(Annotation, empty);
+                source.Entity<Car>();
+                source.Entity<Truck>();
+            }).Shape();
+            Assert.IsFalse(operations.Any(sql => sql.Contains("CONSTRAINT", StringComparison.Ordinal)), string.Join("\n", operations));
+        }
     }
 }
