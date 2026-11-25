@@ -363,7 +363,7 @@ public sealed class DeclarationCodecTests
     [TestMethod]
     public void A_lambda_that_is_not_bound_is_found_in_every_property_and_written_once_it_is_bound()
     {
-        var lambda = Predicate.Of<Resolution.Person>(x => x.Name == null, SqlSpelling.PostgreSql).Template;
+        var lambda = Predicate.Of<Resolution.Person>(x => x.Name == null, Shipped.Spelling).Template;
         static SqlTemplate Bind(CodoMetis.EFCore.SchemaKit.Translation.Internal.UnboundLambda unbound)
             => CodoMetis.EFCore.SchemaKit.Metadata.Internal.DeclarationBinder.Bind(unbound, null!);
 

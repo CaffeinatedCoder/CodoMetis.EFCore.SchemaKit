@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using NpgsqlTypes;
@@ -77,7 +79,7 @@ public readonly struct PgSchema<TEntity>
         ArgumentNullException.ThrowIfNull(elements);
         return new PgExclusion.Gist(elements.Elements)
         {
-            Where = where is null ? null : Predicate.Of(where, SqlSpelling.PostgreSql),
+            Where = where is null ? null : Predicate.Of(where, PgSchema.Spelling),
             Deferral = deferral ?? Deferral.NotDeferrable,
             Name = name,
         };
@@ -107,7 +109,15 @@ public static class PgSchema
     /// <typeparam name="TEntity">The entity type, or an interface of it.</typeparam>
     /// <exception cref="NotSupportedException">The lambda holds something the translator has no SQL for.</exception>
     public static Predicate Where<TEntity>(Expression<Func<TEntity, bool>> condition)
-        => Predicate.Of(condition, SqlSpelling.PostgreSql);
+        => Predicate.Of(condition, Spelling);
+
+    /// <summary>
+    /// How this package spells a lambda: as Npgsql's query translation does, character for
+    /// character. For a package that adds PostgreSQL declarations of its own and takes lambdas
+    /// for them; a consumer writes a lambda into a factory and never names a spelling.
+    /// </summary>
+    [Experimental("SK9001")]
+    public static SqlSpelling Spelling => NpgsqlSpelling.Instance;
 }
 
 /// <summary>
@@ -215,7 +225,7 @@ public sealed class ExclusionElements<TEntity>
 internal static class Exclusions
 {
     public static ExclusionElement Element(LambdaExpression key, ExclusionOperator @operator)
-        => new(KeyTarget.Of(key, SqlSpelling.PostgreSql), @operator);
+        => new(KeyTarget.Of(key, PgSchema.Spelling), @operator);
 
     /// <summary>
     /// The unchecked form must still leave the stage honest: with <c>=</c> it would turn a draft of

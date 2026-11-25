@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using CodoMetis.EFCore.SchemaKit.Translation.Internal;
+using CodoMetis.EFCore.SchemaKit.Tests.Harness;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.TranslatorParity;
 
@@ -115,7 +116,7 @@ internal static class ParityCatalogue
 
         // Every literal type the translator inlines, as a captured value in a concatenation, and a
         // captured null, which C# concatenates as an empty string.
-        foreach (var type in LambdaTranslator.LiteralTypes)
+        foreach (var type in Shipped.Spelling.LiteralTypes)
             cases.Add(new ParityCase(ParityKind.Expression, "x => x.Str + c", $"{Name(type)} c = {Sample(type)};",
                                      Set($"literal:{type.Name}", $"operator:{ExpressionType.Add}")));
         cases.Add(new ParityCase(ParityKind.Expression, "x => x.Str + c", "string? c = null;", Set($"operator:{ExpressionType.Add}")));
@@ -163,12 +164,12 @@ internal static class ParityCatalogue
 
     /// <summary>Every construct the translator's tables accept, by the key the cases record.</summary>
     public static IEnumerable<string> AcceptedConstructs()
-        => LambdaTranslator.StringMethods.Keys.Select(MethodKey)
-                                    .Concat(LambdaTranslator.ValueMembers.Keys.Select(k => MemberKey(k.DeclaringType, k.Name)))
+        => Shipped.Spelling.Methods.Keys.Select(MethodKey)
+                                    .Concat(Shipped.ValueMembers.Select(k => MemberKey(k.DeclaringType, k.Name)))
                                     .Concat(LambdaTranslator.ValueOperators.Select(o => $"operator:{o}"))
                                     .Concat(LambdaTranslator.ComparisonOperators.Keys.Select(o => $"operator:{o}"))
                                     .Concat(LambdaTranslator.LogicalOperators.Select(o => $"operator:{o}"))
-                                    .Concat(LambdaTranslator.LiteralTypes.Select(t => $"literal:{t.Name}"))
+                                    .Concat(Shipped.Spelling.LiteralTypes.Select(t => $"literal:{t.Name}"))
                                     .Concat(LambdaTranslator.SilentConversions.Select(c => ConversionKey(c.From, c.To)));
 
     /// <summary>
@@ -242,7 +243,7 @@ internal static class ParityCatalogue
         if (operand.Path.EndsWith('2'))
             yield break;
 
-        foreach (var (method, _) in LambdaTranslator.StringMethods)
+        foreach (var (method, _) in Shipped.Spelling.Methods)
         {
             if (method.DeclaringType != operand.Type)
                 continue;
@@ -259,7 +260,7 @@ internal static class ParityCatalogue
                        Set($"shape:{operand.Shape}", MethodKey(method)), Identity: false);
         }
 
-        foreach (var (declaringType, name) in LambdaTranslator.ValueMembers.Keys)
+        foreach (var (declaringType, name) in Shipped.ValueMembers)
         {
             var closed = declaringType.IsGenericTypeDefinition && operand.Type.IsConstructedGenericType
                       && operand.Type.GetGenericTypeDefinition() == declaringType

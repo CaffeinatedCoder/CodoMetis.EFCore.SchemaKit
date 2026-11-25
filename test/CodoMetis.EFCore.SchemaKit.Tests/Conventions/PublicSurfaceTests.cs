@@ -89,6 +89,8 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SqlSegment+Column",
         "CodoMetis.EFCore.SchemaKit.SqlSegment+Raw",
         "CodoMetis.EFCore.SchemaKit.SqlSegment+Text",
+        "CodoMetis.EFCore.SchemaKit.SpelledArgument",
+        "CodoMetis.EFCore.SchemaKit.SpelledCall",
         "CodoMetis.EFCore.SchemaKit.SqlSpelling",
         "CodoMetis.EFCore.SchemaKit.TableRef",
     ];
@@ -149,6 +151,37 @@ public sealed class PublicSurfaceTests
             Assert.IsTrue(method.GetParameters().Any(p => p.ParameterType == typeof(SqlSpelling)), $"{method.DeclaringType!.Name}.{method.Name} takes no spelling");
             Assert.AreEqual("SK9001", method.GetCustomAttribute<System.Diagnostics.CodeAnalysis.ExperimentalAttribute>()?.DiagnosticId, $"{method.DeclaringType!.Name}.{method.Name} is not marked");
         }
+    }
+
+    /// <summary>
+    /// The kernel has no spelling of its own (#184): a spelling is a provider's package's, derived
+    /// from the abstract class. One held here would be some provider's SQL in the kernel, and the
+    /// value a package for another database passes for want of its own.
+    /// </summary>
+    [TestMethod]
+    public void The_kernel_holds_no_spelling_and_its_surface_names_no_provider()
+    {
+        var kernel = typeof(SqlSpelling).Assembly;
+
+        Assert.IsTrue(typeof(SqlSpelling).IsAbstract);
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            kernel.GetTypes().Where(t => t != typeof(SqlSpelling) && typeof(SqlSpelling).IsAssignableFrom(t)).Select(t => t.FullName).ToList(),
+            "A spelling in the kernel.");
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            typeof(SqlSpelling).GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly).Select(m => m.Name).ToList(),
+            "A static member of SqlSpelling is a spelling the kernel hands out.");
+
+        string[] providers = ["Postgre", "Npgsql", "SqlServer", "Sqlite", "MySql", "Oracle"];
+        var names = Exported.Select(t => t.FullName!)
+            .Concat(Exported.SelectMany(t => t.GetMembers(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                                              .Select(m => $"{t.FullName}.{m.Name}")));
+
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            names.Where(name => providers.Any(provider => name.Contains(provider, StringComparison.OrdinalIgnoreCase))).ToList(),
+            "A public name of the kernel names a provider.");
     }
 
     /// <summary>

@@ -237,9 +237,10 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   marked on the method** (#132): a lambda becomes one provider's SQL, so they take that provider's
   `SqlSpelling`, which its package passes. A consumer writes a lambda into the provider's factory
   (`pg.Equal(…)`, `where:`, `PgSchema.Where<T>(…)` for a condition several types share) and never
-  names a spelling. The kernel holds one spelling for now, PostgreSQL's; the tables move to the
-  provider's package with #114. `PublicSurfaceTests` holds that nothing public in the kernel
-  takes a lambda without a spelling. A lambda that is one property is a
+  names a spelling. The kernel holds no spelling (#184): `SqlSpelling` is abstract, and a
+  package derives its own. `PublicSurfaceTests` holds that nothing public in the kernel takes a
+  lambda without a spelling, that the kernel has no spelling of its own, and that no public
+  name of it names a provider. A lambda that is one property is a
   `Column`, anything else a `Template`; the two are rendered and named differently.
   `Predicate.And` takes for a conjunct only what it wrote itself, `(…) AND (other)` with the
   first parenthesis closing right before the `AND`: `{A} OR {B} AND ({C})` ends the same way and
@@ -439,12 +440,24 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
   change a column's nullability or a property's conversion, and the stored condition would say
   what the lambda does not.
 - **Spelled as the provider's queries spell it,** character for character: an index serves only a
-  query whose expression matches it. The spellings are PostgreSQL's; SQL Server's come with #29.
+  query whose expression matches it. The kernel walks the lambda and keeps what is C#'s and what
+  is the same SQL everywhere: the conversions that keep a value, null compensation, the
+  comparison and boolean operators, `NULL`. Everything else it asks of the provider's
+  `SqlSpelling` (#184): the methods and members it accepts and what each is written as, the
+  literals it writes without a column, concatenation and its operands, `??`, a boolean where a
+  condition stands, and the negation of a comparison that can be null. PostgreSQL's is
+  `NpgsqlSpelling` in its package, handed out as `PgSchema.Spelling` for a package that adds
+  PostgreSQL declarations of its own; SQL Server's comes with #29.
+- **A spelling is one object,** and what its methods and members write is null exactly when an
+  input is: the null compensation tests the inputs' columns. Both are said on `SqlSpelling`.
+- **The translator's tests and the sweep translate with the PostgreSQL package's spelling,** as
+  it ships (`Harness/Shipped.cs` in the kernel's tests, which reference the package for it). A copy
+  of the tables in the tests would be what they hold instead.
 - **A comparison that can be NULL is written as EF Core writes it.** `x.Tag != "blocked"` keeps the
   rows whose tag is null, as C# does; a negation over such a comparison is pushed down to it.
-- **The accepted constructs are data** (`StringMethods`, `ValueMembers`, the operator sets,
-  `LiteralTypes`, `SilentConversions`). Add a construct to a table, not only to the dispatch: the
-  sweep and the analyzer read the tables.
+- **The accepted constructs are data:** the spelling's `Methods`, `Members` and `LiteralTypes`,
+  and the kernel's `NullableMembers`, operator sets and `SilentConversions`. Add a construct to
+  a table, not only to the dispatch: the sweep and the analyzer read the tables.
 - **A conversion is left out of a template only when it keeps every value on every database**
   (#103): to and from `Nullable<T>`, to a type the source already is, and the pairs of
   `SilentConversions`, which are the widenings between integer types and `char` to `int` (C#
@@ -579,6 +592,13 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
 - **Nothing under `src/` was changed for it, and nothing may be.** Where the contract cannot say
   what SQL Server or SQLite needs, the contributor goes around it and says so, or a test holds
   the failure. `PublicContractTests` holds that the kernel grants the assembly no internals.
+- **Each database has a spelling here** (#184): `ProbeSqlServerSpelling` and
+  `ProbeSqliteSpelling`, a handful of constructs each, derived from `SqlSpelling` through the
+  public contract. `SpellingParityTests` compares what they write with EF Core's
+  `ToQueryString()` on that provider. Two members of the contract have their shape from it: SQL
+  Server has no boolean that is a condition, so `Condition` takes the negation too
+  (`[Active] = CAST(0 AS bit)`), and its queries do not fold a substring's start, so an argument
+  arrives as SQL and as a value.
 - **A rule is held when a test fails with the rule changed, and that was measured by hand, once.**
   Each line of the two contributors, dialects and declarations was changed in turn and the
   project run on the server: 102 changes, of which 94 fail a test and 8 are no rules (#119 says

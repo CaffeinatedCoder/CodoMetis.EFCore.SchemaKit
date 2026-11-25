@@ -1,6 +1,8 @@
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Harness;
+using CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Sqlite;
 using CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.SqlServer;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -79,45 +81,46 @@ public sealed class PublicContractTests
 
     /// <summary>
     /// A lambda is translated for one provider, and the factories take that provider's spelling
-    /// (#132). There is one spelling, behind a private constructor: a second provider's package
-    /// has nothing to pass, and what it gets by passing the one there is, is PostgreSQL's SQL.
+    /// (#132). The kernel has none: a package derives its own from <see cref="SqlSpelling" />
+    /// (#184), as the two of this project do, and what a lambda becomes is that database's SQL.
     /// </summary>
     [TestMethod]
-    public void There_is_one_spelling_and_a_package_cannot_make_another()
+    public void A_package_spells_a_lambda_with_a_spelling_of_its_own()
     {
-        Assert.AreEqual(0, typeof(SqlSpelling).GetConstructors(BindingFlags.Public | BindingFlags.Instance).Length);
-        CollectionAssert.AreEqual(
-            new[] { nameof(SqlSpelling.PostgreSql) },
-            typeof(SqlSpelling).GetProperties(BindingFlags.Public | BindingFlags.Static).Where(p => p.PropertyType == typeof(SqlSpelling)).Select(p => p.Name).ToList());
+        Assert.IsTrue(typeof(SqlSpelling).IsAbstract);
+        Assert.AreEqual(0, typeof(SqlSpelling).GetProperties(BindingFlags.Public | BindingFlags.Static).Length);
 
-        // SQL Server has no boolean expression that is a column (SqlServerSpellingLiveTests). A value
-        // compared with a property is the property's mapping's to write, and that is SQL Server's.
-        Assert.AreEqual("{Active}", Bound.Where<Flagged>(x => x.Active));
+        // SQL Server has no boolean expression that is a column (SqlServerSpellingLiveTests): its
+        // spelling compares the bit. A value compared with a property is the mapping's to write.
+        Assert.AreEqual("{Active} = CAST(1 AS bit)", Bound.Where<Flagged>(x => x.Active));
+        Assert.AreEqual("{Active} = CAST(0 AS bit)", Bound.Where<Flagged>(x => !x.Active));
         Assert.AreEqual("{Active} = CAST(1 AS bit)", Bound.Where<Flagged>(x => x.Active == true));
 
-        // Neither SQL Server nor SQLite has btrim, nor a string that begins with E.
-        Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("""btrim({Name}, E' \t\n\r')""")), Bound.Key((Flagged x) => x.Name.Trim()));
+        Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("trim({Name})")), Bound.Key((Flagged x) => x.Name.Trim()));
+
+        // A method the spelling has no entry for is refused where the lambda is written.
+        Assert.ThrowsExactly<NotSupportedException>(() => KeyTarget.Of((Expression<Func<Flagged, string>>)(x => x.Name.TrimEnd()), ProbeSqliteSpelling.Instance));
     }
 
     /// <summary>
-    /// Two things in it are PostgreSQL's, and SQLite refuses each by itself: the string that
-    /// begins with <c>E</c> is a syntax error, and with a string of its own SQLite has no function
-    /// called <c>btrim</c>. Its own word is <c>trim</c>.
+    /// SQLite takes what its spelling writes for <c>Trim</c>. What PostgreSQL's queries write for
+    /// it, it refuses twice over: the string that begins with <c>E</c> is a syntax error, and
+    /// with a string of its own SQLite has no function called <c>btrim</c>.
     /// </summary>
     [TestMethod]
-    public void SQLite_refuses_what_the_one_spelling_writes_for_Trim()
+    public void SQLite_takes_what_its_spelling_writes_for_Trim()
     {
         var trimmed = ((KeyTarget.Template)Bound.Key((Person x) => x.Name.Trim())).Sql.ToString().Replace("{Name}", "\"Name\"");
-        Assert.AreEqual("""btrim("Name", E' \t\n\r')""", trimmed);
+        Assert.AreEqual("""trim("Name")""", trimmed);
 
         using var database = new SqliteDatabase();
         database.Execute("""CREATE TABLE "People" ("Id" INTEGER PRIMARY KEY, "Name" TEXT)""");
         string Refused(string key) => Assert.ThrowsExactly<SqliteException>(() => database.Execute($"""CREATE INDEX "IX_trimmed" ON "People" ({key})""")).Message;
 
-        StringAssert.Contains(Refused(trimmed), """near "' \t\n\r'": syntax error""");
+        StringAssert.Contains(Refused("""btrim("Name", E' \t\n\r')"""), """near "' \t\n\r'": syntax error""");
         StringAssert.Contains(Refused("""btrim("Name", ' ')"""), "no such function: btrim");
 
-        database.Execute("""CREATE INDEX "IX_trimmed" ON "People" (trim("Name"))""");
+        database.Execute($"""CREATE INDEX "IX_trimmed" ON "People" ({trimmed})""");
     }
 
     // ── Dependency.SchemaObject, QualifiedName, SchemaScope ──
