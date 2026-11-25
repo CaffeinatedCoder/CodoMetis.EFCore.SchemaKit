@@ -111,6 +111,30 @@ public closed record BaseChange
     public sealed record TableRebuilt(TableRef Table) : BaseChange;
 }
 
+/// <summary>
+/// What a <c>MigrationOperation</c> does to the database, as far as an object attached to a table
+/// can be touched by it. That is the provider's rule: what its generator writes for the operation.
+/// </summary>
+[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+public closed record OperationEffect
+{
+    /// <summary>The changes the operation stands for. None: it touches nothing a schema object depends on.</summary>
+    /// <param name="List">The changes, each naming its table as the operation does.</param>
+    public sealed record Changes(ValueList<BaseChange> List) : OperationEffect;
+
+    /// <summary>
+    /// The provider's generator writes no statement for the operation, so the database is left as
+    /// it was while the model says otherwise. A migration that holds one is refused when a model
+    /// declares an object on one of its tables.
+    /// </summary>
+    /// <param name="Tables">The tables the operation is about, as it names them before and after.</param>
+    /// <param name="WayOut">What the consumer can write so that the change is written, in a sentence for the refusal.</param>
+    public sealed record NotWritten(ValueList<TableRef> Tables, string WayOut) : OperationEffect;
+
+    /// <summary>Nobody has said what an operation of this type does. It is refused when a model declares an object.</summary>
+    public sealed record Unknown : OperationEffect;
+}
+
 /// <summary>What an operation changed about a column. More than one may hold.</summary>
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 [Flags]

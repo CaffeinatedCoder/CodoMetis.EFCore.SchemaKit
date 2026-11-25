@@ -42,6 +42,7 @@ public sealed class ContractValueTests
     [DataRow(typeof(BaseChange), "ColumnAltered,ColumnDropped,ColumnRenamed,TableDropped,TableMoved,TableRebuilt,TableRenamed")]
     [DataRow(typeof(Dependency), "Column,Extension,SchemaObject,WholeTable")]
     [DataRow(typeof(NameClaim), "Constraint,Relation,TableIndex,Trigger")]
+    [DataRow(typeof(OperationEffect), "Changes,NotWritten,Unknown")]
     [DataRow(typeof(SchemaScope), "Database,Schema,Table")]
     public void A_closed_union_has_the_cases_it_was_decided_with(Type union, string cases)
     {

@@ -1,6 +1,8 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Migrations.Operations;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 
@@ -49,6 +51,46 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
         // object. Another migration, another context or the operator may have installed it, and
         // none of them would be wrong.
         sql.Statement($"CREATE EXTENSION IF NOT EXISTS {extension}");
+    }
+
+    private const string TsVectorConfig = "Npgsql:TsVectorConfig";
+
+    private const string TsVectorProperties = "Npgsql:TsVectorProperties";
+
+    // What Npgsql's generator does otherwise than the kernel says for EF Core Relational's
+    // operations, and its own operation types (issue 116). Each rule is held against the generator
+    // itself in NpgsqlOperationEffectTests: a patch of the provider that changes the SQL fails there.
+    /// <inheritdoc />
+    public override OperationEffect EffectOf(MigrationOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        switch (operation)
+        {
+            // Npgsql computes a generated tsvector column from these two annotations, and writes a
+            // change of either as DROP COLUMN and ADD COLUMN. PostgreSQL drops an index and an
+            // exclusion constraint with a column without a word.
+            case AlterColumnOperation alter
+                when !Equals(alter[TsVectorConfig], alter.OldColumn[TsVectorConfig])
+                     || !(alter[TsVectorProperties] as string[] ?? []).SequenceEqual(alter.OldColumn[TsVectorProperties] as string[] ?? [], StringComparer.Ordinal):
+                return new OperationEffect.Changes([new BaseChange.ColumnDropped(TableOf(alter.Schema, alter.Table), Identifier(alter.Name))]);
+
+            // The generator writes ALTER TABLE … SET SCHEMA only for a schema that is named. For a
+            // table moved back to the default schema, which the operation says as no schema, it
+            // writes nothing, and the table stays where it was (issue 105; measured on 11.0.0).
+            // A table that was in the default schema under its name is where it is to be.
+            case RenameTableOperation { Schema: { } schema, NewSchema: null } rename when !Identifier(schema).Equals(DefaultSchema):
+                return new OperationEffect.NotWritten(
+                    [TableOf(rename.Schema, rename.Name), TableOf(null, rename.NewName ?? rename.Name)],
+                    PgStrings.MoveToTheDefaultSchemaNotWritten(schema, DefaultSchema!.Name));
+
+            // Databases are no object a declaration is attached to.
+            case NpgsqlCreateDatabaseOperation or NpgsqlDropDatabaseOperation:
+                return new OperationEffect.Changes([]);
+
+            default:
+                return base.EffectOf(operation);
+        }
     }
 
     // An index is a relation: its name is taken in the schema, among tables, sequences and views.

@@ -61,6 +61,20 @@ public interface ISchemaDialect
     IEnumerable<NameClaim> Claims(SchemaModelObject kind, TableRef table, Identifier name);
 
     /// <summary>
+    /// What an operation of EF Core's does to the database: the changes it stands for, that the
+    /// provider writes nothing for it, or that nobody knows. The planner asks it of every
+    /// operation of a migration, in their order, when a model declares an object.
+    /// </summary>
+    /// <remarks>
+    /// What the provider's generator writes decides, not what the operation is called: an alter
+    /// written as a drop and an add is a dropped column. A dialect overrides this for what its
+    /// provider does otherwise than <see cref="SchemaDialect" /> says, and answers for its
+    /// provider's own operation types, and it holds each such rule against the generator in a test.
+    /// </remarks>
+    /// <param name="operation">The operation.</param>
+    OperationEffect EffectOf(Microsoft.EntityFrameworkCore.Migrations.Operations.MigrationOperation operation);
+
+    /// <summary>
     /// The schema the database puts an object in when its statement names none, or null when the
     /// dialect does not know it. A name claimed by a table without a schema is compared under it
     /// with one in that schema.
@@ -226,6 +240,22 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
     /// table without one.
     /// </remarks>
     public virtual Identifier? DefaultSchema => null;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// EF Core Relational's own operations, and for now the rules of the providers that have no
+    /// dialect of their own to say them (issue 116).
+    /// </remarks>
+    public virtual OperationEffect EffectOf(Microsoft.EntityFrameworkCore.Migrations.Operations.MigrationOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return Migrations.Internal.BaseChanges.EffectOf(operation, this);
+    }
+
+    /// <summary>A table as an operation names it: a schema that is null is the default one.</summary>
+    /// <param name="schema">The schema, or null.</param>
+    /// <param name="name">The table.</param>
+    protected TableRef TableOf(string? schema, string name) => new(schema is null ? null : Identifier(schema), Identifier(name));
 
     [GeneratedRegex("^[a-z_][a-z0-9_$]*$")]
     private static partial Regex BareName();

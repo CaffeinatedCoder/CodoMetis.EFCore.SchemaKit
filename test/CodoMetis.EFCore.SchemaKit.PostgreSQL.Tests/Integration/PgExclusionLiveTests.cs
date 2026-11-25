@@ -543,6 +543,24 @@ public sealed class PgExclusionLiveTests
         (migrated, _) => StringAssert.Contains(migrated.Exclusions().Single(), "USING spgist"));
 
     /// <summary>The constraint moves with its table; the catalog has it in the new schema, under its name.</summary>
+    /// <summary>
+    /// The way back from a schema of its own (#105): with the default schema named, Npgsql writes
+    /// the move, and the table and its constraint end where <c>EnsureCreated()</c> puts them.
+    /// Taking the name off again afterwards is no move: the table is where it is to be.
+    /// </summary>
+    [TestMethod]
+    public void Moving_the_table_back_with_the_default_schema_named()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.SchedulingMoved>();
+        StringAssert.StartsWith(database.Exclusions().Single(), "grants.role_grants | ");
+
+        database.Migrate<Models.SchedulingMoved, Models.SchedulingInPublic>();
+        database.Migrate<Models.SchedulingInPublic, Models.Scheduling>();
+
+        CollectionAssert.AreEqual(new[] { Scheduling }, database.Exclusions());
+    }
+
     [TestMethod]
     public void Moving_the_table_to_another_schema() => AssertMigratesTo<Models.Scheduling, Models.SchedulingMoved>(
         (migrated, _) => StringAssert.StartsWith(migrated.Exclusions().Single(), "grants.role_grants | ex_role_grant_active_period"));

@@ -250,6 +250,14 @@ internal static class SchemaKitStrings
     public static string DependencyCycle(IReadOnlyList<string> members)
         => $"These objects need each other in a circle, and no order creates or drops them: {string.Join("; ", members)}.";
 
+    public static string EffectOfReturnedNull(Type dialect)
+        => $"{dialect.Name}.EffectOf returned null. An operation nobody describes is OperationEffect.Unknown.";
+
+    public static string OperationNotWritten(string declaration, TableRef table, Type operation, string wayOut)
+        => $"{declaration} is on the table '{table}', and this migration holds a {operation.Name} for that table for which the " +
+           "provider writes no statement: the database would stay as it is while the model and the migration say otherwise, " +
+           $"and the object would be created or kept where the table is not. {wayOut}";
+
     public static string CreateOnARebuiltTable(string entity, string declaration, TableRef table)
         => $"{entity} declares {declaration}, which this migration has to create on the table '{table}', and the migration " +
            "changes that table in a way SQLite's provider writes as a rebuild: a new table, the rows copied, the old table " +

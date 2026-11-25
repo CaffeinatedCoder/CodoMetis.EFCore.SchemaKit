@@ -1,3 +1,4 @@
+using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
@@ -57,9 +58,8 @@ internal sealed class BaseChanges : ISchemaRenames
         // refusing it would refuse every migration that carries one.
         typeof(SqlOperation).FullName!,
 
-        // The providers' own, by name: the kernel references no provider.
-        "Npgsql.EntityFrameworkCore.PostgreSQL.Migrations.Operations.NpgsqlCreateDatabaseOperation",
-        "Npgsql.EntityFrameworkCore.PostgreSQL.Migrations.Operations.NpgsqlDropDatabaseOperation",
+        // SQL Server's own, by name: the kernel references no provider, and SQL Server has no
+        // dialect to say them yet (#29). Npgsql's are its package's dialect's to say.
         "Microsoft.EntityFrameworkCore.Migrations.Operations.SqlServerCreateDatabaseOperation",
         "Microsoft.EntityFrameworkCore.Migrations.Operations.SqlServerDropDatabaseOperation",
     };
@@ -97,6 +97,55 @@ internal sealed class BaseChanges : ISchemaRenames
     /// <summary>A column of a table, the table as the target names it, as the target model names the column.</summary>
     public Identifier Forward(TableRef table, Identifier column) => _renamedColumns.GetValueOrDefault((table, column), column);
 
+    /// <summary>The operations no statement is written for, with the tables each is about.</summary>
+    public IReadOnlyList<(Type Operation, OperationEffect.NotWritten Effect)> NotWritten => _notWritten;
+
+    private readonly List<(Type Operation, OperationEffect.NotWritten Effect)> _notWritten = [];
+
+    /// <summary>
+    /// The kernel's own answer for an operation, which <see cref="SchemaDialect" /> gives and a
+    /// provider's dialect overrides: EF Core Relational's operations.
+    /// </summary>
+    internal static OperationEffect EffectOf(MigrationOperation operation, ISchemaDialect dialect)
+    {
+        switch (operation)
+        {
+            case RenameColumnOperation rename:
+                return One(new BaseChange.ColumnRenamed(Table(rename.Schema, rename.Table), dialect.Identifier(rename.Name), dialect.Identifier(rename.NewName)));
+
+            // What the provider writes decides, not what the operation is called: an alter that
+            // is written as a drop and an add takes with it whatever the database drops with a
+            // column, and the objects that read it have to hear of a drop.
+            case AlterColumnOperation alter when DroppedAndAdded(alter):
+                return One(new BaseChange.ColumnDropped(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name)));
+
+            case AlterColumnOperation alter:
+                return One(new BaseChange.ColumnAltered(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name), Altered(alter)));
+
+            case DropColumnOperation drop:
+                return One(new BaseChange.ColumnDropped(Table(drop.Schema, drop.Table), dialect.Identifier(drop.Name)));
+
+            case RenameTableOperation rename:
+                // The differ sets both: the table as the target has it, a null schema being the default one.
+                var from = Table(rename.Schema, rename.Name);
+                var to   = Table(rename.NewSchema, rename.NewName ?? rename.Name);
+                List<BaseChange> changes = [];
+                if (!Equals(from.Name, to.Name)) changes.Add(new BaseChange.TableRenamed(from, to));
+                if (!Equals(from.Schema, to.Schema)) changes.Add(new BaseChange.TableMoved(from, to));
+                return new OperationEffect.Changes([.. changes]);
+
+            case DropTableOperation drop:
+                return One(new BaseChange.TableDropped(Table(drop.Schema, drop.Name)));
+
+            default:
+                return Harmless.Contains(operation.GetType().FullName!) ? new OperationEffect.Changes([]) : new OperationEffect.Unknown();
+        }
+
+        OperationEffect One(BaseChange change) => new OperationEffect.Changes([change]);
+
+        TableRef Table(string? schema, string name) => new(schema is null ? null : dialect.Identifier(schema), dialect.Identifier(name));
+    }
+
     public static BaseChanges Of(IReadOnlyList<MigrationOperation> operations, ISchemaDialect dialect, bool sqlite)
     {
         List<BaseChange> changes = [];
@@ -105,45 +154,37 @@ internal sealed class BaseChanges : ISchemaRenames
 
         foreach (var operation in operations)
         {
-            switch (operation)
+            // What an operation does is the dialect's to say: the provider's package knows what
+            // its generator writes (#116).
+            switch (dialect.EffectOf(operation) ?? throw new InvalidOperationException(SchemaKitStrings.EffectOfReturnedNull(dialect.GetType())))
             {
-                case RenameColumnOperation rename:
-                    var renamed = new BaseChange.ColumnRenamed(Table(rename.Schema, rename.Table), dialect.Identifier(rename.Name), dialect.Identifier(rename.NewName));
-                    result._renamedColumns[(renamed.Table, renamed.From)] = renamed.To;
-                    changes.Add(renamed);
+                case OperationEffect.Changes described:
+                    foreach (var change in described.List)
+                    {
+                        switch (change)
+                        {
+                            case BaseChange.ColumnRenamed renamed:
+                                result._renamedColumns[(renamed.Table, renamed.From)] = renamed.To;
+                                break;
+                            case BaseChange.TableRenamed renamed:
+                                result._renamed[renamed.From] = renamed.To;
+                                break;
+                            case BaseChange.TableMoved moved:
+                                result._renamed[moved.From] = moved.To;
+                                break;
+                        }
+
+                        changes.Add(change);
+                    }
+
                     break;
 
-                // What the provider writes decides, not what the operation is called: an alter that
-                // is written as a drop and an add takes with it whatever the database drops with a
-                // column, and the objects that read it have to hear of a drop.
-                case AlterColumnOperation alter when DroppedAndAdded(alter):
-                    changes.Add(new BaseChange.ColumnDropped(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name)));
+                case OperationEffect.NotWritten nothing:
+                    result._notWritten.Add((operation.GetType(), nothing));
                     break;
 
-                case AlterColumnOperation alter:
-                    changes.Add(new BaseChange.ColumnAltered(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name), Altered(alter)));
-                    break;
-
-                case DropColumnOperation drop:
-                    changes.Add(new BaseChange.ColumnDropped(Table(drop.Schema, drop.Table), dialect.Identifier(drop.Name)));
-                    break;
-
-                case RenameTableOperation rename:
-                    // The differ sets both: the table as the target has it, a null schema being the default one.
-                    var from = Table(rename.Schema, rename.Name);
-                    var to   = Table(rename.NewSchema, rename.NewName ?? rename.Name);
-                    result._renamed[from] = to;
-                    if (!Equals(from.Name, to.Name)) changes.Add(new BaseChange.TableRenamed(from, to));
-                    if (!Equals(from.Schema, to.Schema)) changes.Add(new BaseChange.TableMoved(from, to));
-                    break;
-
-                case DropTableOperation drop:
-                    changes.Add(new BaseChange.TableDropped(Table(drop.Schema, drop.Name)));
-                    break;
-
-                default:
-                    if (!Harmless.Contains(operation.GetType().FullName!) && !unknown.Contains(operation.GetType()))
-                        unknown.Add(operation.GetType());
+                case OperationEffect.Unknown:
+                    if (!unknown.Contains(operation.GetType())) unknown.Add(operation.GetType());
                     break;
             }
 
@@ -223,7 +264,8 @@ internal sealed class BaseChanges : ISchemaRenames
     /// <summary>
     /// Whether the providers write the alter as <c>DROP COLUMN</c> and <c>ADD COLUMN</c>. Npgsql and
     /// SQL Server both do when the column's computation changes: neither database can alter one.
-    /// Held against both generators by a test: this is the kernel's copy of a rule that is not its own.
+    /// Held against both generators by a test: this is the kernel's copy of a rule that is not its
+    /// own. What only Npgsql does, for a generated <c>tsvector</c>, is its dialect's to say.
     /// </summary>
     /// <remarks>
     /// PostgreSQL drops an index and an exclusion constraint with a column without a word. Taken
@@ -232,14 +274,7 @@ internal sealed class BaseChanges : ISchemaRenames
     /// </remarks>
     internal static bool DroppedAndAdded(AlterColumnOperation alter)
         => alter.ComputedColumnSql != alter.OldColumn.ComputedColumnSql
-           || alter.IsStored != alter.OldColumn.IsStored
-           // Npgsql computes a generated tsvector column from these two and compares the result.
-           || !Equals(alter[TsVectorConfig], alter.OldColumn[TsVectorConfig])
-           || !(alter[TsVectorProperties] as string[] ?? []).SequenceEqual(alter.OldColumn[TsVectorProperties] as string[] ?? [], StringComparer.Ordinal);
-
-    private const string TsVectorConfig = "Npgsql:TsVectorConfig";
-
-    private const string TsVectorProperties = "Npgsql:TsVectorProperties";
+           || alter.IsStored != alter.OldColumn.IsStored;
 
     /// <summary>The changes that touch what a descriptor of the source side depends on.</summary>
     public IEnumerable<BaseChange> Touching(ISchemaDescriptor descriptor) => Changes.Where(change => change switch

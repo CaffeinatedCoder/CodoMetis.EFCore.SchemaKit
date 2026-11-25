@@ -142,6 +142,17 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         if (changes.Unknown.Count > 0)
             throw new InvalidOperationException(SchemaKitStrings.UnknownOperation(changes.Unknown[0]));
 
+        // An operation the provider writes nothing for leaves its table as it was, and an object
+        // on that table would be compared, created or kept as if it had run (#105).
+        foreach (var (operation, nothing) in changes.NotWritten)
+        {
+            foreach (var declared in from.Select(source => (Object: source, source.Descriptor)).Concat(to.Select(target => (Object: target, target.Descriptor))))
+            {
+                if (TablesOf(declared.Descriptor).FirstOrDefault(nothing.Tables.Contains) is { } table)
+                    throw new InvalidOperationException(SchemaKitStrings.OperationNotWritten(Named(declared.Object), table, operation, nothing.WayOut));
+            }
+        }
+
         // The source side as EF Core's operations leave it, which is what the target is compared with.
         from = [.. from.Select(source => AfterOperations(source, changes))];
 
@@ -348,6 +359,17 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         return ordered;
     }
 
+    // What an object is attached to is what it says it reads, here as wherever the planner asks
+    // what an operation does to an object.
+    private static IEnumerable<TableRef> TablesOf(ISchemaDescriptor descriptor) => descriptor.Dependencies
+        .Select(dependency => dependency switch
+        {
+            Dependency.Column column    => column.Table,
+            Dependency.WholeTable whole => whole.Ref,
+            _                           => null,
+        })
+        .OfType<TableRef>();
+
     private static void RefuseCreatesARebuildWouldLose(IEnumerable<Resolved> creates, BaseChanges changes)
     {
         HashSet<TableRef> rebuilt = [.. changes.Changes.OfType<BaseChange.TableRebuilt>().Select(rebuild => rebuild.Table)];
@@ -355,16 +377,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
         foreach (var create in creates)
         {
-            // What an object is attached to is what it says it reads, here as wherever the planner
-            // asks what an operation does to an object.
-            var tables = create.Descriptor.Dependencies.Select(dependency => dependency switch
-            {
-                Dependency.Column column    => column.Table,
-                Dependency.WholeTable whole => whole.Ref,
-                _                           => null,
-            });
-
-            if (tables.OfType<TableRef>().FirstOrDefault(rebuilt.Contains) is { } table)
+            if (TablesOf(create.Descriptor).FirstOrDefault(rebuilt.Contains) is { } table)
                 throw new InvalidOperationException(SchemaKitStrings.CreateOnARebuiltTable(
                     create.EntityType.ShortName(), DeclarationCodec.Describe(create.Declaration), table));
         }

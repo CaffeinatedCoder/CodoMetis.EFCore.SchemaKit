@@ -21,6 +21,10 @@ internal static class PgStrings
     public static string UnknownDeferral(string token)
         => $"'{token}' is no deferral of an exclusion constraint. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
 
+    public static string MoveToTheDefaultSchemaNotWritten(string from, string defaultSchema)
+        => $"Npgsql writes ALTER TABLE … SET SCHEMA only for a schema the model names, and none for a table that moves from '{from}' "
+           + $"back to the default schema. Name the schema in the model, ToTable(\"…\", \"{defaultSchema}\"), and the move is written.";
+
     private const string Legacy = "EFCore.ComplexIndexes 5.x";
 
     public static string LegacyExclusionUnreadable(string entity, string why)

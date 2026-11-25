@@ -416,10 +416,20 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   without a package; SQL Server's, where a constraint is an object of the schema, come with #29.
 - **Nothing is resolved until a declaration is met.** A context that declares nothing never builds
   the dialect.
-- **EF Core's operations are read, never changed.** `BaseChanges` maps every `MigrationOperation`
-  type of EF Core Relational and the three providers to a `BaseChange` or marks it harmless, and
-  `SchemaImpactTests` fails when an assembly has a type the table lacks. An operation of a type
-  outside it is refused when a model declares an object.
+- **EF Core's operations are read, never changed, and what each does is the dialect's to say**
+  (#116, #198). `ISchemaDialect.EffectOf` answers an operation with an `OperationEffect`: the
+  `BaseChange`s it stands for (none for one that touches nothing an object depends on), that the
+  provider writes nothing for it, or that nobody knows it. The kernel's `SchemaDialect` answers
+  EF Core Relational's operations, and for now SQL Server's and SQLite's, which have no dialect
+  to move to (#29); `SchemaImpactTests` fails when one of those assemblies has a type the table
+  lacks. A provider's dialect overrides it for what its generator does otherwise, and holds each
+  such rule against the generator in a test. An operation nobody describes is refused when a
+  model declares an object.
+- **An operation the provider writes nothing for is refused under an object of its table**
+  (`OperationEffect.NotWritten`, #105). The database would stay as it was while the model and
+  the migration say otherwise. The effect carries the way out as a sentence of the provider's
+  package, since only that package knows it. A context that declares nothing on the table is
+  not touched.
 - **`ImpactOf` is asked for each change that touches what an object depends on,** tables and
   columns carried forward through EF Core's renames, and the answer that asks most decides:
   `RebuildAround` drops before and creates after even when both sides are equal, `Lost` creates
@@ -431,11 +441,12 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   still built from the source's own table and columns, which makes it a name-only change: one
   `InPlace` rename. A drop names the object as it is before EF Core's operations (`Before`).
 - **An `AlterColumnOperation` the provider writes as drop and add is a `ColumnDropped`** (#80).
-  Npgsql and SQL Server both do that when a column's computation changes (and Npgsql for a
-  generated `tsvector`). PostgreSQL drops an index and an exclusion constraint with the column in
-  silence, so as an alteration the migration applied and the object was gone for good.
-  `BaseChanges.DroppedAndAdded` is a copy of the providers' rule, held against both generators by
-  a test. What the provider writes decides, not what the operation is called.
+  Npgsql and SQL Server both do that when a column's computation changes. PostgreSQL drops an
+  index and an exclusion constraint with the column in silence, so as an alteration the
+  migration applied and the object was gone for good. `BaseChanges.DroppedAndAdded` is a copy of
+  the two providers' rule, held against both generators by a test. What only Npgsql does, for
+  a generated `tsvector`, is `NpgsqlSchemaDialect`'s to say. What the provider writes decides,
+  not what the operation is called.
 - **A `TableRebuilt` names its table as the target has it,** like every other change (#193). Its
   operation may stand before the table's rename and name it as the source has it: EF Core drops
   keys and constraints first. Taken as written, the objects on a table renamed and rebuilt in
@@ -596,6 +607,15 @@ what is still missing).
   and a relation name, a foreign key and a check constraint a constraint name only. Each row of
   `NameClaimTests` has its row there, refused with 42P07 or 42710 or taken. A change to
   `NpgsqlSchemaDialect.Claims` needs the server's word first.
+- **`NpgsqlSchemaDialect.EffectOf` holds Npgsql's own rules** (#198), each against the generator
+  in `NpgsqlOperationEffectTests`: a change of a generated `tsvector` is a dropped column, its
+  database operations touch nothing, and a table moved back to the default schema is not
+  written. Npgsql 11.0.0 writes `SET SCHEMA` only for a schema the operation names, so
+  `ToTable("x", "grants")` to `ToTable("x")` leaves the table in `grants` (#105). With an
+  object on the table the migration is refused, and the way out is to name the schema,
+  `ToTable("x", "public")`, which Npgsql writes
+  (`Moving_the_table_back_with_the_default_schema_named`). When the provider writes the move,
+  the test of the rule fails and the rule and its refusal go.
 - **`Plan` is a rename or a rebuild.** PostgreSQL alters nothing else about an exclusion constraint.
 - **`ImpactOf` is the package's one measured table, `PgImpact`** (#117; plan, section 3.7), keyed
   by the object's kind, the role the column is read in and the change. Renames follow, an
