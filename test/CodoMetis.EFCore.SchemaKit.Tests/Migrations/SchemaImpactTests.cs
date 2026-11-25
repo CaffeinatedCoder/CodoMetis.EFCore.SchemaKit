@@ -342,6 +342,113 @@ public sealed class SchemaImpactTests
             SchemaOperationPlannerTests.Describe(bare.GetService<IMigrationsModelDiffer>().GetDifferences(null, SchemaOperationPlannerTests.Model(bare))));
     }
 
+    // ---- the dialect says what an operation does (#116) ----------------------------------------------------
+
+    /// <summary>A dialect as a provider's package brings it: it says what its provider does otherwise, and what another package's operation does.</summary>
+    private sealed class DescribingDialect(SchemaDialectDependencies dependencies) : SchemaDialect(dependencies)
+    {
+        public static Func<SchemaDialect, MigrationOperation, OperationEffect?>? Answer { get; set; }
+
+        public TableRef Thing => TableOf(null, "Thing");
+
+        public override OperationEffect EffectOf(MigrationOperation operation) => Answer?.Invoke(this, operation) ?? base.EffectOf(operation);
+    }
+
+    private static void Describing(IServiceCollection services)
+        => services.AddScoped<ISchemaDialect>(provider => new DescribingDialect(new SchemaDialectDependencies(
+            provider.GetRequiredService<Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper>(),
+            provider.GetRequiredService<Microsoft.EntityFrameworkCore.Storage.IRelationalTypeMappingSource>())));
+
+    private static (List<string>? Operations, string? Refusal, List<BaseChange> Asked) Described(Func<SchemaDialect, MigrationOperation, OperationEffect?> answer)
+    {
+        DescribingDialect.Answer = answer;
+        try
+        {
+            using var from = SchemaOperationPlannerTests.Context<PlanModels.Guarded>(more: Describing);
+            using var to = SchemaOperationPlannerTests.Context<PlanModels.GuardedOptional>(more: Describing);
+            var guard = (TestGuardContributor)to.GetService<SchemaContributorRegistry>().Find("Test.Guard")!;
+            try
+            {
+                var operations = to.GetService<IMigrationsModelDiffer>().GetDifferences(SchemaOperationPlannerTests.Model(from), SchemaOperationPlannerTests.Model(to));
+                return (SchemaOperationPlannerTests.Describe(operations), null, guard.Asked);
+            }
+            catch (InvalidOperationException refused)
+            {
+                return (null, refused.Message, guard.Asked);
+            }
+        }
+        finally
+        {
+            DescribingDialect.Answer = null;
+        }
+    }
+
+    /// <summary>
+    /// What an operation does is the dialect's answer, and the planner acts on it: the changes it
+    /// names are the ones a contributor is asked about, an operation it says nothing is written
+    /// for is refused under an object of its table, with the dialect's way out, and one it does
+    /// not know is refused as before.
+    /// </summary>
+    [TestMethod]
+    public void The_dialect_says_what_an_operation_does()
+    {
+        // The kernel's own answer: the column was altered.
+        var own = Described((_, _) => null);
+        Assert.AreEqual(1, own.Asked.Count);
+        Assert.IsInstanceOfType<BaseChange.ColumnAltered>(own.Asked[0]);
+
+        // A provider that writes this alteration as a drop and an add says so, and the index is created again.
+        var dropped = Described((dialect, operation) => operation is AlterColumnOperation alter
+            ? new OperationEffect.Changes([new BaseChange.ColumnDropped(((DescribingDialect)dialect).Thing, dialect.Identifier(alter.Name))])
+            : null);
+        Assert.IsInstanceOfType<BaseChange.ColumnDropped>(dropped.Asked.Single());
+        CollectionAssert.AreEqual(new[] { nameof(AlterColumnOperation), """CREATE UNIQUE INDEX ux_name ON "Thing" ("Name");""" }, dropped.Operations);
+
+        // One that says the operation touches nothing: nobody is asked.
+        var nothing = Described((_, operation) => operation is AlterColumnOperation ? new OperationEffect.Changes([]) : null);
+        Assert.AreEqual(0, nothing.Asked.Count);
+        CollectionAssert.AreEqual(new[] { nameof(AlterColumnOperation) }, nothing.Operations);
+
+        var notWritten = Described((dialect, operation) => operation is AlterColumnOperation
+            ? new OperationEffect.NotWritten([((DescribingDialect)dialect).Thing], "Write it another way.")
+            : null);
+        StringAssert.Contains(notWritten.Refusal, "Test.Guard unique 'ux_name' on Thing is on the table 'Thing', and this migration holds a AlterColumnOperation");
+        StringAssert.Contains(notWritten.Refusal, "Write it another way.");
+
+        // Another table's: nothing declared is on it.
+        var elsewhere = Described((dialect, operation) => operation is AlterColumnOperation
+            ? new OperationEffect.NotWritten([new TableRef(null, dialect.Identifier("Other"))], "Write it another way.")
+            : null);
+        Assert.IsNull(elsewhere.Refusal);
+
+        var unknown = Described((_, operation) => operation is AlterColumnOperation ? new OperationEffect.Unknown() : null);
+        StringAssert.Contains(unknown.Refusal, $"an operation of type '{typeof(AlterColumnOperation).FullName}', which SchemaKit does not know");
+    }
+
+    /// <summary>Another package's operation, which the kernel refuses, is taken once a dialect says what it does.</summary>
+    [TestMethod]
+    public void An_operation_of_another_package_is_taken_when_the_dialect_describes_it()
+    {
+        static void Both(IServiceCollection services)
+        {
+            services.AddScoped<IMigrationsModelDiffer, StrangeDiffer>();
+            Describing(services);
+        }
+
+        DescribingDialect.Answer = (_, operation) => operation is StrangeOperation ? new OperationEffect.Changes([]) : null;
+        try
+        {
+            using var guarded = SchemaOperationPlannerTests.Context<PlanModels.Guarded>(more: Both);
+            var operations = SchemaOperationPlannerTests.Describe(guarded.GetService<IMigrationsModelDiffer>().GetDifferences(null, SchemaOperationPlannerTests.Model(guarded)));
+            CollectionAssert.Contains(operations, nameof(StrangeOperation));
+            CollectionAssert.Contains(operations, """CREATE UNIQUE INDEX ux_name ON "Thing" ("Name");""");
+        }
+        finally
+        {
+            DescribingDialect.Answer = null;
+        }
+    }
+
     /// <summary>
     /// The table of operation types is complete, and holds nothing that is not there: a provider
     /// that gains an operation type fails this before a consumer's migration meets it.
@@ -351,8 +458,8 @@ public sealed class SchemaImpactTests
     {
         var found = new[]
             {
+                // Npgsql's own types are its package's dialect's to know (#116), and held there.
                 typeof(MigrationOperation).Assembly,
-                typeof(Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.NpgsqlDbContextOptionsBuilder).Assembly,
                 typeof(SqlServerDbContextOptionsBuilder).Assembly,
                 typeof(SqliteDbContextOptionsBuilder).Assembly,
             }
@@ -391,13 +498,6 @@ public sealed class SchemaImpactTests
         [Provider.Npgsql, "a default by SQL", Alter(now: a => a.DefaultValueSql = "'x'")],
         [Provider.Npgsql, "a comment", Alter(now: a => a.Comment = "c")],
         [Provider.Npgsql, "a collation", Alter(now: a => a.Collation = "C")],
-        [Provider.Npgsql, "becomes a generated tsvector", Alter(now: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); })],
-        [Provider.Npgsql, "a tsvector over other columns", Alter(
-            now: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); },
-            before: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Name" }); })],
-        [Provider.Npgsql, "a tsvector as it was", Alter(
-            now: a => { a.ColumnType = "tsvector"; a.IsNullable = true; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); },
-            before: a => { a.ColumnType = "tsvector"; a.AddAnnotation("Npgsql:TsVectorConfig", "english"); a.AddAnnotation("Npgsql:TsVectorProperties", new[] { "Id" }); })],
 
         [Provider.SqlServer, "becomes computed", Alter(now: a => a.ComputedColumnSql = "'x'")],
         [Provider.SqlServer, "stops being computed", Alter(before: a => a.ComputedColumnSql = "'x'")],

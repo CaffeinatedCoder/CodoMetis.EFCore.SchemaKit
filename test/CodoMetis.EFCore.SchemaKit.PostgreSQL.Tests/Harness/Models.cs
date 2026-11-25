@@ -561,6 +561,24 @@ public static class Models
         public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "grants").DeclarePostgres(_ => [ActivePeriod]);
     }
 
+    /// <summary><see cref="Scheduling" /> with the default schema named: where a table that leaves a schema of its own is moved by a statement.</summary>
+    public sealed class SchedulingInPublic : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "public").DeclarePostgres(_ => [ActivePeriod]);
+    }
+
+    /// <summary>The table in a schema of its own, with nothing declared.</summary>
+    public sealed class GrantsMovedUndeclared : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "grants");
+    }
+
+    /// <summary>The table without a schema, with nothing declared.</summary>
+    public sealed class GrantsUndeclared : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants");
+    }
+
     /// <summary><see cref="Unnamed" />, and EF Core moves the table to another schema: the default name has no schema in it.</summary>
     public sealed class UnnamedMoved : ITestModel
     {
