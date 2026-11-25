@@ -135,6 +135,14 @@ public sealed record SqlFragment
     /// <inheritdoc />
     public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Text);
 
+    /// <summary>
+    /// The same SQL, with every column it reads read in this way. For where a contributor puts a
+    /// fragment: as the object's condition, or among its included columns.
+    /// </summary>
+    /// <param name="role">How the object reads the fragment's columns.</param>
+    public SqlFragment As(ColumnRole role)
+        => new(Text, [.. Dependencies.Select(dependency => dependency is Dependency.Column column ? column with { Role = role } : dependency).Distinct()], NameToken);
+
     /// <summary>A fragment with no text, for an optional clause that is absent.</summary>
     public static SqlFragment Empty { get; } = new("");
 

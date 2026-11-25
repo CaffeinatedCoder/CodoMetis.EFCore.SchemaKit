@@ -36,6 +36,8 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.BaseChange+TableMoved",
         "CodoMetis.EFCore.SchemaKit.BaseChange+TableRebuilt",
         "CodoMetis.EFCore.SchemaKit.BaseChange+TableRenamed",
+        "CodoMetis.EFCore.SchemaKit.ColumnAlteration",
+        "CodoMetis.EFCore.SchemaKit.ColumnRole",
         "CodoMetis.EFCore.SchemaKit.Dependency",
         "CodoMetis.EFCore.SchemaKit.Dependency+Column",
         "CodoMetis.EFCore.SchemaKit.Dependency+Extension",

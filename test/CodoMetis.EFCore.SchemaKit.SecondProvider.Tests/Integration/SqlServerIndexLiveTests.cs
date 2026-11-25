@@ -416,9 +416,11 @@ public sealed class SqlServerIndexLiveTests
             new[] { 5074, 4922 },
             Refusal<Sales.Indexed, Sales.KeyColumnComputed>(change => change is BaseChange.ColumnDropped ? new Impact.Unaffected() : null));
 
-    // ── What the change does not say (#119, BaseChange) ──
+    // ── What the change says was altered (#117; it could not, #119) ──
 
     private static Impact? LeftAlone(BaseChange change) => change is BaseChange.ColumnAltered ? new Impact.Unaffected() : null;
+
+    private static Impact? TakenAway(BaseChange change) => change is BaseChange.ColumnAltered ? new Impact.RebuildAround() : null;
 
     [TestMethod]
     public void Making_a_key_column_optional() => AssertMigratesTo<Sales.IndexedByNumber, Sales.IndexedByAnOptionalNumber>(Leaves(ByNumber));
@@ -428,43 +430,49 @@ public sealed class SqlServerIndexLiveTests
 
     /// <summary>
     /// The server takes a change of nullability under an index that has no filter on the column:
-    /// with the index left where it is the migration applies, and the catalog is the one
-    /// <c>EnsureCreated()</c> builds. The contributor cannot tell this change from a change of
-    /// type, which is refused, so it takes the index away for both.
+    /// the contributor leaves the index where it is, the migration applies, and the catalog is
+    /// the one <c>EnsureCreated()</c> builds. The column the filter reads is another matter: left
+    /// alone there, the server refuses the alteration, so the index is taken out of its way.
     /// </summary>
     [TestMethod]
-    public void A_change_of_nullability_did_not_need_the_index_out_of_its_way()
+    public void A_change_of_nullability_leaves_the_index_unless_its_filter_reads_the_column()
     {
         using var database = new SqlServerDatabase();
         using var created = new SqlServerDatabase();
         using (var context = Contexts.SqlServer<Sales.IndexedByAnOptionalNumber>(created.ConnectionString)) context.Database.EnsureCreated();
         database.Create<Sales.IndexedByNumber>();
 
-        database.Migrate<Sales.IndexedByNumber, Sales.IndexedByAnOptionalNumber>(contributor => contributor.ImpactOverride = (_, change) => LeftAlone(change));
+        database.Migrate<Sales.IndexedByNumber, Sales.IndexedByAnOptionalNumber>();
 
         CollectionAssert.AreEqual(created.Indexes(), database.Indexes());
         CollectionAssert.AreEqual(new[] { ByNumber }, database.Declared());
+
+        var refused = Refusal<Sales.Indexed, Sales.FilterColumnRequired>(LeftAlone);
+        Assert.IsTrue(refused.Count > 0, "Left alone, the alteration of the filter's column applies: the answer would be Unaffected.");
+        Console.WriteLine("Msg " + string.Join(", ", refused));
+        AssertMigratesTo<Sales.Indexed, Sales.FilterColumnRequired>(Leaves(Open));
     }
 
     /// <summary>
     /// A default is a constraint of its own, and EF Core writes no <c>ALTER COLUMN</c> for it.
-    /// Left alone, the index is the one it was, by its storage; as the contributor has to answer,
-    /// it is dropped and built again for nothing.
+    /// The contributor leaves the index alone, and it is the one it was, by its storage. Taken
+    /// away and built again, as every alteration was before the change said what it altered, it
+    /// is another.
     /// </summary>
     [TestMethod]
-    public void A_default_did_not_need_the_index_out_of_its_way_and_rebuilds_it()
+    public void A_default_leaves_the_index_the_one_it_was()
     {
         using var left = new SqlServerDatabase();
         left.Create<Sales.IndexedByNumber>();
         var kept = left.StorageOf("IX_orders_number");
-        left.Migrate<Sales.IndexedByNumber, Sales.IndexedByANumberWithADefault>(contributor => contributor.ImpactOverride = (_, change) => LeftAlone(change));
-        Assert.AreEqual(kept, left.StorageOf("IX_orders_number"), "Left alone, the migration applies and the index is the one it was.");
+        left.Migrate<Sales.IndexedByNumber, Sales.IndexedByANumberWithADefault>();
+        Assert.AreEqual(kept, left.StorageOf("IX_orders_number"), "The migration applies and the index is the one it was.");
 
         using var rebuilt = new SqlServerDatabase();
         rebuilt.Create<Sales.IndexedByNumber>();
         var before = rebuilt.StorageOf("IX_orders_number");
-        rebuilt.Migrate<Sales.IndexedByNumber, Sales.IndexedByANumberWithADefault>();
-        Assert.AreNotEqual(before, rebuilt.StorageOf("IX_orders_number"), "As the contributor has to answer, the index is built again.");
+        rebuilt.Migrate<Sales.IndexedByNumber, Sales.IndexedByANumberWithADefault>(contributor => contributor.ImpactOverride = (_, change) => TakenAway(change));
+        Assert.AreNotEqual(before, rebuilt.StorageOf("IX_orders_number"), "Taken out of the way, the index is built again.");
     }
 
     // ── Two tables ──

@@ -281,6 +281,15 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   `Harness/Bound.cs` of the second provider's tests does.
 - **`Plan` and `ImpactOf` are abstract on the base class.** No optional hook, no default answer.
   The base class refuses an `InPlace` with no statement and statements beside another answer.
+  A table of measured answers is a provider package's own, read by its contributors' `ImpactOf`
+  (decided 2026-11-25 with #117); the kernel has none and no default for a cell.
+- **A column dependency says how the column is read, and an altered column what was altered**
+  (#117). `Dependency.Column` has a `ColumnRole`: the resolver says `Key` for a column by itself
+  and `Expression` for one in a template, and `SqlFragment.As` says `Condition` and `Included`
+  where a contributor puts a fragment. Read in two ways, a column is two dependencies.
+  `BaseChange.ColumnAltered` has a `ColumnAlteration`, read from the operation's two sides: the
+  type (a length is part of it), the nullability, the default, the collation, or `Other`, which
+  is never nothing. A fragment still compares by its text alone.
 - **A contributor derives from `SchemaContributor<,>`.** The interface is what the kernel calls, not
   what a package implements: `AddSchemaContributor` and the registry both refuse a class that
   implements it directly, since the base class is where an answer is checked.
@@ -588,13 +597,17 @@ what is still missing).
   `NameClaimTests` has its row there, refused with 42P07 or 42710 or taken. A change to
   `NpgsqlSchemaDialect.Claims` needs the server's word first.
 - **`Plan` is a rename or a rebuild.** PostgreSQL alters nothing else about an exclusion constraint.
-- **`ImpactOf` is the measured table** (plan, section 3.7): renames follow, an altered column leaves
-  it alone, a dropped column that is an element by itself takes the constraint with it (`Lost`),
-  whatever else reads it; one that only an element's expression or only the condition reads has
-  to have the constraint out of its way (`RebuildAround`, #102). The descriptor keeps the columns
-  that are elements by themselves (`KeyColumns`) for that, outside its comparison. The server's
-  word for each way of reading a column is one test in `PgExclusionLiveTests`: a new kind of
-  element needs its row there before `GoesWith` answers for it.
+- **`ImpactOf` is the package's one measured table, `PgImpact`** (#117; plan, section 3.7), keyed
+  by the object's kind, the role the column is read in and the change. Renames follow, an
+  altered column leaves the constraint alone, a dropped column that is an element by itself
+  takes the constraint with it (`Lost`), whatever else reads it; one that only an element's
+  expression or only the condition reads has to have the constraint out of its way
+  (`RebuildAround`, #102). The rows of a change are read in order and the first that fits
+  answers, since PostgreSQL's answer for a column read in two ways is not the stronger of the
+  two. A change no row answers is `RebuildAround`. The server's word for each way of reading a
+  column is one test in `PgExclusionLiveTests`: a row is added with its test. A second
+  contributor of the package (`PgIndex`, #27) adds a kind and its rows and writes no answer of
+  its own.
 - **`=` on a scalar column needs `btree_gist`, and the migration brings it.** The descriptor lists
   the extension as a dependency by 5.x's rule (a column by its store type, an expression by its
   operator, GiST only), in an `Operational<>` field: it says how the constraint comes to be, not
@@ -657,8 +670,11 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
   server's message number. `ClaimedAs` lets the index stand in for an object of the schema,
   which this contributor has none of, so that the dialect's claims for EF Core's tables,
   constraints and sequences are compared with something.
-- **SQL Server's impact table is not PostgreSQL's.** A dropped or altered column is refused under
-  an index (Msg 5074, Msg 4922), so both are `RebuildAround`; `Lost` is for a dropped table alone.
+- **SQL Server's impact table is not PostgreSQL's.** A dropped column and a change of a column's
+  type are refused under an index (Msg 5074, Msg 4922), so both are `RebuildAround`; `Lost` is
+  for a dropped table alone. A change of nullability alone and a default leave the index where
+  it is, unless its filter reads the column: the change says what was altered, and the column's
+  role says whether the filter reads it (#117).
   The rename of a key or an included column follows, the rename of a column the filter reads is
   refused. The contributor finds a changed column by its name, never as
   `new Dependency.Column(change.Table, change.From)`: the change names the table as the target

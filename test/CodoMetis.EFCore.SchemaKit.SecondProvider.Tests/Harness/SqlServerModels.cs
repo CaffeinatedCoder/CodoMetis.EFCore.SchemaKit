@@ -264,6 +264,13 @@ public static class Sales
             => Orders(modelBuilder).DeclareProbe(ByNumber).Property(x => x.Number).IsRequired(false);
     }
 
+    /// <summary>The column the filter reads becomes required, and nothing else about it changes.</summary>
+    public sealed class FilterColumnRequired : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Orders(modelBuilder).DeclareProbe(Open).Property(x => x.ShippedAt).IsRequired();
+    }
+
     public sealed class IndexedByANumberWithADefault : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)

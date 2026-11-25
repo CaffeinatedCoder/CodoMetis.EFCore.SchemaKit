@@ -21,9 +21,8 @@ internal sealed record ProbeIndexDescriptor(
         [.. Keys.Concat(Include).Append(Where).SelectMany(part => part.Dependencies).Distinct()];
 
     /// <summary>
-    /// Whether the filter reads the column. The role of a column is kept here, by the contributor:
-    /// <see cref="Dependency.Column" /> does not say it. SQL without a placeholder is taken to read
-    /// every column.
+    /// Whether the filter reads the column, which the dependency says by its role (issue 117).
+    /// SQL without a placeholder is taken to read every column.
     /// </summary>
     /// <remarks>
     /// By the column's name alone. A <see cref="BaseChange" /> names its table as the target model
@@ -32,9 +31,9 @@ internal sealed record ProbeIndexDescriptor(
     /// this descriptor. The kernel carries the names forward before it asks; a contributor has
     /// nothing to do that with (<c>SqlServerIndexLiveTests.Renaming_the_table_and_a_column_the_filter_reads</c>).
     /// </remarks>
-    public bool FilterReads(Identifier column) => Where.Dependencies.Any(read => read switch
+    public bool FilterReads(Identifier column) => Dependencies.Any(read => read switch
     {
-        Dependency.Column named => named.Name.Equals(column),
+        Dependency.Column named => named.Role == ColumnRole.Condition && named.Name.Equals(column),
         Dependency.WholeTable   => true,
         _                       => false,
     });
@@ -80,8 +79,8 @@ internal sealed class ProbeIndexContributor(SchemaContributorDependencies depend
             new QualifiedName(null, resolver.Name(declaration.Name, "IX", keys)),
             declaration.IsUnique,
             [.. keys],
-            [.. declaration.Include.Select(resolver.Column)],
-            declaration.Where is { } where ? resolver.Template(where.Template) : SqlFragment.Empty);
+            [.. declaration.Include.Select(column => resolver.Column(column).As(ColumnRole.Included))],
+            declaration.Where is { } where ? resolver.Template(where.Template).As(ColumnRole.Condition) : SqlFragment.Empty);
 
         Resolved.Add(descriptor);
         return descriptor;
@@ -149,11 +148,13 @@ internal sealed class ProbeIndexContributor(SchemaContributorDependencies depend
             BaseChange.ColumnRenamed renamed => descriptor.FilterReads(renamed.From) ? new Impact.RebuildAround() : new Impact.Follows(),
 
             // A change of type is refused under any index that reads the column (Msg 5074). A
-            // change of nullability alone is not, unless the filter reads the column.
-            //
-            // Audit: the change does not say what was altered, so every alteration takes the
-            // index away and builds it again, also one EF Core writes no ALTER COLUMN for.
-            BaseChange.ColumnAltered => new Impact.RebuildAround(),
+            // change of nullability alone is taken, and a default is a constraint of its own, for
+            // which EF Core writes no ALTER COLUMN: the change says what was altered (issue 117),
+            // and for those two the index stays, unless its filter reads the column.
+            BaseChange.ColumnAltered altered
+                => (altered.What & ~(ColumnAlteration.Nullability | ColumnAlteration.Default)) == 0 && !descriptor.FilterReads(altered.Column)
+                    ? new Impact.Unaffected()
+                    : new Impact.RebuildAround(),
 
             // Refused while the index is there (Msg 5074, Msg 4922), in whatever way it reads the
             // column. PostgreSQL drops an index with its column in silence; that answer is Lost.

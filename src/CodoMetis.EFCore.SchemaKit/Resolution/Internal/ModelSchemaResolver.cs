@@ -95,7 +95,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
             throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(_entityType.ShortName(), path));
 
         var (column, own) = ResolveColumn(path);
-        return new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column)], own);
+        return new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column, ColumnRole.Key)], own);
     }
 
     public override string StoreType(string path)
@@ -138,7 +138,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
                     var (column, own) = ResolveColumn(path.Path);
                     sql.Append(Dialect.Delimit(column));
                     token.Append(own);
-                    Dependency read = new Dependency.Column(Table, column);
+                    Dependency read = new Dependency.Column(Table, column, ColumnRole.Expression);
                     if (!reads.Contains(read)) reads.Add(read);
                     break;
             }
