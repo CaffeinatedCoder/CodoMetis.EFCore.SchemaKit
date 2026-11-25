@@ -82,6 +82,16 @@ public static class People
         public static void Build(ModelBuilder modelBuilder) => Persons(modelBuilder, "Persons").DeclareProbe(ByLowerName).HasKey(x => x.Id).HasName("PK_person");
     }
 
+    /// <summary><see cref="IndexedWithANamedKey" /> with a check constraint, which <see cref="TableRenamedWithANamedKey" /> does not have.</summary>
+    public sealed class IndexedWithANamedKeyAndACheck : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            IndexedWithANamedKey.Build(modelBuilder);
+            Persons(modelBuilder).ToTable(table => table.HasCheckConstraint("CK_person_name", "\"Name\" <> ''"));
+        }
+    }
+
     // ── A change SQLite has no ALTER for: its provider creates the table again ──
 
     /// <summary>The index unchanged, and a column the index does not read altered.</summary>
@@ -89,6 +99,15 @@ public static class People
     {
         public static void Build(ModelBuilder modelBuilder)
             => Persons(modelBuilder).DeclareProbe(ByLowerName).Property(x => x.Email).IsRequired();
+    }
+
+    /// <summary>An index whose key is SQL written by hand: it names no column by a property, and reads the whole table.</summary>
+    public sealed class IndexedByHandWrittenSqlWithARequiredEmail : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Persons(modelBuilder)
+                .DeclareProbe(new ProbeSqliteIndex(new KeyTarget.Template(SqlTemplate.Raw("lower(\"Name\")"))) { Name = Name })
+                .Property(x => x.Email).IsRequired();
     }
 
     public sealed class BareWithARequiredEmail : ITestModel

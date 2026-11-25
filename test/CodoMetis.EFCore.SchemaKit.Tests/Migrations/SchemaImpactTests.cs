@@ -453,21 +453,22 @@ public sealed class SchemaImpactTests
     }
 
     /// <summary>
-    /// The failure itself, on a live database, and how far this version gets with it. Both models
-    /// declare the index and neither changes it. EF Core alters a column, and SQLite's provider
-    /// creates the table again without the index.
+    /// The failure itself, on a live database. Both models declare the index and neither changes
+    /// it. EF Core alters a column, and SQLite's provider creates the table again without the
+    /// index.
     /// </summary>
     /// <remarks>
-    /// The planner sees it: the contributor is asked about the rebuild, answers that the index is
-    /// lost, and the index is created again after EF Core's operations. But SQLite's generator
-    /// moves a rebuild to the end of the migration, behind every statement that follows the
-    /// operation, so the create runs while the index is still there and fails. That is a migration
-    /// that does not apply, where without the planner's answer it applied and left the database
-    /// without the index. Placing the create after the rebuild is the generator decorator's work
-    /// (plan, section 3.12), and this test changes with it: the index is then there afterwards.
+    /// The planner sees it: the contributor is asked about the rebuild and answers that the index
+    /// is lost, so it has to be created again. But SQLite's generator moves a rebuild to the end
+    /// of the migration, behind every statement that follows the operation, so the create would
+    /// run while the index is still there, or, under a name that is free, on the table the rebuild
+    /// drops (#145). The diff is refused, with the declaration and the table named, and nothing
+    /// reaches the database. Placing the create after the rebuild is the generator decorator's
+    /// work (plan, section 3.12; #115), and this test changes with it: the index is then there
+    /// afterwards.
     /// </remarks>
     [TestMethod]
-    public void On_sqlite_an_index_lost_to_a_rebuild_fails_the_migration_and_is_not_lost_in_silence()
+    public void On_sqlite_an_index_lost_to_a_rebuild_is_refused_at_the_diff()
     {
         var file = Path.Combine(Path.GetTempPath(), $"schemakit-{Guid.NewGuid():N}.db");
         var connection = $"Data Source={file};Pooling=False";
@@ -482,33 +483,25 @@ public sealed class SchemaImpactTests
             using var from = SchemaOperationPlannerTests.Context<PlanModels.Guarded>(Provider.Sqlite, connection: connection);
             using var to = SchemaOperationPlannerTests.Context<PlanModels.GuardedOptional>(Provider.Sqlite, connection: connection);
             var guard = (TestGuardContributor)to.GetService<SchemaContributorRegistry>().Find("Test.Guard")!;
+            var differ = to.GetService<IMigrationsModelDiffer>();
 
-            var operations = to.GetService<IMigrationsModelDiffer>().GetDifferences(SchemaOperationPlannerTests.Model(from), SchemaOperationPlannerTests.Model(to));
-            var commands = to.GetService<IMigrationsSqlGenerator>().Generate(operations, to.GetService<IDesignTimeModel>().Model)
-                .Select(command => command.CommandText).ToList();
+            var refused = Assert.ThrowsExactly<InvalidOperationException>(
+                () => differ.GetDifferences(SchemaOperationPlannerTests.Model(from), SchemaOperationPlannerTests.Model(to)));
 
-            CollectionAssert.AreEqual(
-                new[] { nameof(AlterColumnOperation), """CREATE UNIQUE INDEX "ux_name" ON "Thing" ("Name");""" },
-                SchemaOperationPlannerTests.Describe(operations));
+            StringAssert.Contains(refused.Message, "Thing declares Test.Guard unique 'ux_name', which this migration has to create on the table");
+            StringAssert.Contains(refused.Message, "SQLite's provider writes as a rebuild");
             Assert.IsTrue(guard.Asked.OfType<BaseChange.TableRebuilt>().Any(), "The contributor is asked about the rebuild.");
+            Assert.ThrowsExactly<InvalidOperationException>(() => differ.HasDifferences(SchemaOperationPlannerTests.Model(from), SchemaOperationPlannerTests.Model(to)));
+            CollectionAssert.Contains(Indexes(to), "ux_name", "Nothing reached the database.");
 
-            // What SQLite's generator does with that list: the create first, the rebuild behind it.
-            var create = commands.FindIndex(c => c.Contains("CREATE UNIQUE INDEX \"ux_name\"", StringComparison.Ordinal));
-            var rebuild = commands.FindIndex(c => c.Contains("ef_temp_", StringComparison.Ordinal));
-            Assert.IsTrue(create >= 0 && rebuild > create, string.Join("\n---\n", commands));
-
-            to.Database.OpenConnection();
-            var error = Assert.Throws<System.Data.Common.DbException>(() =>
-            {
-                foreach (var text in commands)
-                {
-                    using var run = to.Database.GetDbConnection().CreateCommand();
-                    run.CommandText = text;
-                    run.ExecuteNonQuery();
-                }
-            });
-
-            StringAssert.Contains(error.Message, "index ux_name already exists");
+            // The same two models on a provider that alters the column in place: no rebuild, and
+            // nothing to refuse.
+            using var onPostgres = SchemaOperationPlannerTests.Context<PlanModels.GuardedOptional>();
+            using var fromPostgres = SchemaOperationPlannerTests.Context<PlanModels.Guarded>();
+            CollectionAssert.AreEqual(
+                new[] { nameof(AlterColumnOperation) },
+                SchemaOperationPlannerTests.Describe(onPostgres.GetService<IMigrationsModelDiffer>().GetDifferences(
+                    SchemaOperationPlannerTests.Model(fromPostgres), SchemaOperationPlannerTests.Model(onPostgres))));
         }
         finally
         {

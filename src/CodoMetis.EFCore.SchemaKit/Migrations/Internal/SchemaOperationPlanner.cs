@@ -229,6 +229,15 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         List<Resolved> drops = [.. sourceOrder.Where(dropped.Contains)];
         List<Resolved> creates = [.. targetOrder.Where(created.Contains)];
 
+        // SQLite's generator moves a table rebuild to the end of the migration, behind every
+        // statement written after the operation it stands for. A create on such a table runs on
+        // the old table, which the rebuild then drops, and the object with it: the migration
+        // applies and the database lacks what the model declares, or the create meets the object
+        // that is still there and fails at apply (#145). Neither is left to happen: until the
+        // generator places such a create behind the rebuild (#115), it is refused here. Only
+        // SQLite's operations are read as rebuilds, so nothing is asked of another provider.
+        RefuseCreatesARebuildWouldLose(AttachedToTables(creates), changes);
+
         var before = new SchemaSql(Dialect);
         var after  = new SchemaSql(Dialect);
 
@@ -261,6 +270,28 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
             drop.Contributor.Drop(drop.Descriptor, after);
 
         return new SchemaOperationPlan(before.Operations, [.. inPlace.Operations, .. after.Operations]);
+    }
+
+    private static void RefuseCreatesARebuildWouldLose(IEnumerable<Resolved> creates, BaseChanges changes)
+    {
+        HashSet<TableRef> rebuilt = [.. changes.Changes.OfType<BaseChange.TableRebuilt>().Select(rebuild => rebuild.Table)];
+        if (rebuilt.Count == 0) return;
+
+        foreach (var create in creates)
+        {
+            // What an object is attached to is what it says it reads, here as wherever the planner
+            // asks what an operation does to an object.
+            var tables = create.Descriptor.Dependencies.Select(dependency => dependency switch
+            {
+                Dependency.Column column    => column.Table,
+                Dependency.WholeTable whole => whole.Ref,
+                _                           => null,
+            });
+
+            if (tables.OfType<TableRef>().FirstOrDefault(rebuilt.Contains) is { } table)
+                throw new InvalidOperationException(SchemaKitStrings.CreateOnARebuiltTable(
+                    create.EntityType.ShortName(), DeclarationCodec.Describe(create.Declaration), table));
+        }
     }
 
     /// <summary>

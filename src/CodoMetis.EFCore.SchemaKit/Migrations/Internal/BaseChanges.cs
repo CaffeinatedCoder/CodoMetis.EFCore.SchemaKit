@@ -156,6 +156,20 @@ internal sealed class BaseChanges : ISchemaRenames
             }
         }
 
+        // A rebuild is written for an operation, and an operation that stands before a rename of its
+        // table names it as the source has it: EF Core drops keys and constraints first. Every
+        // other change names its table as the target has it, and so does this one, or the objects
+        // on a table that is renamed and rebuilt in one migration would not hear of the rebuild (#193).
+        for (var i = 0; i < changes.Count; i++)
+        {
+            if (changes[i] is BaseChange.TableRebuilt rebuilt)
+                changes[i] = new BaseChange.TableRebuilt(result.Forward(rebuilt.Table));
+        }
+
+        var distinct = changes.Distinct().ToList();
+        changes.Clear();
+        changes.AddRange(distinct);
+
         return result;
 
         TableRef Table(string? schema, string name) => new(schema is null ? null : dialect.Identifier(schema), dialect.Identifier(name));

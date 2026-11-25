@@ -494,9 +494,11 @@ var report = await context.Database.VerifySchemaKitAsync(ct);
   2026-11-12, #65). SQLite's generator moves a table rebuild to the end of the migration, behind
   every statement that follows the operation it was written for. The planner knows the rebuild
   (`TableRebuilt`) and re-creates what a contributor reports as lost, but its create runs before
-  the rebuild and fails on the object that is still there. So until the generator decorator
-  places such a create after the rebuild, that migration fails to apply; without the planner's
-  answer it applied and left the database without the object.
+  the rebuild: on the object that is still there, where it fails, or under a name that is free
+  then, where it succeeds on the table the rebuild drops (#145). So until the generator decorator
+  places such a create after the rebuild, the diff is refused, with the declaration and the table
+  named (decided 2026-11-25 with #115); without the planner's answer the migration applied and
+  left the database without the object.
 - **SQLite replay is still owed.** 5.x migrations hold `CustomIndex:AfterTableRebuild` operations
   and a deliberate failing marker; the kernel's generator decorator has to replay them on a fresh
   database.
