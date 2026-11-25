@@ -214,7 +214,7 @@ public sealed class ContributorContractTests
         var column = dialect.Identifier("Email");
 
         Assert.AreEqual(new Impact.Follows(), contributor.ImpactOf(descriptor, new BaseChange.ColumnRenamed(resolver.Table, column, dialect.Identifier("Mail"))));
-        Assert.AreEqual(new Impact.Unaffected(), contributor.ImpactOf(descriptor, new BaseChange.ColumnAltered(resolver.Table, column)));
+        Assert.AreEqual(new Impact.Unaffected(), contributor.ImpactOf(descriptor, new BaseChange.ColumnAltered(resolver.Table, column, ColumnAlteration.Type)));
         Assert.AreEqual(new Impact.Lost(), contributor.ImpactOf(descriptor, new BaseChange.ColumnDropped(resolver.Table, column)));
         Assert.AreEqual(new Impact.Lost(), contributor.ImpactOf(descriptor, new BaseChange.TableRebuilt(resolver.Table)));
     }

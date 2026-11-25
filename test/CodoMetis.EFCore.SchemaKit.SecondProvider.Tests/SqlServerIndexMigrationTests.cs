@@ -242,27 +242,24 @@ public sealed class SqlServerIndexMigrationTests
         => CollectionAssert.AreEqual(new[] { nameof(DropColumnOperation) }, Shape<Sales.Indexed, Sales.WithoutTheNote>());
 
     /// <summary>
-    /// What the contract cannot say (#119, <c>BaseChange</c>): an <c>AlterColumnOperation</c> for
-    /// which EF Core writes no <c>ALTER COLUMN</c>. A default is a constraint of its own on SQL
-    /// Server, the index is not in its way, and the change still arrives as "a column was
-    /// altered": the index is dropped and built again for nothing, which on a large table is the
-    /// cost of the migration.
+    /// The change says what was altered (#117), so the index stays through what the server takes
+    /// under it: a default, which is a constraint of its own on SQL Server and for which EF Core
+    /// writes no <c>ALTER COLUMN</c>, and a change of nullability. The contract could not say
+    /// either (#119), and the index was dropped and built again for nothing, which on a large
+    /// table is the cost of the migration. A change of nullability of the column the filter
+    /// reads still takes the index out of the way.
     /// </summary>
     [TestMethod]
-    public void A_default_added_to_a_key_column_rebuilds_the_index_although_no_column_is_altered()
+    public void A_default_and_a_change_of_nullability_leave_the_index_where_it_is()
     {
+        CollectionAssert.AreEqual(new[] { nameof(AlterColumnOperation) }, Shape<Sales.IndexedByNumber, Sales.IndexedByAnOptionalNumber>());
+        CollectionAssert.AreEqual(new[] { Drop, nameof(AlterColumnOperation), Create }, Shape<Sales.Indexed, Sales.FilterColumnRequired>());
+
         using var from = Contexts.SqlServer<Sales.IndexedByNumber>();
         using var to = Contexts.SqlServer<Sales.IndexedByANumberWithADefault>();
         var operations = from.DiffTo(to);
 
-        CollectionAssert.AreEqual(
-            new[]
-            {
-                "DROP INDEX [IX_orders_number] ON [Orders];",
-                nameof(AlterColumnOperation),
-                "CREATE NONCLUSTERED INDEX [IX_orders_number] ON [Orders] ([Number]) INCLUDE ([Total]);",
-            },
-            operations.Shape());
+        CollectionAssert.AreEqual(new[] { nameof(AlterColumnOperation) }, operations.Shape());
 
         var written = string.Join("\n", to.GetService<IMigrationsSqlGenerator>()
             .Generate([.. operations.OfType<AlterColumnOperation>()], to.GetService<IDesignTimeModel>().Model)
@@ -274,8 +271,8 @@ public sealed class SqlServerIndexMigrationTests
     /// <summary>
     /// EF Core's generator answers the same question for an index of its own, and by what was
     /// altered: it takes the index out of the way of a change of type, leaves it through a change
-    /// of nullability, and writes no <c>ALTER COLUMN</c> for a default. That is the distinction a
-    /// contributor is not handed.
+    /// of nullability, and writes no <c>ALTER COLUMN</c> for a default. That is the distinction
+    /// <c>ColumnAltered.What</c> hands a contributor.
     /// </summary>
     [TestMethod]
     public void EF_Core_takes_its_own_index_out_of_the_way_for_a_change_of_type_alone()

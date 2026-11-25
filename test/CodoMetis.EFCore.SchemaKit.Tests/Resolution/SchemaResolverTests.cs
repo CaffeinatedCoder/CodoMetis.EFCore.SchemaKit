@@ -92,7 +92,11 @@ public sealed class SchemaResolverTests
         /// <summary>The name as the provider writes it, asked of the provider and not of SchemaKit.</summary>
         public string D(string name) => Context.GetService<ISqlGenerationHelper>().DelimitIdentifier(name);
 
-        public Dependency Column(string name) => new Dependency.Column(Model.Table, Dialect.Identifier(name));
+        /// <summary>A column read by itself, which is what <c>Column(path)</c> says.</summary>
+        public Dependency Column(string name) => new Dependency.Column(Model.Table, Dialect.Identifier(name), ColumnRole.Key);
+
+        /// <summary>A column read in a template.</summary>
+        public Dependency InExpression(string name) => new Dependency.Column(Model.Table, Dialect.Identifier(name), ColumnRole.Expression);
 
         public void Dispose() => Context.Dispose();
     }
@@ -260,7 +264,7 @@ public sealed class SchemaResolverTests
 
             Assert.AreEqual(expected, fragment.ToString(), side);
             CollectionAssert.AreEqual(
-                new[] { sides.Column("Email"), sides.Column("town"), sides.Column("full_name") },
+                new[] { sides.InExpression("Email"), sides.InExpression("town"), sides.InExpression("full_name") },
                 fragment.Dependencies.ToList(),
                 $"Each column once, in the order it is first read, on the {side}.");
         }
@@ -284,7 +288,7 @@ public sealed class SchemaResolverTests
 
             var mixed = resolver.Template(SqlTemplate.Raw("{Name} > note"));
             Assert.AreEqual($"{sides.D("full_name")} > note", mixed.ToString(), side);
-            CollectionAssert.AreEqual(new[] { sides.Column("full_name"), new Dependency.WholeTable(resolver.Table) }, mixed.Dependencies.ToList(), side);
+            CollectionAssert.AreEqual(new[] { sides.InExpression("full_name"), new Dependency.WholeTable(resolver.Table) }, mixed.Dependencies.ToList(), side);
 
             var written = resolver.Template(SqlTemplate.FromPlaceholders("1 = 1"));
             Assert.AreEqual(0, written.Dependencies.Count, side);
@@ -309,7 +313,7 @@ public sealed class SchemaResolverTests
             var fragment = resolver.Template(SqlTemplate.FromPlaceholders(template));
 
             Assert.AreEqual($"(lower({sides.D("town")}) <> '{{x}}' AND {sides.D("Email")} IS NOT NULL)", fragment.ToString(), side);
-            CollectionAssert.AreEqual(new[] { sides.Column("town"), sides.Column("Email") }, fragment.Dependencies.ToList(), side);
+            CollectionAssert.AreEqual(new[] { sides.InExpression("town"), sides.InExpression("Email") }, fragment.Dependencies.ToList(), side);
         }
     }
 
@@ -363,8 +367,24 @@ public sealed class SchemaResolverTests
         var list = resolver.Sql.List([name, filter, resolver.Column("Id")]);
 
         Assert.AreEqual("(full_name) WHERE town = full_name AND 'x'", composed.ToString());
-        CollectionAssert.AreEqual(new[] { sides.Column("full_name"), sides.Column("town") }, composed.Dependencies.ToList());
-        CollectionAssert.AreEqual(new[] { sides.Column("full_name"), sides.Column("town"), sides.Column("Id") }, list.Dependencies.ToList());
+        // The name is read by itself and in the filter: two ways of reading it, and two dependencies.
+        CollectionAssert.AreEqual(
+            new[] { sides.Column("full_name"), sides.InExpression("town"), sides.InExpression("full_name") }, composed.Dependencies.ToList());
+        CollectionAssert.AreEqual(
+            new[] { sides.Column("full_name"), sides.InExpression("town"), sides.InExpression("full_name"), sides.Column("Id") }, list.Dependencies.ToList());
+
+        // Where a contributor puts a fragment says how its columns are read: as a condition, or carried along.
+        CollectionAssert.AreEqual(
+            new Dependency[]
+            {
+                new Dependency.Column(resolver.Table, resolver.Dialect.Identifier("town"), ColumnRole.Condition),
+                new Dependency.Column(resolver.Table, resolver.Dialect.Identifier("full_name"), ColumnRole.Condition),
+            },
+            filter.As(ColumnRole.Condition).Dependencies.ToList());
+        Assert.AreEqual(filter, filter.As(ColumnRole.Condition), "The same SQL: a fragment compares by its text.");
+        CollectionAssert.AreEqual(
+            new Dependency[] { new Dependency.Column(resolver.Table, resolver.Dialect.Identifier("full_name"), ColumnRole.Included) },
+            name.As(ColumnRole.Included).Dependencies.ToList());
         Assert.AreEqual(0, resolver.Sql.Literal("x").Dependencies.Count);
     }
 
@@ -415,7 +435,11 @@ public sealed class SchemaResolverTests
         Assert.AreEqual("lower(display_name) <> town", template.ToString());
         CollectionAssert.AreEqual(new Dependency[] { new Dependency.Column(persons, dialect.Identifier("display_name")) }, column.Dependencies.ToList());
         CollectionAssert.AreEqual(
-            new Dependency[] { new Dependency.Column(persons, dialect.Identifier("display_name")), new Dependency.Column(persons, dialect.Identifier("town")) },
+            new Dependency[]
+            {
+                new Dependency.Column(persons, dialect.Identifier("display_name"), ColumnRole.Expression),
+                new Dependency.Column(persons, dialect.Identifier("town"), ColumnRole.Expression),
+            },
             template.Dependencies.ToList());
         CollectionAssert.AreEqual(new Dependency[] { new Dependency.WholeTable(persons) }, renamed.Template(SqlTemplate.Raw("1 = 1")).Dependencies.ToList());
 

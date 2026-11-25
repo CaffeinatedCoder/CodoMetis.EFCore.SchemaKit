@@ -74,10 +74,15 @@ public closed record BaseChange
     /// <param name="To">The column's name after.</param>
     public sealed record ColumnRenamed(TableRef Table, Identifier From, Identifier To) : BaseChange;
 
-    /// <summary>A column's type, nullability, default or computation changed.</summary>
+    /// <summary>A column was altered: its type, its nullability, its default, its collation, or something else about it.</summary>
     /// <param name="Table">The table.</param>
     /// <param name="Column">The column.</param>
-    public sealed record ColumnAltered(TableRef Table, Identifier Column) : BaseChange;
+    /// <param name="What">
+    /// What the operation changed, as far as it says. A database may take one alteration under an
+    /// object and refuse another: SQL Server lets a column become nullable under an index and
+    /// refuses a change of its type.
+    /// </param>
+    public sealed record ColumnAltered(TableRef Table, Identifier Column, ColumnAlteration What) : BaseChange;
 
     /// <summary>A column was dropped.</summary>
     /// <param name="Table">The table.</param>
@@ -106,6 +111,44 @@ public closed record BaseChange
     public sealed record TableRebuilt(TableRef Table) : BaseChange;
 }
 
+/// <summary>What an operation changed about a column. More than one may hold.</summary>
+[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+[Flags]
+public enum ColumnAlteration
+{
+    /// <summary>Its type: the CLR type, the store type, or a length, precision, scale or character set that is part of it.</summary>
+    Type = 1,
+
+    /// <summary>Whether it takes NULL.</summary>
+    Nullability = 2,
+
+    /// <summary>Its default value or default expression.</summary>
+    Default = 4,
+
+    /// <summary>Its collation.</summary>
+    Collation = 8,
+
+    /// <summary>Something else, or nothing this list knows: an annotation of the provider's, a comment, a computation.</summary>
+    Other = 16,
+}
+
+/// <summary>How an object reads a column it depends on. A database treats them unlike when the column changes.</summary>
+[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+public enum ColumnRole
+{
+    /// <summary>The column by itself is a key, an element or an operand of the object.</summary>
+    Key,
+
+    /// <summary>An expression of the object reads the column.</summary>
+    Expression,
+
+    /// <summary>The object's condition reads the column: the predicate of a partial index or of a constraint.</summary>
+    Condition,
+
+    /// <summary>The object carries the column without ordering or comparing by it: an included column of an index.</summary>
+    Included,
+}
+
 /// <summary>
 /// One thing a schema object depends on. EF Core's operations are checked against these: a
 /// dependency that is not listed is one the kernel cannot protect.
@@ -113,10 +156,15 @@ public closed record BaseChange
 [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
 public closed record Dependency
 {
-    /// <summary>A column the object reads.</summary>
+    /// <summary>A column the object reads. Read in two ways, it is two dependencies.</summary>
     /// <param name="Table">The column's table.</param>
     /// <param name="Name">The column.</param>
-    public sealed record Column(TableRef Table, Identifier Name) : Dependency;
+    /// <param name="Role">
+    /// How the object reads it. The resolver says <see cref="ColumnRole.Key" /> for a column by
+    /// itself and <see cref="ColumnRole.Expression" /> for one in a template;
+    /// <see cref="SqlFragment.As" /> says the others.
+    /// </param>
+    public sealed record Column(TableRef Table, Identifier Name, ColumnRole Role = ColumnRole.Key) : Dependency;
 
     /// <summary>A table as a whole, beyond the columns listed.</summary>
     /// <param name="Ref">The table.</param>

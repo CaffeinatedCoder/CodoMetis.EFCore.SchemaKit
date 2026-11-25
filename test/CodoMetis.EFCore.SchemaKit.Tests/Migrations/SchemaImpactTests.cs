@@ -66,6 +66,49 @@ public sealed class SchemaImpactTests
 
     // ---- who is asked about what ------------------------------------------------------------------------
 
+    /// <summary>
+    /// An altered column says what was altered (#117), read from the operation's two sides: a
+    /// database may take one alteration under an object and refuse another. A length is part of
+    /// the type. What the list does not know is something else, never nothing.
+    /// </summary>
+    [TestMethod]
+    public void An_altered_column_says_what_was_altered()
+    {
+        static AlterColumnOperation Alter(Action<AlterColumnOperation> change)
+        {
+            AlterColumnOperation alter = new()
+            {
+                Table = "Thing", Name = "Name", ClrType = typeof(string), ColumnType = "text", IsNullable = false,
+                OldColumn = new AddColumnOperation { Table = "Thing", Name = "Name", ClrType = typeof(string), ColumnType = "text", IsNullable = false },
+            };
+            change(alter);
+            return alter;
+        }
+
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.ColumnType = "varchar(50)")));
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.ClrType = typeof(int))));
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.MaxLength = 50)));
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.Precision = 9)));
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.Scale = 2)));
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.IsUnicode = false)));
+        Assert.AreEqual(ColumnAlteration.Type, BaseChanges.Altered(Alter(a => a.IsFixedLength = true)));
+        Assert.AreEqual(ColumnAlteration.Nullability, BaseChanges.Altered(Alter(a => a.IsNullable = true)));
+        Assert.AreEqual(ColumnAlteration.Default, BaseChanges.Altered(Alter(a => a.DefaultValue = "none")));
+        Assert.AreEqual(ColumnAlteration.Default, BaseChanges.Altered(Alter(a => a.DefaultValueSql = "'none'")));
+        Assert.AreEqual(ColumnAlteration.Collation, BaseChanges.Altered(Alter(a => a.Collation = "C")));
+        Assert.AreEqual(ColumnAlteration.Other, BaseChanges.Altered(Alter(a => a.Comment = "the name")));
+        Assert.AreEqual(ColumnAlteration.Other, BaseChanges.Altered(Alter(_ => { })));
+        Assert.AreEqual(
+            ColumnAlteration.Type | ColumnAlteration.Nullability,
+            BaseChanges.Altered(Alter(a => (a.ColumnType, a.IsNullable) = ("varchar(50)", true))));
+
+        // And from a diff: a column that becomes optional.
+        var dialect = Dialect();
+        var (_, asked) = Diff<PlanModels.Guarded, PlanModels.GuardedOptional>();
+        CollectionAssert.AreEqual(
+            new BaseChange[] { new BaseChange.ColumnAltered(Table(dialect, "Thing"), dialect.Identifier("Name"), ColumnAlteration.Nullability) }, asked);
+    }
+
     [TestMethod]
     public void A_contributor_is_asked_about_a_change_to_a_column_its_object_reads()
     {
@@ -73,7 +116,7 @@ public sealed class SchemaImpactTests
 
         var (operations, asked) = Diff<PlanModels.Guarded, PlanModels.GuardedLonger>();
 
-        CollectionAssert.AreEqual(new BaseChange[] { new BaseChange.ColumnAltered(Table(dialect, "Thing"), dialect.Identifier("Name")) }, asked);
+        CollectionAssert.AreEqual(new BaseChange[] { new BaseChange.ColumnAltered(Table(dialect, "Thing"), dialect.Identifier("Name"), ColumnAlteration.Type) }, asked);
         CollectionAssert.AreEqual(new[] { nameof(AlterColumnOperation) }, operations, "The sample answers Unaffected: nothing is added.");
     }
 
@@ -113,7 +156,7 @@ public sealed class SchemaImpactTests
             new BaseChange[]
             {
                 new BaseChange.ColumnRenamed(Table(dialect, "Thing"), dialect.Identifier("Name"), dialect.Identifier("Title")),
-                new BaseChange.ColumnAltered(Table(dialect, "Thing"), dialect.Identifier("Title")),
+                new BaseChange.ColumnAltered(Table(dialect, "Thing"), dialect.Identifier("Title"), ColumnAlteration.Type),
             },
             asked);
     }

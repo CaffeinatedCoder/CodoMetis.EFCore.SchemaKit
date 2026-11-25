@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
+using CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests;
 
@@ -496,6 +497,38 @@ public sealed class PgExclusionMigrationTests
 
         var byHand = Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<Models.BerthsInTwoTables, Models.BerthsByHandWrittenSql>());
         StringAssert.Contains(byHand.Message, "with SQL written by hand, and Berth is split over the tables berths, berth_periods");
+    }
+
+    /// <summary>
+    /// The package's table itself (#117), row by row for a dropped column: read by itself the
+    /// column takes the constraint with it, whatever else reads it; read in an expression or in
+    /// the condition alone it has to have the constraint out of its way; and a column no
+    /// dependency names, beside SQL written by hand, is answered as the cell nobody measured.
+    /// </summary>
+    [TestMethod]
+    public void The_packages_table_answers_a_dropped_column_by_the_way_it_is_read()
+    {
+        using var context = Contexts.Of<Models.Scheduling>();
+        var dialect = context.GetService<ISchemaDialect>();
+        var table = new TableRef(null, dialect.Identifier("role_grants"));
+        var column = dialect.Identifier("Period");
+        BaseChange dropped = new BaseChange.ColumnDropped(table, column);
+
+        Impact Of(params Dependency[] reads) => PgImpact.Of(PgObjectKind.ExclusionConstraint, reads, dropped);
+        Dependency As(ColumnRole role) => new Dependency.Column(table, column, role);
+
+        Assert.AreEqual(new Impact.Lost(), Of(As(ColumnRole.Key)));
+        Assert.AreEqual(new Impact.Lost(), Of(As(ColumnRole.Condition), As(ColumnRole.Expression), As(ColumnRole.Key)));
+        Assert.AreEqual(new Impact.RebuildAround(), Of(As(ColumnRole.Expression)));
+        Assert.AreEqual(new Impact.RebuildAround(), Of(As(ColumnRole.Condition)));
+        Assert.AreEqual(new Impact.RebuildAround(), Of(new Dependency.WholeTable(table)));
+        Assert.AreEqual(new Impact.RebuildAround(), Of(new Dependency.Column(table, dialect.Identifier("RoleId"), ColumnRole.Key)));
+
+        // A role no row has for this kind: an exclusion constraint carries no included column.
+        Assert.AreEqual(new Impact.RebuildAround(), Of(As(ColumnRole.Included)));
+
+        Assert.AreEqual(new Impact.Unaffected(), PgImpact.Of(PgObjectKind.ExclusionConstraint, [As(ColumnRole.Key)], new BaseChange.ColumnAltered(table, column, ColumnAlteration.Type)));
+        Assert.AreEqual(new Impact.Follows(), PgImpact.Of(PgObjectKind.ExclusionConstraint, [As(ColumnRole.Condition)], new BaseChange.ColumnRenamed(table, column, dialect.Identifier("During"))));
     }
 
     /// <summary>A constraint is named within its table, so it is the table that is qualified.</summary>

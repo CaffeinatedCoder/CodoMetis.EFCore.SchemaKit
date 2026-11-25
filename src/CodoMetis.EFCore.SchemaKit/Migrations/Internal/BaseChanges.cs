@@ -121,7 +121,7 @@ internal sealed class BaseChanges : ISchemaRenames
                     break;
 
                 case AlterColumnOperation alter:
-                    changes.Add(new BaseChange.ColumnAltered(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name)));
+                    changes.Add(new BaseChange.ColumnAltered(Table(alter.Schema, alter.Table), dialect.Identifier(alter.Name), Altered(alter)));
                     break;
 
                 case DropColumnOperation drop:
@@ -173,6 +173,27 @@ internal sealed class BaseChanges : ISchemaRenames
         return result;
 
         TableRef Table(string? schema, string name) => new(schema is null ? null : dialect.Identifier(schema), dialect.Identifier(name));
+    }
+
+    /// <summary>
+    /// What the operation changed about the column, read from its two sides. An operation in which
+    /// none of the listed things differs changed something else: a provider's annotation, a
+    /// comment, a computation.
+    /// </summary>
+    internal static ColumnAlteration Altered(AlterColumnOperation alter)
+    {
+        var old = alter.OldColumn;
+        ColumnAlteration what = 0;
+
+        if (alter.ClrType != old.ClrType || alter.ColumnType != old.ColumnType || alter.MaxLength != old.MaxLength
+            || alter.Precision != old.Precision || alter.Scale != old.Scale || alter.IsUnicode != old.IsUnicode
+            || alter.IsFixedLength != old.IsFixedLength)
+            what |= ColumnAlteration.Type;
+        if (alter.IsNullable != old.IsNullable) what |= ColumnAlteration.Nullability;
+        if (!Equals(alter.DefaultValue, old.DefaultValue) || alter.DefaultValueSql != old.DefaultValueSql) what |= ColumnAlteration.Default;
+        if (alter.Collation != old.Collation) what |= ColumnAlteration.Collation;
+
+        return what == 0 ? ColumnAlteration.Other : what;
     }
 
     /// <summary>
