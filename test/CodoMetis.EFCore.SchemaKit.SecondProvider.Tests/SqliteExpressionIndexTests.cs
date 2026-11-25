@@ -1,4 +1,5 @@
 using CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Harness;
+using CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Sqlite;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -166,93 +167,78 @@ public sealed class SqliteExpressionIndexTests
     // ── The table created again ──
 
     /// <summary>
-    /// A column the index does not read is altered, and SQLite's provider creates the table again
-    /// without the index. The contributor says the index is lost and the planner creates it again,
-    /// but SQLite's generator moves the rebuild to the end of the migration, so the create meets
-    /// the index that is still there. The migration fails and changes nothing: that is as far as
-    /// this version gets (plan, section 3.12), and it is loud.
+    /// SQLite's provider writes a change of a column as a rebuild: a new table, the rows copied,
+    /// the old table dropped, and the index with it. The contributor says the index is lost and
+    /// the planner would create it again, but SQLite's generator moves the rebuild to the end of
+    /// the migration, behind the create. So the migration is refused where it is scaffolded
+    /// (#145), with the declaration and the table named, and the database is not touched.
     /// </summary>
     [TestMethod]
-    public void A_table_rebuild_under_an_unchanged_index_fails_the_migration_and_loses_nothing()
-    {
-        CollectionAssert.AreEqual(
-            new[] { nameof(AlterColumnOperation), """CREATE INDEX "IX_people_lower_name" ON "People" (lower("Name"));""" },
-            Shape<People.Indexed, People.IndexedWithARequiredEmail>());
-
-        AssertRefusedAndUnchanged<People.Indexed, People.IndexedWithARequiredEmail>();
-    }
+    public void A_table_rebuild_under_an_unchanged_index_is_refused_at_the_diff()
+        => AssertRefusedAtTheDiff<People.Indexed, People.IndexedWithARequiredEmail>("People");
 
     /// <summary>
     /// The same for a renamed table whose primary key is named after it, which is every table
     /// with EF Core's default names: <c>DropPrimaryKey</c> and <c>AddPrimaryKey</c> stand beside
-    /// the rename, and SQLite rebuilds the table for each.
+    /// the rename, and SQLite rebuilds the table for each. The create names the table as the
+    /// target has it.
     /// </summary>
     [TestMethod]
-    public void A_renamed_table_whose_key_is_named_after_it_is_a_rebuild_and_fails_as_one()
+    public void A_renamed_table_whose_key_is_named_after_it_is_a_rebuild_and_is_refused_as_one()
+        => AssertRefusedAtTheDiff<People.Indexed, People.TableRenamed>("Persons");
+
+    /// <summary>
+    /// The operation that makes the rebuild names the table as it was, and the index names it as
+    /// it will be: a check constraint is dropped from <c>People</c>, the table becomes
+    /// <c>Persons</c>, and its key keeps its name, so nothing else stands beside the rename. The
+    /// rebuild was not taken for one of the index's table: the planner wrote nothing, the
+    /// migration applied, and the index was gone (#193).
+    /// </summary>
+    [TestMethod]
+    public void A_rebuild_written_for_the_table_under_its_old_name_is_refused_too()
     {
         CollectionAssert.AreEqual(
-            new[]
-            {
-                nameof(DropPrimaryKeyOperation), nameof(RenameTableOperation), nameof(AddPrimaryKeyOperation),
-                """CREATE INDEX "IX_people_lower_name" ON "Persons" (lower("Name"));""",
-            },
-            Shape<People.Indexed, People.TableRenamed>());
+            new[] { nameof(DropCheckConstraintOperation), nameof(RenameTableOperation) },
+            EfCoreAlone<People.IndexedWithANamedKeyAndACheck, People.TableRenamedWithANamedKey>());
 
-        AssertRefusedAndUnchanged<People.Indexed, People.TableRenamed>();
+        AssertRefusedAtTheDiff<People.IndexedWithANamedKeyAndACheck, People.TableRenamedWithANamedKey>("Persons");
     }
 
-    /// <summary>
-    /// The column the index reads is dropped, and the index of that name moves to another column.
-    /// SQLite's provider rebuilds the table for the drop, so it is the same case: the create
-    /// meets the index that is still there. Were the dropped column answered as a reason to take
-    /// the index away first, the create would find the name free and the rebuild would take the
-    /// new index (#145).
-    /// </summary>
-    [TestMethod]
-    public void A_dropped_column_under_the_index_fails_the_migration_as_a_rebuild_does()
+    // What EF Core's own differ writes for the pair, without SchemaKit's planner in front.
+    private static List<string> EfCoreAlone<TFrom, TTo>()
+        where TFrom : ITestModel
+        where TTo : ITestModel
     {
-        using var database = new SqliteDatabase();
-        database.Create<People.IndexedByEmail>();
-        var before = database.Indexes();
-
-        var refused = Assert.ThrowsExactly<SqliteException>(() => database.Migrate<People.IndexedByEmail, People.IndexedWithoutTheEmail>());
-
-        StringAssert.Contains(refused.Message, "index IX_people_lower_name already exists");
-        CollectionAssert.AreEqual(before, database.Indexes());
+        var options = new DbContextOptionsBuilder().UseSqlite(Contexts.OfflineSqlite).Options;
+        using var plain = new DbContext(options);
+        using var from = Contexts.Sqlite<TFrom>();
+        using var to = Contexts.Sqlite<TTo>();
+        return [.. plain.GetService<IMigrationsModelDiffer>().GetDifferences(from.Relational(), to.Relational()).Select(operation => operation.GetType().Name)];
     }
 
-    /// <summary>
-    /// The column the index reads is altered, which SQLite's provider writes as a rebuild too. The
-    /// alteration is answered as leaving the index alone, since the rebuild is asked about by
-    /// itself and says the index is lost: the create meets the index that is still there. Answered
-    /// as a reason to take the index away first, the migration would apply and the rebuild would
-    /// take the index (#145).
-    /// </summary>
+    /// <summary>The column the index reads is dropped, and the index of that name moves to another column: a rebuild, and refused.</summary>
     [TestMethod]
-    public void An_altered_column_under_the_index_fails_the_migration_as_a_rebuild_does()
-    {
-        using var database = new SqliteDatabase();
-        database.Create<People.IndexedByEmail>();
-        var before = database.Indexes();
+    public void A_dropped_column_under_the_index_is_refused_as_a_rebuild_is()
+        => AssertRefusedAtTheDiff<People.IndexedByEmail, People.IndexedWithoutTheEmail>("People");
 
-        var refused = Assert.ThrowsExactly<SqliteException>(() => database.Migrate<People.IndexedByEmail, People.IndexedByARequiredEmail>());
+    /// <summary>The column the index reads is altered, which SQLite's provider writes as a rebuild too.</summary>
+    [TestMethod]
+    public void An_altered_column_under_the_index_is_refused_as_a_rebuild_is()
+        => AssertRefusedAtTheDiff<People.IndexedByEmail, People.IndexedByARequiredEmail>("People");
 
-        StringAssert.Contains(refused.Message, "index IX_people_lower_name already exists");
-        CollectionAssert.AreEqual(before, database.Indexes());
-    }
-
-    private static void AssertRefusedAndUnchanged<TFrom, TTo>()
+    private static void AssertRefusedAtTheDiff<TFrom, TTo>(string table, Action<ProbeSqliteIndexContributor>? arrange = null)
         where TFrom : ITestModel
         where TTo : ITestModel
     {
         using var database = new SqliteDatabase();
         database.Create<TFrom>();
-        var tables = database.Tables();
+        var (indexes, tables) = (database.Indexes(), database.Tables());
 
-        var refused = Assert.ThrowsExactly<SqliteException>(() => database.Migrate<TFrom, TTo>());
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => database.Migrate<TFrom, TTo>(arrange));
 
-        StringAssert.Contains(refused.Message, "index IX_people_lower_name already exists");
-        CollectionAssert.AreEqual(new[] { Index }, database.Indexes());
+        StringAssert.Contains(refused.Message, $"has to create on the table '{table}'");
+        StringAssert.Contains(refused.Message, "SQLite's provider writes as a rebuild");
+        CollectionAssert.AreEqual(indexes, database.Indexes());
         CollectionAssert.AreEqual(tables, database.Tables());
     }
 
@@ -272,48 +258,49 @@ public sealed class SqliteExpressionIndexTests
         Assert.AreEqual(0, database.Indexes().Count);
     }
 
-    // ── Where it is not loud yet (#145) ──
+    // ── Where the migration applied and the index was gone (#145) ──
     //
-    // Each of these applies and leaves the database without the index the model declares: the
-    // create runs on the old table, under a name that is free at that moment, and the rebuild at
-    // the end of the migration drops the old table. They are held as they are today, and each
-    // turns over with the fix of #145: the migration is then refused, or the index is there.
+    // In each of these the create ran on the old table, under a name that was free at that
+    // moment, and the rebuild at the end of the migration dropped the old table: the migration
+    // applied and the database lacked the index the model declares. Each is refused now.
 
-    /// <summary>The contract's other answer for an object that cannot stay. On SQLite the drop only clears the way for the create that is lost.</summary>
+    /// <summary>The contract's other answer for an object that cannot stay. On SQLite the drop only cleared the way for the create that was lost.</summary>
     [TestMethod]
-    public void Today_an_index_answered_as_rebuilt_around_the_rebuild_is_lost_without_a_word()
-    {
-        using var database = new SqliteDatabase();
-        database.Create<People.Indexed>();
-
-        database.Migrate<People.Indexed, People.IndexedWithARequiredEmail>(contributor =>
-            contributor.ImpactOverride = change => change is BaseChange.TableRebuilt ? new Impact.RebuildAround() : null);
-
-        Assert.AreEqual(0, database.Indexes().Count, "#145 is fixed when this fails: the index is there, or the migration is refused.");
-    }
+    public void An_index_answered_as_rebuilt_around_the_rebuild_is_refused()
+        => AssertRefusedAtTheDiff<People.Indexed, People.IndexedWithARequiredEmail>(
+            "People", contributor => contributor.ImpactOverride = change => change is BaseChange.TableRebuilt ? new Impact.RebuildAround() : null);
 
     /// <summary>No answer of a contributor is involved: the index is new, so nothing is asked about it.</summary>
     [TestMethod]
-    public void Today_an_index_declared_in_the_migration_that_rebuilds_its_table_is_lost_without_a_word()
-    {
-        using var database = new SqliteDatabase();
-        database.Create<People.Bare>();
+    public void An_index_declared_in_the_migration_that_rebuilds_its_table_is_refused()
+        => AssertRefusedAtTheDiff<People.Bare, People.IndexedWithARequiredEmail>("People");
 
-        database.Migrate<People.Bare, People.IndexedWithARequiredEmail>();
-
-        Assert.AreEqual(0, database.Indexes().Count, "#145 is fixed when this fails: the index is there, or the migration is refused.");
-        CollectionAssert.AreEqual(new[] { Index }, Created<People.IndexedWithARequiredEmail>(), "EnsureCreated() builds the index for the same model.");
-    }
+    /// <summary>An index of SQL written by hand names no column, and is on its table all the same: it reads the whole of it.</summary>
+    [TestMethod]
+    public void An_index_of_hand_written_sql_on_the_rebuilt_table_is_refused()
+        => AssertRefusedAtTheDiff<People.Bare, People.IndexedByHandWrittenSqlWithARequiredEmail>("People");
 
     [TestMethod]
-    public void Today_an_index_renamed_in_the_migration_that_rebuilds_its_table_is_lost_without_a_word()
+    public void An_index_renamed_in_the_migration_that_rebuilds_its_table_is_refused()
+        => AssertRefusedAtTheDiff<People.Indexed, People.RenamedWithARequiredEmail>("People");
+
+    /// <summary>
+    /// The way the refusal names, measured: the declaration taken out, the table changed, the
+    /// declaration put back, a migration each. The index is there at the end, as
+    /// <c>EnsureCreated()</c> builds it for the last model.
+    /// </summary>
+    [TestMethod]
+    public void In_three_migrations_the_table_is_changed_and_the_index_is_there()
     {
         using var database = new SqliteDatabase();
         database.Create<People.Indexed>();
 
-        database.Migrate<People.Indexed, People.RenamedWithARequiredEmail>();
+        database.Migrate<People.Indexed, People.Bare>();
+        database.Migrate<People.Bare, People.BareWithARequiredEmail>();
+        database.Migrate<People.BareWithARequiredEmail, People.IndexedWithARequiredEmail>();
 
-        Assert.AreEqual(0, database.Indexes().Count, "#145 is fixed when this fails: the index is there, or the migration is refused.");
+        CollectionAssert.AreEqual(Created<People.IndexedWithARequiredEmail>(), database.Indexes());
+        Assert.AreEqual(1, database.Indexes().Count);
     }
 
     // ── Names: one namespace for the tables and the indexes of a database ──

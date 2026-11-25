@@ -415,16 +415,23 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   silence, so as an alteration the migration applied and the object was gone for good.
   `BaseChanges.DroppedAndAdded` is a copy of the providers' rule, held against both generators by
   a test. What the provider writes decides, not what the operation is called.
+- **A `TableRebuilt` names its table as the target has it,** like every other change (#193). Its
+  operation may stand before the table's rename and name it as the source has it: EF Core drops
+  keys and constraints first. Taken as written, the objects on a table renamed and rebuilt in
+  one migration did not hear of the rebuild, and were lost on SQLite without a word.
 - **Which operations SQLite rebuilds a table for is the provider's rule,** and
   `BaseChanges.RebuiltOnSqlite` is a copy of it, held against the provider's generator by a test.
-- **On SQLite a create after a rebuild does not work yet.** SQLite's generator moves the rebuild
-  to the end of the migration, so the planner's create runs first and fails on the object that is
-  still there: the migration fails to apply, where before it applied and lost the object. That
-  is so only while the object's name is held. A create under a name that is free then (an object
-  declared in the same migration, a renamed one, one answered `RebuildAround`) succeeds on the old
-  table and is dropped with it: the migration applies and the object is gone (#145). The
-  generator decorator has to place it (plan, section 3.12). Do not ship a contributor for SQLite
-  before that.
+- **On SQLite a create on a table the same migration rebuilds is refused at the diff** (#145,
+  decided with #115 on 2026-11-25). SQLite's generator moves the rebuild to the end of the
+  migration, so the planner's create would run first: on the object that is still there, which
+  fails at apply, or, under a name that is free then (an object declared in the same migration,
+  a renamed one, one answered `RebuildAround`), on the old table, which the rebuild drops with
+  the object, in silence. The refusal names the declaration and the table, and the way round it:
+  take the declaration out, change the table, declare it again, a migration each
+  (`In_three_migrations_the_table_is_changed_and_the_index_is_there`). Only creates are
+  refused: an object whose contributor answers that the rebuild leaves it alone is the
+  contributor's word. The refusal goes when the generator decorator places the create behind
+  the rebuild (#115, slice D), and that comes with the first object SchemaKit creates on SQLite.
 
 ## The lambda translator
 
@@ -660,8 +667,9 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
   and compare the indexes a migration leaves with what `EnsureCreated()` builds. An index that
   was renamed is told from one that was rebuilt by its storage (`hobt_id`); a change of
   nullability rebuilds the storage by itself, so that oracle is not for an altered column.
-- **On SQLite the three tests named `Today_…` hold #145 as it is.** Each asserts the loss, and
-  fails when the migration is refused or the index is there: it is to be turned over with the fix.
+- **On SQLite every migration that rebuilds a table under an index is refused at the diff**
+  (#145): the four that failed at apply and the three that applied and lost the index. One
+  helper holds all seven, and that the database is not touched.
 - **`SCHEMAKIT_TEST_MSSQL` is a SqlClient connection string** to a server the tests may create
   databases on. Without it the tests of category `Integration` go inconclusive, and fail when
   `CI` is set. The lane `integration-sqlserver` starts SQL Server 2022 in a step, with a password

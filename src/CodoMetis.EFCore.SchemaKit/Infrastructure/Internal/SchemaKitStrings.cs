@@ -240,6 +240,14 @@ internal static class SchemaKitStrings
            "says which table the SQL means: the columns the declaration names by a property are in every one of them. Name a " +
            "column of the table by its property, or map the entity to one table.";
 
+    public static string CreateOnARebuiltTable(string entity, string declaration, TableRef table)
+        => $"{entity} declares {declaration}, which this migration has to create on the table '{table}', and the migration " +
+           "changes that table in a way SQLite's provider writes as a rebuild: a new table, the rows copied, the old table " +
+           "dropped. The provider writes the rebuild at the end of the migration, behind the create, so the object would be " +
+           "created on the old table and dropped with it. This version of SchemaKit does not place the create behind the " +
+           "rebuild (https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145). Make it three migrations: " +
+           "remove the declaration and add a migration, change the table in a second, and declare the object again in a third.";
+
     public static string DeclaredOnUnmappedType(string entity, string declaration)
         => $"{entity} declares {declaration}, but is not mapped to a table. The declaration would produce nothing, without an error.";
 

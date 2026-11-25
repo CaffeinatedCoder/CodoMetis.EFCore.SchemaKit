@@ -24,6 +24,8 @@ One section per version, newest first, in the form
 
 ### Changed
 
+- On SQLite, a migration that would create a declared object on a table it also rebuilds is refused when it is scaffolded, with the declaration and the table named. It applied and left the database without the object, or failed when it was applied. Neither package creates objects on SQLite; this is for a contributor written against the contract ([#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145)).
+- On SQLite, an object on a table that one migration renames and rebuilds is seen by the rebuild: it was passed over when the operation that makes the rebuild named the table as it was before the rename, and the migration applied without the object ([#193](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/193)).
 - Both packages are built against EF Core 11.0.0 and `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0, and depend on `[11.0.0, 12.0.0)` of them ([#174](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/174)).
 - Whether a column in a condition can be null is the model's answer, not the C# annotation's: `IsRequired()` on a `string?` leaves the null compensation out, and `IsRequired(false)` on a `string` puts it in ([#180](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/180)).
 - The expression and the condition of an exclusion constraint read from a 5.x snapshot are SQL written by hand: the constraint is taken to read every column of its table ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
