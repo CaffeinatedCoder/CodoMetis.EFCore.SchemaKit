@@ -479,6 +479,25 @@ public sealed class PgExclusionMigrationTests
             Contexts.Diff<Models.ReservationsInThreeTables, Models.StaysInTheirOwnTableMayNotOverlap>().Shape());
     }
 
+    /// <summary>
+    /// An entity split over two tables (#191): the constraint is in the table that has the column
+    /// it reads. One over a column of each table is refused, and so is one of SQL written by hand
+    /// over the key alone: both tables have the key, and nothing says which the SQL means.
+    /// </summary>
+    [TestMethod]
+    public void A_constraint_on_a_split_entity_is_in_the_table_that_has_its_columns()
+    {
+        CollectionAssert.AreEqual(
+            new[] { """ALTER TABLE berth_periods ADD CONSTRAINT ex_berth EXCLUDE USING gist ("Period" WITH &&);""" },
+            Contexts.Diff<Models.BerthsInTwoTables, Models.BerthPeriodsMayNotOverlap>().Shape());
+
+        var across = Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<Models.BerthsInTwoTables, Models.BerthsOfAPierMayNotOverlap>());
+        StringAssert.Contains(across.Message, "Berth is split over the tables berths, berth_periods. No one of them has a column for everything");
+
+        var byHand = Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<Models.BerthsInTwoTables, Models.BerthsByHandWrittenSql>());
+        StringAssert.Contains(byHand.Message, "with SQL written by hand, and Berth is split over the tables berths, berth_periods");
+    }
+
     /// <summary>A constraint is named within its table, so it is the table that is qualified.</summary>
     [TestMethod]
     public void A_drop_names_the_table_with_its_schema()

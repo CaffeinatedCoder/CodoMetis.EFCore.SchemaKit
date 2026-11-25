@@ -33,6 +33,15 @@ public sealed class Dog : Animal
     public string Trick { get; set; } = "";
 }
 
+/// <summary>An entity for two tables: the code in the first, the weight and the note in the second.</summary>
+public sealed class Parcel
+{
+    public int Id { get; set; }
+    public string Code { get; set; } = "";
+    public int Weight { get; set; }
+    public string Note { get; set; } = "";
+}
+
 /// <summary>A hierarchy for TPC: an abstract root, a type with a derived type, and two types without.</summary>
 public abstract class Vehicle
 {
@@ -154,6 +163,49 @@ public static class PlanModels
             modelBuilder.Entity<Roadster>().ToTable("Sportscars");
             modelBuilder.Entity<Truck>().ToTable("Trucks");
         }
+    }
+
+    /// <summary>The derived type in a table of its own, with an object on a column it inherits: that column is in the base type's table.</summary>
+    public sealed class OnAnInheritedColumnOfATypeWithItsOwnTable : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Animal>().UseTptMappingStrategy();
+            modelBuilder.Entity<Dog>().ToTable("Dogs").Metadata.Declare([new TestGuard.Unique([new GuardKey("Name")]) { Name = "ux_dog_name" }]);
+        }
+    }
+
+    private static Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<Parcel> Parcels(ModelBuilder modelBuilder)
+        => modelBuilder.Entity<Parcel>().ToTable("Parcels").SplitToTable("ParcelDetails", details =>
+        {
+            details.Property(parcel => parcel.Weight);
+            details.Property(parcel => parcel.Note);
+        });
+
+    private static TestGuard.Unique On(string name, params string[] columns) => new([.. columns.Select(column => new GuardKey(column))]) { Name = name };
+
+    public sealed class ParcelsUndeclared : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Parcels(modelBuilder);
+    }
+
+    /// <summary>An entity split over two tables, with an object for each table and one on the key, which both have.</summary>
+    public sealed class OnASplitEntity : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Parcels(modelBuilder).Metadata.Declare([On("ux_code", "Code"), On("ux_weight", "Weight", "Note"), On("ux_id", "Id"), On("ux_id_weight", "Id", "Weight")]);
+    }
+
+    /// <summary>An object over a column of each table.</summary>
+    public sealed class AcrossTheTablesOfASplitEntity : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Parcels(modelBuilder).Metadata.Declare([On("ux_code_weight", "Code", "Weight")]);
+    }
+
+    /// <summary>An object on a property the split entity does not have.</summary>
+    public sealed class OnNoPropertyOfASplitEntity : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Parcels(modelBuilder).Metadata.Declare([On("ux_nothing", "Colour")]);
     }
 
     /// <summary>A type mapped to a view: it has no table, and nothing derives from it.</summary>
@@ -663,6 +715,78 @@ public sealed class SchemaOperationPlannerTests
         Assert.AreEqual(1, statements.Count(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal)
                                                          && statement.Contains("ux_truck_plate") && statement.Contains("Trucks") && statement.Contains("Plate")), string.Join("\n", statements));
         Assert.AreEqual(2, statements.Count(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// An entity split over two tables (#118, #191): an object is in the one table that has a
+    /// column for everything it reads, and its name the kernel builds is that table's. The key's
+    /// columns are in every table, so an object on them alone is in the first, and one that reads
+    /// the key and a column of the second is in the second. The same on the compiled snapshot.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_declaration_on_a_split_entity_lands_on_the_table_that_has_its_columns(Provider provider)
+    {
+        using var context = Context<PlanModels.OnASplitEntity>(provider);
+        using var undeclared = Context<PlanModels.ParcelsUndeclared>(provider);
+        var differ = context.GetService<IMigrationsModelDiffer>();
+
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "CREATE UNIQUE INDEX ux_code ON Parcels (Code);",
+                "CREATE UNIQUE INDEX ux_weight ON ParcelDetails (Weight, Note);",
+                "CREATE UNIQUE INDEX ux_id ON Parcels (Id);",
+                "CREATE UNIQUE INDEX ux_id_weight ON ParcelDetails (Id, Weight);",
+            },
+            Created(provider, context));
+
+        Assert.AreEqual(0, differ.GetDifferences(Snapshot(context), Model(context)).Count);
+        Assert.AreEqual(4, Unquoted(differ.GetDifferences(Snapshot(context), Model(undeclared))).Count(statement => statement.StartsWith("DROP INDEX ux_", StringComparison.Ordinal)));
+        Assert.AreEqual(4, Unquoted(differ.GetDifferences(Model(undeclared), Snapshot(context))).Count(statement => statement.StartsWith("CREATE UNIQUE INDEX ux_", StringComparison.Ordinal)));
+    }
+
+    /// <summary>An object is in one table. One that reads a column of each is refused, with the tables named.</summary>
+    [TestMethod]
+    public void A_declaration_over_columns_of_two_tables_of_a_split_entity_is_refused()
+    {
+        using var context = Context<PlanModels.AcrossTheTablesOfASplitEntity>();
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+        StringAssert.Contains(refused.Message, "Parcel declares Test.Guard unique 'ux_code_weight', and Parcel is split over the tables Parcels, ParcelDetails");
+        Assert.IsInstanceOfType<InvalidOperationException>(refused.InnerException);
+        StringAssert.Contains(refused.InnerException.Message, "has no column in the table");
+    }
+
+    /// <summary>
+    /// Only the refusal of a property without a column in the table asked is taken for "not this
+    /// table". A path that names no property fails as itself, on a split entity as anywhere.
+    /// </summary>
+    [TestMethod]
+    public void A_path_that_names_no_property_of_a_split_entity_fails_as_itself()
+    {
+        using var context = Context<PlanModels.OnNoPropertyOfASplitEntity>();
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+        StringAssert.Contains(refused.Message, "Colour");
+        Assert.IsFalse(refused.Message.Contains("is split over", StringComparison.Ordinal), refused.Message);
+    }
+
+    /// <summary>
+    /// A derived type with a table of its own does not have its inherited columns there: they are
+    /// in the base type's table, where an object holds among the rows of every type. The refusal
+    /// names the type to declare it on. A column of the derived type's own is declared on as before.
+    /// </summary>
+    [TestMethod]
+    public void A_declaration_on_a_derived_type_that_reads_an_inherited_column_names_the_base_type()
+    {
+        using var inherited = Context<PlanModels.OnAnInheritedColumnOfATypeWithItsOwnTable>();
+        using var own = Context<PlanModels.OnADerivedTypeWithItsOwnTable>();
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => inherited.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(inherited)));
+        StringAssert.Contains(refused.Message, "Dog declares Test.Guard unique 'ux_dog_name', which reads 'Name'. Dog inherits that property from Animal");
+        StringAssert.Contains(refused.Message, "declare it on Animal");
+
+        CollectionAssert.AreEqual(new[] { "CREATE UNIQUE INDEX ux_trick ON Dogs (Trick);" }, Created(Provider.Npgsql, own));
     }
 
     /// <summary>A declaration that lands on no table would produce nothing, without an error: it is refused.</summary>

@@ -226,6 +226,20 @@ internal static class SchemaKitStrings
     public static string PathHasNoColumn(string entity, string path, TableRef table)
         => $"The path '{path}' on {entity} has no column in the table '{table}'.";
 
+    public static string ReadsAnInheritedColumn(string entity, string declaration, string path, string owner)
+        => $"{entity} declares {declaration}, which reads '{path}'. {entity} inherits that property from {owner}, and its column is " +
+           $"in the table of {owner}, not in the table of {entity}. An object there holds among the rows of every type of the " +
+           $"hierarchy: declare it on {owner}.";
+
+    public static string ReadsColumnsOfSeveralFragments(string entity, string declaration, string tables)
+        => $"{entity} declares {declaration}, and {entity} is split over the tables {tables}. No one of them has a column for " +
+           "everything the declaration reads, and an object is in one table. Map the properties it reads to the same table.";
+
+    public static string HandWrittenSqlOnASplitEntity(string entity, string declaration, string tables)
+        => $"{entity} declares {declaration} with SQL written by hand, and {entity} is split over the tables {tables}. Nothing " +
+           "says which table the SQL means: the columns the declaration names by a property are in every one of them. Name a " +
+           "column of the table by its property, or map the entity to one table.";
+
     public static string DeclaredOnUnmappedType(string entity, string declaration)
         => $"{entity} declares {declaration}, but is not mapped to a table. The declaration would produce nothing, without an error.";
 

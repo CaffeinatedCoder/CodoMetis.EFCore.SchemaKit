@@ -46,6 +46,14 @@ public class Reservation
 
 public sealed class Stay : Reservation;
 
+/// <summary>An entity for two tables: the pier in the first, the period in the second.</summary>
+public sealed class Berth
+{
+    public int Id { get; set; }
+    public int PierId { get; set; }
+    public NpgsqlRange<DateOnly> Period { get; set; }
+}
+
 public sealed class Hold : Reservation;
 
 /// <summary>One model of a test. A context type per model, so no test reads a model another cached.</summary>
@@ -447,6 +455,38 @@ public static class Models
             ReservationsInTablesOfTheirOwn(modelBuilder);
             modelBuilder.Entity<Reservation>().DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: "ex_reservation")]);
         }
+    }
+
+    private static Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<Berth> Berths(ModelBuilder modelBuilder)
+        => modelBuilder.Entity<Berth>().ToTable("berths").SplitToTable("berth_periods", periods => periods.Property(berth => berth.Period));
+
+    /// <summary>A berth split over two tables, with nothing declared.</summary>
+    public sealed class BerthsInTwoTables : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Berths(modelBuilder);
+    }
+
+    /// <summary>No two periods overlap: the constraint reads the second table's column alone.</summary>
+    public sealed class BerthPeriodsMayNotOverlap : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Berths(modelBuilder).DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.Period), name: "ex_berth")]);
+    }
+
+    /// <summary>The pier is in the first table and the period in the second.</summary>
+    public sealed class BerthsOfAPierMayNotOverlap : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Berths(modelBuilder).DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.PierId).Overlaps(x => x.Period), name: "ex_berth")]);
+    }
+
+    /// <summary>SQL written by hand over the key alone, which both tables have.</summary>
+    public sealed class BerthsByHandWrittenSql : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Berths(modelBuilder).DeclarePostgres(_ =>
+            [
+                new PgExclusion.Gist([new ExclusionElement(new KeyTarget.Template(SqlTemplate.Raw("""int4range("Id", "Id" + 1)""")), ExclusionOperator.Overlaps)]) { Name = "ex_berth" },
+            ]);
     }
 
     /// <summary>The same without a name: each table's constraint gets the name the kernel builds for it.</summary>
