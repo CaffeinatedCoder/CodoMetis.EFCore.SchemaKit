@@ -15,6 +15,20 @@ internal static class PgStrings
     public const string UncheckedEquality =
         "WithUncheckedOperator takes any operator but '='. For an element compared by '=', call Equal.";
 
+    public const string KeyNeedsOneTarget =
+        "A stored index key has to hold exactly one of 'column' and 'sql'.";
+
+    public const string IndexNeedsAKey = "An index needs at least one key, and no key of it is null.";
+
+    public const string IncludeNeedsAPath = "An included column is a property's path, such as 'Name' or 'Address.City'.";
+
+    public static string IncludeTakesAProperty(string lambda)
+        => $"include: takes properties, and '{lambda}' is more than one: an index carries columns, not expressions. "
+           + "An expression can be a key.";
+
+    public static string UnknownNullOrder(string token)
+        => $"'{token}' is no place for the nulls of a key. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
+
     public static string UnknownKind(string owner, string kind)
         => $"{owner} has no kind '{kind}'. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
 

@@ -12,14 +12,16 @@ stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch
 resolver, the planner and the lambda translator, and the PostgreSQL package has the first real
 contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
 every path, on PostgreSQL 16 and 18, and a snapshot scaffolded by 5.x with exclusion constraints
-moves to the same model declared here with no operations. Nothing is published** (what is left of
+moves to the same model declared here with no operations. A B-tree index is the second object,
+the first slice of `PgIndex` (#27 has the five slices and what was decided for them). Nothing of
+`preview.2` is published** (what is left of
 the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
 `Sql.Raw<T>` in an element, a factory for SP-GiST, the compile probes). The repository holds:
 
 | Path | What |
 |---|---|
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
-| `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` with its factory `PgSchema<T>` and `DeclarePostgres`, and its contributor. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
+| `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` and `PgIndex` with their factory `PgSchema<T>` and `DeclarePostgres`, and a contributor for each. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
 | `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
 | `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedTpc/` of two TPC hierarchies with a constraint on a root, `ScaffoldedOtherKinds/` of one with the kinds nothing reads yet (indexes, a temporal constraint). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
@@ -625,9 +627,35 @@ what is still missing).
   (`RebuildAround`, #102). The rows of a change are read in order and the first that fits
   answers, since PostgreSQL's answer for a column read in two ways is not the stronger of the
   two. A change no row answers is `RebuildAround`. The server's word for each way of reading a
-  column is one test in `PgExclusionLiveTests`: a row is added with its test. A second
-  contributor of the package (`PgIndex`, #27) adds a kind and its rows and writes no answer of
-  its own.
+  column is one test in `PgExclusionLiveTests`: a row is added with its test. The index's
+  contributor reads the same table under its own kind, with its own rows and its own tests
+  (`PgIndexLiveTests`), and writes no answer of its own.
+- **`PgIndex` has one case so far, `PgIndex.BTree`** (#202, slice A of #27), made by `pg.BTree`
+  and `pg.Unique` from keys `pg.Key` makes. Its stored form is a file format: owner `Pg.Index`,
+  kind `btree`, `keys` (each a `column` or `sql`, `desc` always, `nulls` where it was said),
+  `unique` with `nullsDistinct`, `include` always, `where`. `PgIndexDeclarationTests` holds two
+  keys and three values verbatim. `nullsDistinct:` is a parameter of `pg.Unique` alone, and
+  `Uniqueness` holds it, so no index that is not unique can say it.
+- **An order PostgreSQL has anyway is not in the descriptor.** An ascending key has its nulls
+  last and a descending one first, and the catalog says neither: `Desc().NullsFirst()` and
+  `Desc()` are one index, and a diff between them is empty
+  (`An_order_PostgreSQL_has_anyway_is_the_same_index_in_the_catalog`).
+- **An index is a relation of its table's schema.** Its descriptor's name is
+  `resolver.Table.Qualify(…)`: the drop and the rename name the schema, the create and the
+  rename's new name cannot. It claims a `NameClaim.Relation`, so a native `HasIndex` under
+  the same default name, `IX_{table}_{keys}`, is `SK1001`, and a TPC copy of a stated name gets
+  its table behind it. Nothing is lowered into EF Core's index metadata.
+- **`Plan` for an index is a rename or a rebuild** (decided with #27): `ALTER INDEX … RENAME TO`,
+  and a drop and a create for everything else.
+- **PostgreSQL drops an index with any column it reads,** a key, a column of an expression, the
+  condition's, an included one, and refuses nothing: each is `Lost` in `PgImpact`, where an
+  exclusion constraint has `RebuildAround` for two of them
+  (`The_server_drops_an_index_with_any_column_it_reads`). A column only SQL written by hand may
+  read has no row. Since the four answers are one, nothing yet tells an included column's role
+  from a key's in a test: `As(ColumnRole.Included)` and `As(ColumnRole.Condition)` in the
+  contributor say what is true and are held by no test until a row differs by them.
+- **The planner's word that an index is used is a test** (`PgIndexLiveTests`): `EXPLAIN` of the
+  query EF Core writes for the key's lambda names the index, and of another expression does not.
 - **`=` on a scalar column needs `btree_gist`, and the migration brings it.** The descriptor lists
   the extension as a dependency by 5.x's rule (a column by its store type, an expression by its
   operator, GiST only), in an `Operational<>` field: it says how the constraint comes to be, not

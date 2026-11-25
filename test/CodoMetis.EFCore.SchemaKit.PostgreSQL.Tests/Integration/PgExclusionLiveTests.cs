@@ -56,6 +56,30 @@ internal sealed class LiveDatabase : IDisposable
             """);
     }
 
+    /// <summary>
+    /// Every index the database holds that is no primary key: its table and its definition as the
+    /// server writes it, which names the index and its schema. No OID: a rebuilt index is the same index.
+    /// </summary>
+    public List<string> Indexes()
+    {
+        using var connection = Open();
+        return connection.Column(
+            """
+            SELECT n.nspname || '.' || t.relname || ' | ' || pg_get_indexdef(i.indexrelid)
+            FROM pg_index i
+            JOIN pg_class t ON t.oid = i.indrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE NOT i.indisprimary AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+            ORDER BY 1
+            """);
+    }
+
+    public string IndexOid(string name)
+    {
+        using var connection = Open();
+        return connection.Column($"SELECT c.oid::text FROM pg_class c WHERE c.relkind = 'i' AND c.relname = '{name}'").Single();
+    }
+
     public string ConstraintOid(string name)
     {
         using var connection = Open();
