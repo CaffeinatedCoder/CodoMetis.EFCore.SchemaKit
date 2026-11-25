@@ -301,7 +301,7 @@ public sealed class SchemaResolverTests
         using var sides = Resolve(provider);
         System.Linq.Expressions.Expression<Func<Person, bool>> lambda = p => p.Address.City.ToLower() != "{x}" && p.Email != null;
 
-        var template = CodoMetis.EFCore.SchemaKit.Translation.Internal.LambdaTranslator.Predicate(lambda);
+        var template = CodoMetis.EFCore.SchemaKit.Translation.Internal.LambdaTranslator.Predicate(lambda, Shipped.Spelling);
 
         Assert.AreEqual("(lower({Address.City}) <> '{x}' AND {Email} IS NOT NULL)", template);
         foreach (var (side, resolver) in sides.Both)

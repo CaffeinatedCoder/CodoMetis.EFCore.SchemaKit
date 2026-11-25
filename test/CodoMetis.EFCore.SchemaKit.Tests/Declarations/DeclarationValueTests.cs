@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using CodoMetis.EFCore.SchemaKit.Tests.Harness;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Declarations;
 
@@ -31,12 +32,12 @@ public sealed class DeclarationValueTests
     // What the factories return is not SQL until a model is finalized. These tests are about the
     // SQL, so each value is bound as the convention binds it.
     private static KeyTarget Key<T>(Expression<Func<Person, T>> key)
-        => KeyTarget.Of(key, SqlSpelling.PostgreSql) is KeyTarget.Template template ? new KeyTarget.Template(Bound(template.Sql)) : KeyTarget.Of(key, SqlSpelling.PostgreSql);
+        => KeyTarget.Of(key, Shipped.Spelling) is KeyTarget.Template template ? new KeyTarget.Template(Bound(template.Sql)) : KeyTarget.Of(key, Shipped.Spelling);
 
     private static SqlTemplate Bound(SqlTemplate template)
         => template.Bind(lambda => CodoMetis.EFCore.SchemaKit.Metadata.Internal.DeclarationBinder.Bind(lambda, null!));
 
-    private static Predicate Where<T>(Expression<Func<T, bool>> condition) => new(Bound(Predicate.Of(condition, SqlSpelling.PostgreSql).Template));
+    private static Predicate Where<T>(Expression<Func<T, bool>> condition) => new(Bound(Predicate.Of(condition, Shipped.Spelling).Template));
 
     [TestMethod]
     public void A_lambda_that_names_a_property_is_a_column()
@@ -159,8 +160,8 @@ public sealed class DeclarationValueTests
     [TestMethod]
     public void A_lambda_is_not_sql_where_it_is_written()
     {
-        var condition = Predicate.Of<Person>(x => x.RevokedOn == null, SqlSpelling.PostgreSql);
-        var expression = (KeyTarget.Template)KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name.ToLower()), SqlSpelling.PostgreSql);
+        var condition = Predicate.Of<Person>(x => x.RevokedOn == null, Shipped.Spelling);
+        var expression = (KeyTarget.Template)KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name.ToLower()), Shipped.Spelling);
 
         Assert.IsFalse(condition.Template.IsBound);
         Assert.IsFalse(expression.Sql.IsBound);
@@ -180,7 +181,7 @@ public sealed class DeclarationValueTests
     [TestMethod]
     public void A_value_only_the_model_can_write_is_not_bound_without_one()
     {
-                var condition = Predicate.Of<Person>(x => x.RevokedOn == new DateOnly(2026, 1, 2), SqlSpelling.PostgreSql);
+                var condition = Predicate.Of<Person>(x => x.RevokedOn == new DateOnly(2026, 1, 2), Shipped.Spelling);
 
         Assert.IsFalse(condition.Template.IsBound);
         StringAssert.Contains(Assert.ThrowsExactly<NotSupportedException>(() => Bound(condition.Template)).Message, "only the model can write");
@@ -189,7 +190,7 @@ public sealed class DeclarationValueTests
     /// <summary>A lambda that names a property and nothing else is a path, and a path waits for nothing.</summary>
     [TestMethod]
     public void A_lambda_that_is_one_property_is_a_column_at_once()
-        => Assert.AreEqual(new KeyTarget.Column("Name"), KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name), SqlSpelling.PostgreSql));
+        => Assert.AreEqual(new KeyTarget.Column("Name"), KeyTarget.Of((Expression<Func<Person, string>>)(x => x.Name), Shipped.Spelling));
 
     /// <summary>
     /// Two lambdas are one value when their trees are, which is what lets a declaration said twice
@@ -200,12 +201,12 @@ public sealed class DeclarationValueTests
     public void Two_lambdas_that_say_the_same_are_one_value()
     {
         var tag = "blocked";
-        var literal = Predicate.Of<Person>(x => x.Tag != "blocked", SqlSpelling.PostgreSql);
-        var captured = Predicate.Of<Person>(x => x.Tag != tag, SqlSpelling.PostgreSql);
+        var literal = Predicate.Of<Person>(x => x.Tag != "blocked", Shipped.Spelling);
+        var captured = Predicate.Of<Person>(x => x.Tag != tag, Shipped.Spelling);
 
         Assert.AreEqual(literal, captured);
         Assert.AreEqual(literal.GetHashCode(), captured.GetHashCode());
-        Assert.AreNotEqual(literal, Predicate.Of<Person>(x => x.Tag != "other", SqlSpelling.PostgreSql));
+        Assert.AreNotEqual(literal, Predicate.Of<Person>(x => x.Tag != "other", Shipped.Spelling));
 
         // The local changes after the call; the declaration does not.
         tag = "other";
@@ -217,11 +218,11 @@ public sealed class DeclarationValueTests
     [TestMethod]
     public void And_adds_to_a_lambda_that_is_not_bound()
     {
-        var active = Predicate.Of<Person>(x => x.RevokedOn == null, SqlSpelling.PostgreSql);
-        var ranked = Predicate.Of<Person>(x => x.Rank > 0, SqlSpelling.PostgreSql);
+        var active = Predicate.Of<Person>(x => x.RevokedOn == null, Shipped.Spelling);
+        var ranked = Predicate.Of<Person>(x => x.Rank > 0, Shipped.Spelling);
         var byHand = new Predicate(SqlTemplate.FromPlaceholders("{Tag} IS NOT NULL"));
 
-        Assert.AreEqual(active, active.And(Predicate.Of<Person>(x => x.RevokedOn == null, SqlSpelling.PostgreSql)));
+        Assert.AreEqual(active, active.And(Predicate.Of<Person>(x => x.RevokedOn == null, Shipped.Spelling)));
         Assert.AreEqual(active.And(ranked), active.And(ranked).And(ranked));
         Assert.AreEqual(active.And(byHand), active.And(byHand).And(byHand));
         Assert.AreNotEqual(active.And(ranked), active.And(ranked).And(active));

@@ -8,8 +8,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Harness;
 
 /// <summary>
-/// What the one spelling writes for a lambda, read the only way the contract shows it: from a
-/// model that declared it and was finalized.
+/// What a spelling of this project writes for a lambda, read the only way the contract shows it:
+/// from a model that declared it and was finalized. A condition is SQL Server's, a key SQLite's.
 /// </summary>
 /// <remarks>
 /// Audit: <see cref="Predicate.Of{TEntity}" /> and <see cref="KeyTarget.Of" /> return a value that
@@ -24,7 +24,7 @@ internal static class Bound
     {
         using var context = new OneEntity<TEntity>(
             options => options.UseSqlServer(Contexts.OfflineSqlServer, o => o.UseSchemaKitProbe()),
-            entity => entity.Metadata.Declare([new ProbeIndex(["Bound"]) { Name = "IX_bound", Where = Predicate.Of(condition, SqlSpelling.PostgreSql) }]));
+            entity => entity.Metadata.Declare([new ProbeIndex(["Bound"]) { Name = "IX_bound", Where = Predicate.Of(condition, ProbeSqlServerSpelling.Instance) }]));
 
         return context.Entity.GetDeclarations<ProbeIndex>().Single().Where!.Template.ToString();
     }
@@ -35,7 +35,7 @@ internal static class Bound
     {
         using var context = new OneEntity<TEntity>(
             options => options.UseSqlite(Contexts.OfflineSqlite, o => o.UseSchemaKitProbe()),
-            entity => entity.Metadata.Declare([new ProbeSqliteIndex(KeyTarget.Of(key, SqlSpelling.PostgreSql)) { Name = "IX_bound" }]));
+            entity => entity.Metadata.Declare([new ProbeSqliteIndex(KeyTarget.Of(key, ProbeSqliteSpelling.Instance)) { Name = "IX_bound" }]));
 
         return context.Entity.GetDeclarations<ProbeSqliteIndex>().Single().Key;
     }

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq.Expressions;
 using CodoMetis.EFCore.SchemaKit.Translation.Internal;
+using CodoMetis.EFCore.SchemaKit.Tests.Harness;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Translation;
 
@@ -51,9 +52,9 @@ public sealed class LambdaTranslatorTests
 {
     private const string Whitespace = @"E' \t\n\r'";
 
-    private static string E<T>(Expression<Func<Doc, T>> lambda) => LambdaTranslator.Expression(lambda);
+    private static string E<T>(Expression<Func<Doc, T>> lambda) => LambdaTranslator.Expression(lambda, Shipped.Spelling);
 
-    private static string P(Expression<Func<Doc, bool>> lambda) => LambdaTranslator.Predicate(lambda);
+    private static string P(Expression<Func<Doc, bool>> lambda) => LambdaTranslator.Predicate(lambda, Shipped.Spelling);
 
     private static string Refused(Func<string> translate) => Assert.ThrowsExactly<NotSupportedException>(() => translate()).Message;
 
@@ -162,8 +163,8 @@ public sealed class LambdaTranslatorTests
         // the model has (issue 180). Where the lambda is written it is a mark, and not refused.
         Assert.AreEqual($"{{CreatedAt}} > {LambdaTranslator.BoundLater}", P(x => x.CreatedAt > at));
 
-        StringAssert.Contains(Refused(() => LambdaTranslator.Expression(two)), "takes 2 parameters");
-        StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(two)), "takes 2 parameters");
+        StringAssert.Contains(Refused(() => LambdaTranslator.Expression(two, Shipped.Spelling)), "takes 2 parameters");
+        StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(two, Shipped.Spelling)), "takes 2 parameters");
     }
 
     // ---- predicates: comparisons and null ------------------------------------------------------------------
@@ -347,13 +348,13 @@ public sealed class LambdaTranslatorTests
     private static void Silent(string template, string conversions, Expression<Func<Doc, bool>> lambda)
     {
         Assert.AreEqual(conversions, Conversions(lambda), $"What the compiler wrote for {lambda}");
-        Assert.AreEqual(template, LambdaTranslator.Predicate(lambda), lambda.ToString());
+        Assert.AreEqual(template, LambdaTranslator.Predicate(lambda, Shipped.Spelling), lambda.ToString());
     }
 
     private static void RefusedConversion(string conversion, Expression<Func<Doc, bool>> lambda)
     {
         StringAssert.Contains(Conversions(lambda), conversion.Replace(" to ", "->"), $"What the compiler wrote for {lambda}");
-        StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(lambda)), $"converts {conversion}.", lambda.ToString());
+        StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(lambda, Shipped.Spelling)), $"converts {conversion}.", lambda.ToString());
     }
 
     /// <summary>
@@ -383,7 +384,7 @@ public sealed class LambdaTranslatorTests
         // A ?? converts its left side in a lambda of its own, which is no Convert under the entity.
         Expression<Func<Doc, decimal>> coalesced = x => x.Score ?? x.Price;
         Assert.IsNotNull(((BinaryExpression)coalesced.Body).Conversion, coalesced.ToString());
-        StringAssert.Contains(Refused(() => LambdaTranslator.Expression(coalesced)), "converts Int32 to Decimal.");
+        StringAssert.Contains(Refused(() => LambdaTranslator.Expression(coalesced, Shipped.Spelling)), "converts Int32 to Decimal.");
         Assert.AreEqual("coalesce({Score}, {Big})", E(x => x.Score ?? x.Big));
         StringAssert.Contains(Refused(() => P(x => !(x.Active && (int)x.Price > 2))), "converts Decimal to Int32.");
     }
@@ -422,7 +423,7 @@ public sealed class LambdaTranslatorTests
         // To object: C# concatenates through string.Concat(object, object).
         Expression<Func<Doc, string>> concat = x => x.Code + x.Rank;
         Assert.AreEqual("Int32->Object", Conversions(concat));
-        Assert.AreEqual("({Code} || {Rank})", LambdaTranslator.Expression(concat));
+        Assert.AreEqual("({Code} || {Rank})", LambdaTranslator.Expression(concat, Shipped.Spelling));
     }
 
     /// <summary>
@@ -461,7 +462,7 @@ public sealed class LambdaTranslatorTests
         // To object, for string.Concat, the compiler writes Convert in either context.
         Expression<Func<Doc, string>> concat = x => checked(x.Code + x.Rank);
         Assert.AreEqual("Int32->Object", Conversions(concat));
-        Assert.AreEqual("({Code} || {Rank})", LambdaTranslator.Expression(concat));
+        Assert.AreEqual("({Code} || {Rank})", LambdaTranslator.Expression(concat, Shipped.Spelling));
     }
 
     /// <summary>
@@ -584,11 +585,11 @@ public sealed class LambdaTranslatorTests
 
             if (LambdaTranslator.SilentConversions.Contains((from, to)))
             {
-                Assert.AreEqual($"{{{column.Member.Name}}} = {{{column.Member.Name}}}", LambdaTranslator.Predicate(lambda), lambda.ToString());
+                Assert.AreEqual($"{{{column.Member.Name}}} = {{{column.Member.Name}}}", LambdaTranslator.Predicate(lambda, Shipped.Spelling), lambda.ToString());
                 silent++;
             }
             else
-                StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(lambda)), $"converts {from.Name} to ", lambda.ToString());
+                StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(lambda, Shipped.Spelling)), $"converts {from.Name} to ", lambda.ToString());
         }
 
         Assert.AreEqual(2 * LambdaTranslator.SilentConversions.Count, silent, "A pair of the table is between types this test does not have.");
@@ -617,10 +618,10 @@ public sealed class LambdaTranslatorTests
     {
         CollectionAssert.AreEquivalent(
             new[] { "ToLower()", "ToUpper()", "Trim()", "TrimStart()", "TrimEnd()", "Replace(String, String)", "Substring(Int32)", "Substring(Int32, Int32)" },
-            LambdaTranslator.StringMethods.Keys.Select(m => $"{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})").ToList());
+            Shipped.Spelling.Methods.Keys.Select(m => $"{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})").ToList());
         CollectionAssert.AreEquivalent(
             new[] { "String.Length", "Nullable`1.Value", "Nullable`1.HasValue" },
-            LambdaTranslator.ValueMembers.Keys.Select(k => $"{k.DeclaringType.Name}.{k.Name}").ToList());
+            Shipped.ValueMembers.Select(k => $"{k.DeclaringType.Name}.{k.Name}").ToList());
         CollectionAssert.AreEquivalent(new[] { ExpressionType.Add, ExpressionType.Coalesce }, LambdaTranslator.ValueOperators.ToList());
         CollectionAssert.AreEquivalent(
             new[] { "=", "<>", "<", "<=", ">", ">=" },
@@ -628,8 +629,8 @@ public sealed class LambdaTranslatorTests
         CollectionAssert.AreEquivalent(
             new[] { ExpressionType.AndAlso, ExpressionType.OrElse, ExpressionType.Not },
             LambdaTranslator.LogicalOperators.ToList());
-        Assert.IsFalse(LambdaTranslator.LiteralTypes.Any(t => t == typeof(DateTime) || t == typeof(Guid) || t.IsEnum));
-        Assert.AreEqual(14, LambdaTranslator.LiteralTypes.Count);
+        Assert.IsFalse(Shipped.Spelling.LiteralTypes.Any(t => t == typeof(DateTime) || t == typeof(Guid) || t.IsEnum));
+        Assert.AreEqual(14, Shipped.Spelling.LiteralTypes.Count);
 
         // Widenings between integer types, and the char a comparison promotes. Nothing with a
         // fraction on either side: adding a row is a decision about every database, not a convenience.

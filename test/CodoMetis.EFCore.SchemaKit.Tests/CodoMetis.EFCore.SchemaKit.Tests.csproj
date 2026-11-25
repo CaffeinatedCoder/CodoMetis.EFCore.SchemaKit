@@ -13,6 +13,9 @@
 
     <ItemGroup>
         <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit/CodoMetis.EFCore.SchemaKit.csproj" />
+        <!-- For the translator's tests and the parity sweep: the kernel holds no spelling, and they
+             translate with the PostgreSQL package's, read through its public member. -->
+        <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit.PostgreSQL/CodoMetis.EFCore.SchemaKit.PostgreSQL.csproj" />
     </ItemGroup>
 
     <ItemGroup>

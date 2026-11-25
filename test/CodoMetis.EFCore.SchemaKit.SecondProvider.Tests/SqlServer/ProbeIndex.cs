@@ -30,10 +30,9 @@ public sealed record ProbeIndex(ValueList<string> Keys) : ISchemaDeclaration<Pro
 
     /// <summary>The rows the index covers, or null for all of them.</summary>
     /// <remarks>
-    /// Audit: a template written by hand. <see cref="Predicate.Of{TEntity}" /> wants a
-    /// <see cref="SqlSpelling" />, and the kernel has one, PostgreSQL's, behind a private
-    /// constructor: a second provider has nothing to pass, and SQL Server refuses what the one
-    /// there is writes (<c>PublicContractTests</c>, <c>SqlServerSpellingLiveTests</c>).
+    /// A template written by hand in the migration tests, and a lambda spelled by
+    /// <see cref="ProbeSqlServerSpelling" /> where a test is about the spelling (issue 184;
+    /// <c>SpellingParityTests</c>, <c>SqlServerSpellingLiveTests</c>).
     /// </remarks>
     public Predicate? Where { get; init; }
 

@@ -46,7 +46,7 @@ internal sealed class UnboundLambda : IEquatable<UnboundLambda>
     /// <summary>The lambda as SQL with placeholders.</summary>
     /// <param name="facts">What the model says of the properties the lambda reads; null for what their C# types say, where it is written.</param>
     public string Translate(TranslationFacts? facts = null)
-        => IsPredicate ? LambdaTranslator.Predicate(Lambda, facts) : LambdaTranslator.Expression(Lambda, facts);
+        => IsPredicate ? LambdaTranslator.Predicate(Lambda, Spelling, facts) : LambdaTranslator.Expression(Lambda, Spelling, facts);
 
     public bool Equals(UnboundLambda? other)
         => other is not null

@@ -108,11 +108,11 @@ public sealed class ConsumerCompileTests
         }
         """;
 
-    /// <summary>What only a provider's package does: having a lambda spelled through the kernel's own factories.</summary>
+    /// <summary>What only a package does: having a lambda spelled through the kernel's own factories, here with this package's spelling.</summary>
     private const string CallsTheKernelsFactories = """
         public static class Spelled
         {
-            public static readonly Predicate NotRevoked = Predicate.Of<IWithdrawable>(x => x.RevokedOn == null, SqlSpelling.PostgreSql);
+            public static readonly Predicate NotRevoked = Predicate.Of<IWithdrawable>(x => x.RevokedOn == null, PgSchema.Spelling);
         }
         """;
 
@@ -183,7 +183,7 @@ public sealed class ConsumerCompileTests
     [TestMethod]
     public void The_kernels_lambda_factories_ask_for_the_opt_in()
     {
-        var diagnostics = Compile(Model, "using CodoMetis.EFCore.SchemaKit;\n" + CallsTheKernelsFactories);
+        var diagnostics = Compile(Model, "using CodoMetis.EFCore.SchemaKit;\nusing CodoMetis.EFCore.SchemaKit.PostgreSQL;\n" + CallsTheKernelsFactories);
 
         Assert.IsTrue(diagnostics.Count >= 2, string.Join("\n", diagnostics));
         Assert.IsTrue(diagnostics.All(d => d.Id == "SK9001"), string.Join("\n", diagnostics));

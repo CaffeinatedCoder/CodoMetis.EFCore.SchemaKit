@@ -199,7 +199,7 @@ internal static class ParitySweep
         try
         {
             // Where the lambda is written, which is where a conversion is refused or taken off.
-            return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda) : LambdaTranslator.Expression(lambda);
+            return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda, Shipped.Spelling) : LambdaTranslator.Expression(lambda, Shipped.Spelling);
         }
         catch (NotSupportedException e)
         {
@@ -307,8 +307,8 @@ internal static class ParitySweep
     // compared with EF Core; a refusal of either is a refusal.
     private static string Bound(ParityCase @case, LambdaExpression lambda, TranslationFacts facts)
     {
-        _ = @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda) : LambdaTranslator.Expression(lambda);
-        return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda, facts) : LambdaTranslator.Expression(lambda, facts);
+        _ = @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda, Shipped.Spelling) : LambdaTranslator.Expression(lambda, Shipped.Spelling);
+        return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda, Shipped.Spelling, facts) : LambdaTranslator.Expression(lambda, Shipped.Spelling, facts);
     }
 
     private static void Resolve(Dictionary<int, string> templates, string connection, Dictionary<int, string> rendered, Dictionary<int, string> failed)

@@ -4,9 +4,8 @@ using Microsoft.Data.SqlClient;
 namespace CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.Integration;
 
 /// <summary>
-/// What SQL Server says to the SQL the kernel's one spelling writes for a lambda
-/// (<c>PublicContractTests.There_is_one_spelling_and_a_package_cannot_make_another</c>). It is
-/// why the probe's filter is a template written by hand.
+/// What SQL Server says to the SQL its spelling writes for a lambda, and to what PostgreSQL's
+/// wrote for the same lambda while the kernel had that one alone (issue 184).
 /// </summary>
 [TestClass]
 [TestCategory("Integration")]
@@ -30,26 +29,26 @@ public sealed class SqlServerSpellingLiveTests
         => Assert.ThrowsExactly<SqlException>(() => database.Execute(statement)).Number;
 
     /// <summary>
-    /// A boolean property is a predicate on PostgreSQL and a number on SQL Server: the filter the
-    /// spelling writes for the property alone is no condition here (Msg 102). Its comparison with
-    /// a value is one, since the value is written by the property's mapping, which is SQL
-    /// Server's (issue 180): <c>CAST(1 AS bit)</c>, where the spelling's own <c>TRUE</c> was
-    /// refused (Msg 10735).
+    /// A boolean property is a predicate on PostgreSQL and a number on SQL Server: the property
+    /// alone, which is what PostgreSQL's spelling writes, is no condition here (Msg 102), and
+    /// neither is a comparison with <c>TRUE</c> (Msg 10735). The spelling of SQL Server compares
+    /// the bit, and its negation with what false is, and the server takes both.
     /// </summary>
     [TestMethod]
-    public void The_server_refuses_what_the_one_spelling_writes_for_a_boolean_alone()
+    public void The_server_takes_a_boolean_as_its_own_spelling_writes_it()
     {
-        Assert.AreEqual("[Active]", Spelled(x => x.Active));
+        Assert.AreEqual("[Active] = CAST(1 AS bit)", Spelled(x => x.Active));
+        Assert.AreEqual("[Active] = CAST(0 AS bit)", Spelled(x => !x.Active));
         Assert.AreEqual("[Active] = CAST(1 AS bit)", Spelled(x => x.Active == true));
 
         using var database = new SqlServerDatabase();
         database.Execute(Table);
 
-        Assert.AreEqual(102, Refused(database, Filtered("IX_bare", Spelled(x => x.Active))));
+        Assert.AreEqual(102, Refused(database, Filtered("IX_bare", "[Active]")));
         Assert.AreEqual(10735, Refused(database, Filtered("IX_true", "[Active] = TRUE")));
 
-        // As SQL Server's own queries spell it, and as the comparison is bound.
-        database.Execute(Filtered("IX_compared", Spelled(x => x.Active == true)));
+        database.Execute(Filtered("IX_alone", Spelled(x => x.Active)));
+        database.Execute(Filtered("IX_negated", Spelled(x => !x.Active)));
     }
 
     /// <summary>
