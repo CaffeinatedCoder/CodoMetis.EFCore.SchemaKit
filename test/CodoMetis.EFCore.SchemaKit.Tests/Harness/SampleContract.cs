@@ -453,3 +453,107 @@ public sealed class ServicesExtension(string id, Action<IServiceCollection> add)
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo) => debugInfo["Test:Services"] = id;
     }
 }
+
+// Two kinds of objects that need other objects (#195): a routine, created after the tables, and
+// a type, created before them. What one needs is written as "owner:name", in the schema of the
+// table it is declared on, or as "owner:name@" for an object of that table itself, such as a
+// trigger, whose name is taken within the table.
+
+/// <summary>A routine of a schema, created after the tables. It may need routines and types.</summary>
+public sealed record TestRoutine(ValueList<string> Needs) : ISchemaDeclaration<TestRoutine>
+{
+    public static string OwnerId => "Test.Routine";
+
+    public string Owner => OwnerId;
+
+    public string Kind => "routine";
+
+    public string? Name { get; init; }
+
+    public int Epoch { get; init; } = 1;
+
+    public void Write(SchemaJsonWriter writer) => writer.Strings("needs", Needs);
+
+    public static TestRoutine Read(SchemaDeclarationHeader header, SchemaJsonReader reader)
+        => new(reader.Strings("needs")) { Name = header.Name, Epoch = header.Epoch };
+}
+
+/// <summary>A type of a schema, created before the tables. It may need types, and it may say it needs a routine.</summary>
+public sealed record TestType(ValueList<string> Needs) : ISchemaDeclaration<TestType>
+{
+    public static string OwnerId => "Test.Type";
+
+    public string Owner => OwnerId;
+
+    public string Kind => "type";
+
+    public string? Name { get; init; }
+
+    public int Epoch { get; init; } = 1;
+
+    public void Write(SchemaJsonWriter writer) => writer.Strings("needs", Needs);
+
+    public static TestType Read(SchemaDeclarationHeader header, SchemaJsonReader reader)
+        => new(reader.Strings("needs")) { Name = header.Name, Epoch = header.Epoch };
+}
+
+public sealed record TestNeedyDescriptor(QualifiedName Name, TableRef DeclaredOn, ValueList<Dependency> Needs) : ISchemaDescriptor
+{
+    public SchemaScope Scope => new SchemaScope.Schema(Name.Schema);
+
+    public ValueList<Dependency> Dependencies => [new Dependency.WholeTable(DeclaredOn), .. Needs];
+
+    public ISchemaDescriptor WithName(QualifiedName name) => this with { Name = name };
+
+    public static TestNeedyDescriptor Of(string name, ValueList<string> needs, SchemaResolver resolver)
+        => new(
+            resolver.Table.Qualify(resolver.Dialect.Identifier(name)),
+            resolver.Table,
+            [.. needs.Select(Dependency (need) =>
+            {
+                var (owner, needed) = (need[..need.IndexOf(':')], need[(need.IndexOf(':') + 1)..]);
+                if (needed.EndsWith('@'))
+                    return new Dependency.SchemaObject(owner, new SchemaScope.Table(resolver.Table), new QualifiedName(null, resolver.Dialect.Identifier(needed[..^1])));
+
+                var qualified = resolver.Table.Qualify(resolver.Dialect.Identifier(needed));
+                return new Dependency.SchemaObject(owner, new SchemaScope.Schema(qualified.Schema), qualified);
+            })]);
+}
+
+public sealed class TestRoutineContributor(SchemaContributorDependencies dependencies)
+    : SchemaContributor<TestRoutine, TestNeedyDescriptor>(dependencies)
+{
+    public override SchemaPlacement Placement => SchemaPlacement.AfterTables(order: 5);
+
+    protected override TestNeedyDescriptor Resolve(TestRoutine declaration, SchemaResolver resolver)
+        => TestNeedyDescriptor.Of(declaration.Name ?? "routine", declaration.Needs, resolver);
+
+    protected override void Create(TestNeedyDescriptor descriptor, SchemaSql sql) => sql.Statement($"CREATE ROUTINE {descriptor.Name}");
+
+    protected override void Drop(TestNeedyDescriptor descriptor, SchemaSql sql) => sql.Statement($"DROP ROUTINE {descriptor.Name}");
+
+    protected override SchemaChange Plan(TestNeedyDescriptor from, TestNeedyDescriptor to, SchemaSql sql) => new SchemaChange.Rebuild();
+
+    protected override Impact ImpactOf(TestNeedyDescriptor descriptor, BaseChange change) => new Impact.Unaffected();
+
+    protected override IEnumerable<NameClaim> Claims(TestNeedyDescriptor descriptor) => [];
+}
+
+public sealed class TestTypeContributor(SchemaContributorDependencies dependencies)
+    : SchemaContributor<TestType, TestNeedyDescriptor>(dependencies)
+{
+    public override SchemaPlacement Placement => SchemaPlacement.BeforeTables;
+
+    protected override TestNeedyDescriptor Resolve(TestType declaration, SchemaResolver resolver)
+        => TestNeedyDescriptor.Of(declaration.Name ?? "type", declaration.Needs, resolver);
+
+    protected override void Create(TestNeedyDescriptor descriptor, SchemaSql sql) => sql.Statement($"CREATE TYPE {descriptor.Name}");
+
+    protected override void Drop(TestNeedyDescriptor descriptor, SchemaSql sql) => sql.Statement($"DROP TYPE {descriptor.Name}");
+
+    protected override SchemaChange Plan(TestNeedyDescriptor from, TestNeedyDescriptor to, SchemaSql sql) => new SchemaChange.Rebuild();
+
+    protected override Impact ImpactOf(TestNeedyDescriptor descriptor, BaseChange change) => new Impact.Unaffected();
+
+    protected override IEnumerable<NameClaim> Claims(TestNeedyDescriptor descriptor) => [];
+}
