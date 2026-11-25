@@ -36,6 +36,7 @@ internal sealed class NpgsqlSchemaKitOptionsExtension : IDbContextOptionsExtensi
                 provider.GetRequiredService<IRelationalTypeMappingSource>()),
             provider.GetRequiredService<IDesignTimeModel>().Model.GetMaxIdentifierLength())));
 
+        services.AddSchemaContributor<PgIndexContributor>();
         services.AddSchemaContributor<PgExclusionContributor>();
 
         // What a project that comes from EFCore.ComplexIndexes 5.x has in its snapshot.

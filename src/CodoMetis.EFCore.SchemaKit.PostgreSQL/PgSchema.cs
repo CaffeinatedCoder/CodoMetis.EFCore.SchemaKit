@@ -21,6 +21,83 @@ public readonly struct PgSchema<TEntity>
     where TEntity : class
 {
     /// <summary>
+    /// A key of an index, for where a key needs more than a lambda says: an order, or its place
+    /// in a list of several.
+    /// </summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgKey<TValue> Key<TValue>(Expression<Func<TEntity, TValue>> key)
+        => new(KeyTarget.Of(key, PgSchema.Spelling));
+
+    /// <summary>A B-tree index on one key.</summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.BTree BTree<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        string? name = null)
+        => BTree([Key(key)], where, include, name);
+
+    /// <summary>A B-tree index on several keys, or on keys with an order.</summary>
+    /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…).Desc()]</c>.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.BTree BTree(
+        ValueList<BTreeKey> keys,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        string? name = null)
+        => new(keys)
+        {
+            Where = where is null ? null : Predicate.Of(where, PgSchema.Spelling),
+            Include = Indexes.Paths(include),
+            Name = name,
+        };
+
+    /// <summary>
+    /// A unique index on one key: no two rows it covers have the same value. It is a B-tree
+    /// index, since no other access method of PostgreSQL can be unique.
+    /// </summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="nullsDistinct">
+    /// Whether two rows with a null in the key are two keys, which is PostgreSQL's default. With
+    /// false the second of them is refused (<c>NULLS NOT DISTINCT</c>).
+    /// </param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.BTree Unique<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        bool nullsDistinct = true,
+        string? name = null)
+        => Unique([Key(key)], where, include, nullsDistinct, name);
+
+    /// <summary>A unique index on several keys: no two rows it covers agree in all of them.</summary>
+    /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…)]</c>.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="nullsDistinct">
+    /// Whether two rows with a null in a key are two keys, which is PostgreSQL's default. With
+    /// false the second of them is refused (<c>NULLS NOT DISTINCT</c>).
+    /// </param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.BTree Unique(
+        ValueList<BTreeKey> keys,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        bool nullsDistinct = true,
+        string? name = null)
+        => BTree(keys, where, include, name) with { Unique = new Uniqueness(nullsDistinct) };
+
+    /// <summary>
     /// Starts the elements of an exclusion constraint with one compared by <c>=</c>. What it
     /// returns is not yet a constraint's elements: it becomes that with the first element compared
     /// by another operator.
@@ -220,6 +297,28 @@ public sealed class ExclusionElements<TEntity>
     /// <inheritdoc cref="ExclusionDraft{TEntity}.WithUncheckedOperator" />
     public ExclusionElements<TEntity> WithUncheckedOperator<TValue>(Expression<Func<TEntity, TValue>> key, string @operator)
         => new([.. Elements, Exclusions.Unchecked(key, @operator)]);
+}
+
+internal static class Indexes
+{
+    /// <summary>
+    /// The paths of the properties a list of lambdas names. A lambda over <c>object</c> boxes a
+    /// value type, which the translator takes off as it does every conversion that keeps the
+    /// value; anything else than a property is refused, since an index carries columns and no
+    /// expressions.
+    /// </summary>
+    public static ValueList<string> Paths<TEntity>(IEnumerable<Expression<Func<TEntity, object?>>>? include)
+    {
+        if (include is null) return [];
+
+        return [.. include.Select(lambda =>
+        {
+            ArgumentNullException.ThrowIfNull(lambda, nameof(include));
+            return KeyTarget.Of(lambda, PgSchema.Spelling) is KeyTarget.Column column
+                ? column.Path
+                : throw new ArgumentException(Internal.PgStrings.IncludeTakesAProperty(lambda.ToString()), nameof(include));
+        })];
+    }
 }
 
 internal static class Exclusions

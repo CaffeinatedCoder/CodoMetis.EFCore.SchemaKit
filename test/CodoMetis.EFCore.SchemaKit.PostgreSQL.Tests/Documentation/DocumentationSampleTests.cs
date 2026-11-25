@@ -70,6 +70,7 @@ public sealed partial class DocumentationSampleTests
             public int RoleId { get; set; }
             public NpgsqlRange<DateOnly> Period { get; set; }
             public DateOnly? RevokedOn { get; set; }
+            public string? Note { get; set; }
         }
 
         public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options);
@@ -159,7 +160,7 @@ public sealed partial class DocumentationSampleTests
     [TestMethod]
     public void A_sample_that_names_a_member_that_does_not_exist_fails()
     {
-        var broken = new Markdown.CodeBlock("README.md", 1, "csharp", "modelBuilder.Entity<RoleGrant>().DeclarePostgres(pg => [pg.Unique(x => x.RoleId)]);");
+        var broken = new Markdown.CodeBlock("README.md", 1, "csharp", "modelBuilder.Entity<RoleGrant>().DeclarePostgres(pg => [pg.Fulltext(x => x.RoleId)]);");
 
         var diagnostics = Compile(broken);
 

@@ -119,7 +119,8 @@ public sealed class NpgsqlWiringTests
             using var context = new Db<Models.Scheduling>(builder.Options);
 
             Assert.AreEqual("NpgsqlSchemaDialect", context.GetService<ISchemaDialect>().GetType().Name);
-            Assert.AreEqual(1, context.GetService<IEnumerable<ISchemaContributor>>().Count());
+            // One for the indexes and one for the exclusion constraints, each once.
+            Assert.AreEqual(2, context.GetService<IEnumerable<ISchemaContributor>>().Count());
             StringAssert.Contains(Script(context), $"ADD CONSTRAINT {Models.Name} EXCLUDE");
         }
     }

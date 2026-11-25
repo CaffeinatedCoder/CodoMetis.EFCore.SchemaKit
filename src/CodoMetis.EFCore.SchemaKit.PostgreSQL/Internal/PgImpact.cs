@@ -4,6 +4,7 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 internal enum PgObjectKind
 {
     ExclusionConstraint,
+    Index,
 }
 
 /// <summary>
@@ -12,8 +13,8 @@ internal enum PgObjectKind
 /// </summary>
 /// <remarks>
 /// <para>
-/// A row is a measurement, and its test is the live server: <c>PgExclusionLiveTests</c> has one
-/// test for each way a constraint reads a column. A row is added with its test, not from the
+/// A row is a measurement, and its test is the live server: <c>PgExclusionLiveTests</c> and
+/// <c>PgIndexLiveTests</c> have one test for each way an object reads a column. A row is added with its test, not from the
 /// documentation. The rows of one change are read in their order and the first that fits
 /// answers, because PostgreSQL's answer for a column read in two ways is not the stronger of the
 /// two: a column that is an element by itself takes the constraint with it, whatever else of the
@@ -53,6 +54,26 @@ internal static class PgImpact
 
         // Not something PostgreSQL does; were a table created again, nothing attached to it would be on the new one.
         new(PgObjectKind.ExclusionConstraint, typeof(BaseChange.TableRebuilt), null, new Impact.Lost()),
+
+        // An index follows the renames as a constraint does.
+        new(PgObjectKind.Index, typeof(BaseChange.ColumnRenamed), null, new Impact.Follows()),
+        new(PgObjectKind.Index, typeof(BaseChange.TableRenamed), null, new Impact.Follows()),
+        new(PgObjectKind.Index, typeof(BaseChange.TableMoved), null, new Impact.Follows()),
+
+        // PostgreSQL builds the index again under the altered column, by the definition it has.
+        new(PgObjectKind.Index, typeof(BaseChange.ColumnAltered), null, new Impact.Unaffected()),
+
+        // An index goes with any column it reads, in silence: a key, a column of a key's
+        // expression, a column of the condition, an included one. Nothing is refused, unlike
+        // under an exclusion constraint. A column that only SQL written by hand may read has no
+        // row and is rebuilt around.
+        new(PgObjectKind.Index, typeof(BaseChange.ColumnDropped), ColumnRole.Key, new Impact.Lost()),
+        new(PgObjectKind.Index, typeof(BaseChange.ColumnDropped), ColumnRole.Expression, new Impact.Lost()),
+        new(PgObjectKind.Index, typeof(BaseChange.ColumnDropped), ColumnRole.Condition, new Impact.Lost()),
+        new(PgObjectKind.Index, typeof(BaseChange.ColumnDropped), ColumnRole.Included, new Impact.Lost()),
+
+        new(PgObjectKind.Index, typeof(BaseChange.TableDropped), null, new Impact.Lost()),
+        new(PgObjectKind.Index, typeof(BaseChange.TableRebuilt), null, new Impact.Lost()),
     ];
 
     /// <summary>The table's answer for an object of this kind that reads these things.</summary>

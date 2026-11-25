@@ -59,6 +59,49 @@ A constraint of equality elements only does not compile: `pg.Equal(…)` alone i
 lambda over the entity being configured, translated where it is written; one the translator has no
 SQL for fails in `OnModelCreating`, not in a migration.
 
+## Indexes
+
+You declare an index in the same list. `pg.BTree` is a B-tree index and `pg.Unique` a unique one.
+A key is a property or an expression, and `pg.Key` gives a key an order:
+
+```csharp
+modelBuilder.Entity<RoleGrant>().ToTable("role_grants").DeclarePostgres(pg =>
+[
+    // One grant per grantee and role among those not revoked.
+    pg.Unique(
+        [pg.Key(x => x.GranteeId), pg.Key(x => x.RoleId)],
+        where: x => x.RevokedOn == null,
+        include: [x => x.Note],
+        nullsDistinct: false,
+        name: "ux_role_grant_active"),
+
+    pg.BTree(
+        [pg.Key(x => x.Note!.ToLower()), pg.Key(x => x.RevokedOn).Desc().NullsLast()],
+        name: "ix_role_grant_note"),
+]);
+```
+
+`migrations add` writes one statement for each:
+
+```sql
+CREATE UNIQUE INDEX ux_role_grant_active ON role_grants ("GranteeId", "RoleId") INCLUDE ("Note") NULLS NOT DISTINCT WHERE "RevokedOn" IS NULL;
+CREATE INDEX ix_role_grant_note ON role_grants ((lower("Note")), "RevokedOn" DESC NULLS LAST);
+```
+
+An expression is spelled as Npgsql spells the same lambda in a query, so PostgreSQL uses the
+index for `Where(x => x.Note!.ToLower() == "a")`. A test asks the server's planner for that.
+
+Good to know:
+
+- **`nullsDistinct:` is a parameter of `pg.Unique` only.** PostgreSQL has `NULLS NOT DISTINCT` for
+  a unique index and for no other.
+- **`include:` takes properties.** An expression there throws in `OnModelCreating`
+  (`ArgumentException`).
+- **The default name is EF Core's,** `IX_{table}_{keys}`. If you declare the same index with
+  `HasIndex` as well, the model is rejected (`SK1001`): keep one of the two.
+- **EF Core's own index metadata does not hold the index.** `GetIndexes()` does not list it;
+  `GetDeclarations<PgIndex>()` does.
+
 ## What this preview does
 
 - **Exclusion constraints on PostgreSQL,** declared with `DeclarePostgres`: elements compared by
@@ -66,6 +109,13 @@ SQL for fails in `OnModelCreating`, not in a migration.
   (`WithUncheckedOperator`, checked by the database when the migration is applied); a condition;
   a deferral; a name, or a default one. An element may be a property, a path through a complex
   type, or an expression the translator renders, such as `x.Code.ToLower()`.
+- **B-tree and unique indexes on PostgreSQL,** declared with `DeclarePostgres`: keys that are
+  properties or expressions, each ascending or descending with its nulls first or last; a
+  condition; included columns; `NULLS NOT DISTINCT` for a unique index; a name, or a default one.
+  A renamed index is renamed, and anything else about it is a drop and a create. A table or column
+  EF Core renames is followed, and a change of a column's type leaves the index in place.
+  PostgreSQL drops an index with any column it reads, so the migration writes no drop for it and
+  creates what you still declare.
 - **Every migration path,** on PostgreSQL 16 and 18. The live tests apply each diff to a server in CI
   and compare the catalog it leaves with what `EnsureCreated()` builds for the same model.
 - **Changes in place where PostgreSQL has one:** a renamed constraint is renamed. Anything else
@@ -93,7 +143,7 @@ SQL for fails in `OnModelCreating`, not in a migration.
 
 | | Issue |
 |---|---|
-| Indexes: expression, JSON-member and filtered, with typed keys | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
+| Indexes: the other access methods (hash, GiST, SP-GiST, GIN, BRIN), operator classes, collations, storage parameters, `CONCURRENTLY`, and a member of a JSON document as a key | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor yet. A create on a table the same migration rebuilds is refused until it is placed after the rebuild | [#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145), [#115](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/115) |
