@@ -104,9 +104,9 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
    `Redeclare` is the only replacing path.
 7. **Checked at declaration, bound at finalization, epochs for resolution** (#114, decided
    2026-11-24). A lambda is checked where it is written and becomes provider-specific SQL when
-   its model is finalized, stored as segments and never rendered again from a tree. Changing how
-   a path resolves needs a new epoch, and the golden corpus fails the build without one. The
-   binding reads nothing from the model yet (#180).
+   its model is finalized, from the model's facts, stored as segments and never rendered again
+   from a tree. Changing how a path resolves needs a new epoch, and the golden corpus fails the
+   build without one.
 8. **Contributors answer `Plan` and `ImpactOf`,** both mandatory, both closed unions.
 9. **No `IF EXISTS` on a drop, no `DROP … IF EXISTS` before an `ADD`.** A collision fails.
 10. **A declaration for a provider that is not the active one is an error,** unless the options
@@ -414,8 +414,30 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
 - **A lambda is checked where it is written and becomes SQL when its model is finalized** (#179).
   The factory translates it once and throws the result away, so a refusal is still on the
   consumer's line. No service is needed at either moment, which is what lets a declaration be a
-  value in `OnModelCreating`. The translator asks nothing of the model yet (#180), so both
-  translations are the same text.
+  value in `OnModelCreating`.
+- **The two translations differ in their facts** (`TranslationFacts`, #180). At the call they are
+  the C# types': nullability from the annotations, and a value only the model can write (an enum,
+  a `DateTime`, a `Guid`, a value object) as the mark `LambdaTranslator.BoundLater`, which is
+  never stored. At finalization they are `ModelFacts`: a column can be null when the property
+  or a complex property on its path is nullable in the model, and a value compared with a
+  property is written by that property's mapping, through its converter.
+- **No property holds its mapping while a model is finalized** (spike F), so the binding asks
+  `IRelationalTypeMappingSource`, a singleton that needs no model. `HasConversion<string>()`
+  leaves no converter on the property either: ask the mapping, never the property's converter
+  alone. `PropertyPaths.Find` is the one walk from a path to a property, for the resolver and
+  for the facts.
+- **`ModelFactsBindingTests` is the oracle for what the model's facts write:** each condition is
+  compared with EF Core's `ToQueryString()` for the same lambda on the same model. A new kind of
+  value gets its row there. The sweep translates with the model's facts as well.
+- **An order comparison on what a converter stores as text is refused at finalization,** and so
+  is a value the mapping refuses, with the property named. A converter between numbers, or from
+  an enum to its number, keeps the order (Npgsql stores an `sbyte` that way).
+- **A boolean stored as something else is compared with what true is stored as,** and a negation
+  with what false is stored as, not wrapped in `NOT`: that is how EF Core writes both.
+- **`SchemaKitBindingCheckConvention` binds a second time, first on the finalized model,** and
+  refuses a different result: a convention of another package that runs after the binding can
+  change a column's nullability or a property's conversion, and the stored condition would say
+  what the lambda does not.
 - **Spelled as the provider's queries spell it,** character for character: an index serves only a
   query whose expression matches it. The spellings are PostgreSQL's; SQL Server's come with #29.
 - **A comparison that can be NULL is written as EF Core writes it.** `x.Tag != "blocked"` keeps the
@@ -448,8 +470,9 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
   helper (`Converted`, `Unconverted`): match a conversion through it, never by its node type.
   The sweep compiles its rows a second time with overflow checks and holds each template, and
   each refusal, to the unchecked one (`A_checked_context_changes_no_row`).
-- **Refused where the lambda is written:** an enum comparison, a `DateTime` or `Guid` literal, a
-  member of a scalar, a method outside the tables.
+- **Refused where the lambda is written:** a comparison of two enum properties, a `DateTime` or
+  `Guid` anywhere but in a comparison with a property, a member of a scalar, a method outside
+  the tables.
 
 ## The resolver
 

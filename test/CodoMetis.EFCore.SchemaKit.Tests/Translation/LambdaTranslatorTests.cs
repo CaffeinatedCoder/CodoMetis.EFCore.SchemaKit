@@ -156,7 +156,11 @@ public sealed class LambdaTranslatorTests
 
         // A DateTime or a Guid is IFormattable too, and came out as bare text that is not SQL.
         StringAssert.Contains(Refused(() => E(x => id)), "A value of type 'Guid' cannot be written as a SQL literal");
-        StringAssert.Contains(Refused(() => P(x => x.CreatedAt > at)), "A value of type 'DateTime' cannot be written as a SQL literal");
+        StringAssert.Contains(Refused(() => E(x => x.Code + at)), "A value of type 'DateTime' cannot be written as a SQL literal");
+
+        // Compared with a property, such a value is the property's mapping's to write, which only
+        // the model has (issue 180). Where the lambda is written it is a mark, and not refused.
+        Assert.AreEqual($"{{CreatedAt}} > {LambdaTranslator.BoundLater}", P(x => x.CreatedAt > at));
 
         StringAssert.Contains(Refused(() => LambdaTranslator.Expression(two)), "takes 2 parameters");
         StringAssert.Contains(Refused(() => LambdaTranslator.Predicate(two)), "takes 2 parameters");
@@ -288,8 +292,11 @@ public sealed class LambdaTranslatorTests
     [TestMethod]
     public void What_a_predicate_cannot_say_is_refused()
     {
-        StringAssert.Contains(Refused(() => P(x => x.Status == DocStatus.Final)), "compares an enum");
-        StringAssert.Contains(Refused(() => P(x => x.Status != DocStatus.Draft && x.Active)), "compares an enum");
+        // An enum against an enum: how each is stored is not the lambda's to know, and two columns
+        // have two mappings. Against a value it is the model's to write (issue 180).
+        StringAssert.Contains(Refused(() => P(x => x.Status == x.Status)), "compares an enum");
+        Assert.AreEqual($"{{Status}} = {LambdaTranslator.BoundLater}", P(x => x.Status == DocStatus.Final));
+        Assert.AreEqual($"({{Status}} <> {LambdaTranslator.BoundLater} AND {{Active}})", P(x => x.Status != DocStatus.Draft && x.Active));
         StringAssert.Contains(Refused(() => P(x => x.Code.Contains("a"))), "has no translation in a declaration's predicate");
         StringAssert.Contains(Refused(() => P(x => x.Code.PadLeft(3) == "a")), "has no translation in a declaration");
     }
@@ -478,9 +485,11 @@ public sealed class LambdaTranslatorTests
         Assert.AreEqual(E(x => x.Code + (long?)x.Score), E(x => checked(x.Code + (long?)x.Score)));
         Assert.AreEqual(E(x => x.Code + (long)x.Small), E(x => checked(x.Code + (long)x.Small)));
 
-        // An enum keeps its own refusal, which says why; it is not a conversion's.
-        StringAssert.Contains(Refused(() => P(x => checked(x.Status == DocStatus.Final))), "compares an enum");
-        StringAssert.Contains(Refused(() => P(x => checked((int)x.Status == 1))), "compares an enum");
+        // An enum compared with a value is the model's to write, checked or not; two enum columns
+        // keep their own refusal, which is not a conversion's.
+        Assert.AreEqual(P(x => x.Status == DocStatus.Final), P(x => checked(x.Status == DocStatus.Final)));
+        Assert.AreEqual(P(x => (int)x.Status == 1), P(x => checked((int)x.Status == 1)));
+        StringAssert.Contains(Refused(() => P(x => checked(x.Status == x.Status))), "compares an enum");
 
         // And a conversion that can change the value is refused as it is unchecked (#103).
         StringAssert.Contains(Refused(() => P(x => checked((int)x.Big == 2))), "converts Int64 to Int32.");
@@ -541,7 +550,7 @@ public sealed class LambdaTranslatorTests
 
         // An enum outside a comparison; in one it keeps its own reason.
         StringAssert.Contains(Refused(() => E(x => (int)x.Status)), "converts DocStatus to Int32.");
-        StringAssert.Contains(Refused(() => P(x => (int)x.Status == 1)), "compares an enum");
+        Assert.AreEqual($"{{Status}} = {LambdaTranslator.BoundLater}", P(x => (int)x.Status == 1));
 
         // In a checked context the compiler writes another node, ConvertChecked, held to the same table.
         StringAssert.Contains(Refused(() => P(x => checked((int)x.Big) == 2)), "converts Int64 to Int32.");

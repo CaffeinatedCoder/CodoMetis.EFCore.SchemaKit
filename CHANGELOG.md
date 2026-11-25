@@ -14,9 +14,14 @@ One section per version, newest first, in the form
 - `Predicate` and `KeyTarget.Template` hold a `SqlTemplate` and are no longer made from a string. In the contract, `SchemaResolver.Template` takes a `SqlTemplate`, and `SchemaJsonWriter` and `SchemaJsonReader` have `Template` and `OptionalTemplate` ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
 - A lambda in a declaration becomes SQL when its model is finalized, and is checked where it is written as before. Until then `GetDeclarations`, `FindDeclaration` and `Redeclare` hand out the declaration as it was written, and `SqlTemplate.IsBound` is false for its lambdas. Two declarations without a name that are written differently and are the same SQL are refused when the model is finalized, where they were refused at the second call ([#179](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/179)).
 
+### Added
+
+- A property compared with a value is written as the column stores that value: an enum as its number or its name, a property with a value converter through the converter, a `bool` stored as text, a `DateTime`, a `Guid`. An enum comparison and a `DateTime` or `Guid` in a comparison were refused ([#180](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/180)).
+
 ### Changed
 
 - Both packages are built against EF Core 11.0.0 and `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0, and depend on `[11.0.0, 12.0.0)` of them ([#174](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/174)).
+- Whether a column in a condition can be null is the model's answer, not the C# annotation's: `IsRequired()` on a `string?` leaves the null compensation out, and `IsRequired(false)` on a `string` puts it in ([#180](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/180)).
 - The expression and the condition of an exclusion constraint read from a 5.x snapshot are SQL written by hand: the constraint is taken to read every column of its table ([#178](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/178)).
 
 ## [11.0.0-preview.1] — 2026-11-17

@@ -39,6 +39,7 @@ public sealed partial class DocumentationApiTests
         // EF Core
         "EnsureCreated", "GenerateCreateScript", "ToTable", "HasIndex", "HasKey", "HasAlternateKey", "HasForeignKey",
         "HasFilter", "HasDatabaseName", "IsDescending", "IsUnique", "HasFillFactor", "IncludeProperties", "UseCollation",
+        "HasConversion", "IsRequired",
         // Npgsql
         "UseNpgsql", "AddEntityFrameworkNpgsql", "HasPostgresExtension", "HasMethod", "HasOperators", "HasNullSortOrder",
         "IsCreatedConcurrently", "AreNullsDistinct", "HasStorageParameter", "WithoutOverlaps", "WithPeriod",

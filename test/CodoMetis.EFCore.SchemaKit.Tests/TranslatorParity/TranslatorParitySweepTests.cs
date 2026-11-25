@@ -76,6 +76,9 @@ public class TranslatorParitySweepTests
     {
         var outcomes = ParitySweep.Results.GroupBy(r => r.Outcome).ToDictionary(g => g.Key, g => g.Count());
 
+        // In the test's output, so that a change of the translator can be read against the run before it.
+        Console.WriteLine(string.Join(", ", outcomes.OrderBy(o => o.Key.ToString(), StringComparer.Ordinal).Select(o => $"{o.Key}: {o.Value}")));
+
         Assert.IsTrue(outcomes.GetValueOrDefault(ParityOutcome.Agree) >= 1100, $"Rows that agree: {outcomes.GetValueOrDefault(ParityOutcome.Agree)}");
         Assert.IsTrue(ParitySweep.Results.Count >= 2500, $"Rows: {ParitySweep.Results.Count}");
         Assert.IsFalse(outcomes.ContainsKey(ParityOutcome.CrashedAtDeclaration), "A declaration threw something other than NotSupportedException.");

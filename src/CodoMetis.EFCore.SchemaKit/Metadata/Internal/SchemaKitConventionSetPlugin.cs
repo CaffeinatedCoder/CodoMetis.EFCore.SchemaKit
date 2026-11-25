@@ -21,7 +21,10 @@ internal sealed class SchemaKitConventionSetPlugin(IServiceProvider services) : 
 
         // Last among those that run when a model is finalized: what a declaration is bound from
         // is the model as every other convention left it.
-        conventionSet.ModelFinalizingConventions.Add(new SchemaKitBindingConvention());
+        conventionSet.ModelFinalizingConventions.Add(new SchemaKitBindingConvention(services));
+
+        // First among those that run on the finalized model, before anything is made from it.
+        conventionSet.ModelFinalizedConventions.Insert(0, new SchemaKitBindingCheckConvention());
         return conventionSet;
     }
 }

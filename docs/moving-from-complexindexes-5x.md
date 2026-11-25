@@ -238,11 +238,25 @@ out. The two are different conditions, and the first migration after the move dr
 constraint and creates it again. `x.Tag != null && x.Tag != "blocked"` covers the rows 5.x's
 condition covered, and is rebuilt too, since its text is not 5.x's.
 
+A property compared with a value is written as the column stores that value, which the model
+says: an enum as its number or, with `HasConversion<string>()`, its name; a property with a value
+converter through the converter; a `bool` stored as text as that text; a `DateTime` and a `Guid` as
+the provider writes them. Whether a column can be null is the model's answer too, so `IsRequired()`
+and `IsRequired(false)` count, not only the `?` in C#. The model is asked when it is finalized, so
+it does not matter whether a property is configured before or after the declaration.
+
+Refused when the model is finalized, since only the model knows:
+
+- `<`, `<=`, `>` or `>=` on a property a converter stores as text: text orders otherwise than the
+  property does. Compare it with `==` or `!=`;
+- a value the column's type cannot hold, such as a `DateTime` that is not UTC for a
+  `timestamp with time zone`.
+
 Refused where the lambda is written, each with a message that says why:
 
-- a comparison of an enum: how it is stored depends on its value conversion;
-- a `DateTime` or `Guid` literal, and any value whose SQL spelling depends on the database's
-  settings;
+- a comparison of two enum properties;
+- a `DateTime`, a `Guid` or any other value without a literal of its own anywhere but in a
+  comparison with a property;
 - a member of a scalar that the model does not map, such as `x.Start.Year`;
 - a member of a JSON document ([#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43));
 - a conversion that changes the value, such as `(int)x.Amount == 2`, or `x.Count > 2.5` on an

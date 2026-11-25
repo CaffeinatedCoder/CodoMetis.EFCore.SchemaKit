@@ -3,6 +3,7 @@ using System.Text;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 
@@ -15,7 +16,7 @@ namespace CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 /// table. That is what a configured model and a model snapshot have in common, and the reason both
 /// sides of a diff get the same answer from the same code. A snapshot rebuilds every type as a
 /// property bag and keeps no converter, so the one rule that asks a CLR type has a second form for
-/// it (<see cref="ConvertedMember" />).
+/// it (<see cref="PropertyPaths" />).
 /// </para>
 /// <para>
 /// How a path becomes SQL is the resolution epoch <see cref="ResolutionEpoch.Current" />. A change
@@ -128,78 +129,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         return (_renames?.Forward(Table, column) ?? column, own);
     }
 
-    /// <summary>
-    /// Walks the path through complex properties to a scalar property. The property that is found is
-    /// the declared one, and its column is asked of it: a column looked up by name in the table
-    /// could be another property's.
-    /// </summary>
-    private IReadOnlyProperty FindProperty(string path)
-    {
-        var segments = path.Split('.');
-        IReadOnlyTypeBase current = _entityType;
-
-        for (var i = 0; i < segments.Length; i++)
-        {
-            var segment = segments[i];
-
-            if (i == segments.Length - 1)
-            {
-                if (current.FindProperty(segment) is { } property) return property;
-
-                throw new InvalidOperationException(current.FindComplexProperty(segment) is not null
-                    ? SchemaKitStrings.PathEndsOnComplexProperty(_entityType.ShortName(), path)
-                    : SchemaKitStrings.PathNotFound(_entityType.ShortName(), path, segment, current.ShortName()));
-            }
-
-            if (current.FindComplexProperty(segment) is { } complex)
-            {
-                // What a member of a JSON document is in SQL is the provider's to say, and it has to
-                // say it as its queries do. Until a provider package does, there is no answer here
-                // that an index could be trusted with.
-                if (complex.IsCollection || complex.ComplexType.GetContainerColumnName() is not null)
-                    throw new InvalidOperationException(SchemaKitStrings.PathIntoJson(_entityType.ShortName(), path, segment));
-
-                current = complex.ComplexType;
-                continue;
-            }
-
-            if (i == segments.Length - 2 && current.FindProperty(segment) is { } scalar && ConvertedMember(current, scalar, segments[i + 1]))
-                return scalar;
-
-            throw new InvalidOperationException(current.FindProperty(segment) is not null
-                ? SchemaKitStrings.PathPastScalar(_entityType.ShortName(), path, segment, segments[i + 1])
-                : SchemaKitStrings.PathNotFound(_entityType.ShortName(), path, segment, current.ShortName()));
-        }
-
-        throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(_entityType.ShortName(), path));
-    }
-
-    /// <summary>
-    /// Whether <c>Property.Member</c> is the property's whole column: the property has a converter
-    /// and the member has the type the converter stores, as <c>Email.Value</c> does with a converter
-    /// to <see cref="string" />. Without the type check <c>CreatedAt.Year</c> would name the whole
-    /// timestamp.
-    /// </summary>
-    /// <remarks>
-    /// A snapshot has neither the CLR type nor the converter: it keeps the property as an indexer
-    /// property of the stored type. There the member is taken as it is, since the path was checked
-    /// against the configured model when the snapshot was written. Refusing it would let the first
-    /// <c>migrations add</c> pass and fail every diff after it.
-    /// </remarks>
-    private static bool ConvertedMember(IReadOnlyTypeBase declaring, IReadOnlyProperty property, string member)
-    {
-        var converter = property.FindTypeMapping()?.Converter ?? property.GetValueConverter();
-        if (converter is null)
-            return declaring.IsPropertyBag && property.IsIndexerProperty();
-
-        const BindingFlags Members = BindingFlags.Public | BindingFlags.Instance;
-        var memberType = property.ClrType.GetProperty(member, Members)?.PropertyType
-                         ?? property.ClrType.GetField(member, Members)?.FieldType;
-
-        return memberType is not null && Unwrap(memberType) == Unwrap(converter.ProviderClrType);
-
-        static Type Unwrap(Type type) => Nullable.GetUnderlyingType(type) ?? type;
-    }
+    private IReadOnlyProperty FindProperty(string path) => PropertyPaths.Find(_entityType, path).Property;
 
     /// <summary>Dotted segments, each a letter or an underscore followed by letters, digits and underscores.</summary>
     internal static bool IsPropertyPath(ReadOnlySpan<char> text)
@@ -221,6 +151,93 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         }
 
         return !start;
+    }
+}
+
+/// <summary>
+/// A property path against an entity type: what the resolver resolves a column from, and what the
+/// binder reads a column's facts from. One walk, so that the two cannot disagree on what a path names.
+/// </summary>
+internal static class PropertyPaths
+{
+    /// <summary>
+    /// Walks the path through complex properties to a scalar property. The property that is found is
+    /// the declared one, and its column is asked of it: a column looked up by name in the table
+    /// could be another property's.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="path">The property names from the entity type down, separated by dots.</param>
+    /// <param name="mapping">Where a property's mapping comes from; null to ask the property.</param>
+    /// <returns>The property, and the complex properties the path goes through.</returns>
+    public static (IReadOnlyProperty Property, IReadOnlyList<IReadOnlyComplexProperty> Through) Find(
+        IReadOnlyEntityType entityType, string path, Func<IReadOnlyProperty, CoreTypeMapping?>? mapping = null)
+    {
+        var segments = path.Split('.');
+        IReadOnlyTypeBase current = entityType;
+        List<IReadOnlyComplexProperty> through = [];
+
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var segment = segments[i];
+
+            if (i == segments.Length - 1)
+            {
+                if (current.FindProperty(segment) is { } property) return (property, through);
+
+                throw new InvalidOperationException(current.FindComplexProperty(segment) is not null
+                    ? SchemaKitStrings.PathEndsOnComplexProperty(entityType.ShortName(), path)
+                    : SchemaKitStrings.PathNotFound(entityType.ShortName(), path, segment, current.ShortName()));
+            }
+
+            if (current.FindComplexProperty(segment) is { } complex)
+            {
+                // What a member of a JSON document is in SQL is the provider's to say, and it has to
+                // say it as its queries do. Until a provider package does, there is no answer here
+                // that an index could be trusted with.
+                if (complex.IsCollection || complex.ComplexType.GetContainerColumnName() is not null)
+                    throw new InvalidOperationException(SchemaKitStrings.PathIntoJson(entityType.ShortName(), path, segment));
+
+                through.Add(complex);
+                current = complex.ComplexType;
+                continue;
+            }
+
+            if (i == segments.Length - 2 && current.FindProperty(segment) is { } scalar && ConvertedMember(current, scalar, segments[i + 1], mapping))
+                return (scalar, through);
+
+            throw new InvalidOperationException(current.FindProperty(segment) is not null
+                ? SchemaKitStrings.PathPastScalar(entityType.ShortName(), path, segment, segments[i + 1])
+                : SchemaKitStrings.PathNotFound(entityType.ShortName(), path, segment, current.ShortName()));
+        }
+
+        throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(entityType.ShortName(), path));
+    }
+
+    /// <summary>
+    /// Whether <c>Property.Member</c> is the property's whole column: the property has a converter
+    /// and the member has the type the converter stores, as <c>Email.Value</c> does with a converter
+    /// to <see cref="string" />. Without the type check <c>CreatedAt.Year</c> would name the whole
+    /// timestamp.
+    /// </summary>
+    /// <remarks>
+    /// A snapshot has neither the CLR type nor the converter: it keeps the property as an indexer
+    /// property of the stored type. There the member is taken as it is, since the path was checked
+    /// against the configured model when the snapshot was written. Refusing it would let the first
+    /// <c>migrations add</c> pass and fail every diff after it.
+    /// </remarks>
+    private static bool ConvertedMember(IReadOnlyTypeBase declaring, IReadOnlyProperty property, string member, Func<IReadOnlyProperty, CoreTypeMapping?>? mapping)
+    {
+        var converter = (mapping?.Invoke(property) ?? property.FindTypeMapping())?.Converter ?? property.GetValueConverter();
+        if (converter is null)
+            return declaring.IsPropertyBag && property.IsIndexerProperty();
+
+        const BindingFlags Members = BindingFlags.Public | BindingFlags.Instance;
+        var memberType = property.ClrType.GetProperty(member, Members)?.PropertyType
+                         ?? property.ClrType.GetField(member, Members)?.FieldType;
+
+        return memberType is not null && Unwrap(memberType) == Unwrap(converter.ProviderClrType);
+
+        static Type Unwrap(Type type) => Nullable.GetUnderlyingType(type) ?? type;
     }
 }
 

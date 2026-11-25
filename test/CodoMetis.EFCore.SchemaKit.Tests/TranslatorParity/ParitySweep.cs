@@ -74,6 +74,9 @@ internal static class ParitySweep
         var templates = new Dictionary<int, string>();
         var refused   = new Dictionary<int, (ParityOutcome, string)>();
 
+        using var factsContext = new ParityQueryContext(ParityModel.Options(connection));
+        var facts = Facts(factsContext);
+
         for (var i = 0; i < cases.Count; i++)
         {
             if (lambdas[i] is not { } lambda)
@@ -81,9 +84,7 @@ internal static class ParitySweep
 
             try
             {
-                templates[i] = cases[i].Kind == ParityKind.Filter
-                                   ? LambdaTranslator.Predicate(lambda)
-                                   : LambdaTranslator.Expression(lambda);
+                templates[i] = Bound(cases[i], lambda, facts);
             }
             catch (NotSupportedException e)
             {
@@ -197,6 +198,7 @@ internal static class ParitySweep
 
         try
         {
+            // Where the lambda is written, which is where a conversion is refused or taken off.
             return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda) : LambdaTranslator.Expression(lambda);
         }
         catch (NotSupportedException e)
@@ -296,6 +298,19 @@ internal static class ParitySweep
     // Each template through the kernel's resolver, against the plain model: what a contributor's
     // Resolve gets for it, and where a template that is accepted at the declaration and names
     // nothing the model maps is refused.
+    /// <summary>The model's facts of the sweep's entity: what a lambda is bound from when its model is finalized.</summary>
+    private static TranslationFacts Facts(ParityQueryContext context)
+        => new ModelFacts(context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(ParityRow))!, mappings: null);
+
+    // A lambda is translated twice (issue 114): where it is written, from its C# types, and when
+    // its model is finalized, from the model. What is stored is the second, so that is what is
+    // compared with EF Core; a refusal of either is a refusal.
+    private static string Bound(ParityCase @case, LambdaExpression lambda, TranslationFacts facts)
+    {
+        _ = @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda) : LambdaTranslator.Expression(lambda);
+        return @case.Kind == ParityKind.Filter ? LambdaTranslator.Predicate(lambda, facts) : LambdaTranslator.Expression(lambda, facts);
+    }
+
     private static void Resolve(Dictionary<int, string> templates, string connection, Dictionary<int, string> rendered, Dictionary<int, string> failed)
     {
         using var context = new ParityQueryContext(ParityModel.Options(connection));
