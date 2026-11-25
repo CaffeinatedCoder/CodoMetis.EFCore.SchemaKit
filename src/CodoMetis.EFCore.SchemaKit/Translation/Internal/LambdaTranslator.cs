@@ -188,27 +188,36 @@ internal static class LambdaTranslator
     }
 
     /// <summary>Translates a lambda into an expression template: a key of an index, an element of a constraint.</summary>
-    public static string Expression(LambdaExpression lambda)
+    /// <param name="lambda">The lambda.</param>
+    /// <param name="facts">What the model says of the properties the lambda reads; null for what their C# types say.</param>
+    public static string Expression(LambdaExpression lambda, TranslationFacts? facts = null)
     {
         ArgumentNullException.ThrowIfNull(lambda);
-        var root = Root(lambda);
+        var root = Root(lambda, facts);
         new ConversionCheck(root).Visit(lambda.Body);
         return Visit(lambda.Body, root);
     }
 
     // The entity being configured is the one parameter. A lambda over two has no single table.
-    private static ParameterExpression Root(LambdaExpression lambda)
-        => lambda.Parameters.Count == 1 ? lambda.Parameters[0] : throw new NotSupportedException(SchemaKitStrings.LambdaTakesOneParameter(lambda));
+    private static Scope Root(LambdaExpression lambda, TranslationFacts? facts)
+        => lambda.Parameters.Count == 1
+            ? new Scope(lambda.Parameters[0], facts ?? TranslationFacts.OfTheTypes)
+            : throw new NotSupportedException(SchemaKitStrings.LambdaTakesOneParameter(lambda));
+
+    /// <summary>The entity parameter, and where what the lambda cannot say comes from.</summary>
+    internal sealed record Scope(ParameterExpression Parameter, TranslationFacts Facts);
 
     /// <summary>
     /// Translates a boolean lambda into a predicate template: comparisons (<c>==</c> and
     /// <c>!=</c> against null become <c>IS [NOT] NULL</c>), <c>&amp;&amp;</c>, <c>||</c>, <c>!</c>,
     /// boolean members, and on the operands everything <see cref="Expression" /> supports.
     /// </summary>
-    public static string Predicate(LambdaExpression lambda)
+    /// <param name="lambda">The lambda.</param>
+    /// <param name="facts">What the model says of the properties the lambda reads; null for what their C# types say.</param>
+    public static string Predicate(LambdaExpression lambda, TranslationFacts? facts = null)
     {
         ArgumentNullException.ThrowIfNull(lambda);
-        var root = Root(lambda);
+        var root = Root(lambda, facts);
         new ConversionCheck(root).Visit(lambda.Body);
         return VisitPredicate(lambda.Body, root, negated: false);
     }
@@ -219,7 +228,7 @@ internal static class LambdaTranslator
     // the entity is held against the table first, in one pass over the whole lambda: a place that
     // strips one cannot be the place that forgot to ask. A conversion of a value alone (a captured
     // variable, a constant) is not asked about: C# does it, and the result is written.
-    private sealed class ConversionCheck(ParameterExpression root) : ExpressionVisitor
+    private sealed class ConversionCheck(Scope root) : ExpressionVisitor
     {
         public override System.Linq.Expressions.Expression? Visit(System.Linq.Expressions.Expression? node)
             => node is null || !DependsOnParameter(node, root) ? node : base.Visit(node);
@@ -230,6 +239,15 @@ internal static class LambdaTranslator
         {
             if (ComparisonOperators.ContainsKey(node.NodeType))
             {
+                // An enum compared with a value is written by the property's mapping, which knows
+                // how the enum is stored. The compiler's conversion of the enum to its number is
+                // then no conversion of a column, and is not asked about.
+                if (ValueComparison(node, root) is { Path: var side } && IsEnum(Unconverted(side).Type))
+                {
+                    Visit(ReferenceEquals(side, node.Left) ? node.Right : node.Left);
+                    return node;
+                }
+
                 RefuseEnum(node.Left);
                 RefuseEnum(node.Right);
             }
@@ -237,7 +255,7 @@ internal static class LambdaTranslator
             // `x.Score ?? x.Price` converts its left side in a lambda of its own, over a parameter
             // that is not the entity: it reads the entity all the same.
             if (node.Conversion is { } conversion)
-                new ConversionCheck(conversion.Parameters[0]).Visit(conversion.Body);
+                new ConversionCheck(root with { Parameter = conversion.Parameters[0] }).Visit(conversion.Body);
 
             return base.VisitBinary(node);
         }
@@ -276,7 +294,7 @@ internal static class LambdaTranslator
     // usable for that query too, and a negation over such a comparison is pushed down to it rather
     // than wrapped around a value that can be NULL. Operands that cannot be null keep the plain
     // forms, so their filters, and the indexes already built from them, do not change.
-    private static string VisitPredicate(System.Linq.Expressions.Expression node, ParameterExpression root, bool negated)
+    private static string VisitPredicate(System.Linq.Expressions.Expression node, Scope root, bool negated)
     {
         switch (node)
         {
@@ -284,7 +302,9 @@ internal static class LambdaTranslator
                 return VisitPredicate(operand, root, negated);
 
             case UnaryExpression { NodeType: ExpressionType.Not } not when LogicalOperators.Contains(not.NodeType):
-                return ComparesNullable(not.Operand, root) || IsHasValue(not.Operand, root)
+                // A boolean stored as something else is compared with what false is stored as, as
+                // EF Core writes it, and not wrapped: "Active" = 'N', not NOT ("Active" = 'Y').
+                return ComparesNullable(not.Operand, root) || IsHasValue(not.Operand, root) || IsStoredFlag(not.Operand, root)
                            ? VisitPredicate(not.Operand, root, !negated)
                            : Negate($"NOT ({VisitPredicate(not.Operand, root, negated: false)})", negated);
 
@@ -352,6 +372,11 @@ internal static class LambdaTranslator
                 return $"{Visit(hasValue.Expression!, root)} IS {(negated ? "" : "NOT ")}NULL";
 
             // A boolean column, or a bool? column's Value, stands on its own.
+            // A boolean stored as something else (a 'Y', a 1) is no condition by itself: it is
+            // compared with what true is stored as, or false for a negation.
+            case MemberExpression member when IsStoredFlag(member, root) && PathOf(member, root) is { } flag:
+                return $"{{{flag}}} = {root.Facts.Literal(flag, !negated)}";
+
             case MemberExpression member when member.Type == typeof(bool) && DependsOnParameter(member, root):
                 return Negate(Visit(member, root), negated);
         }
@@ -366,7 +391,7 @@ internal static class LambdaTranslator
     // Enum values never reach SQL: how one is stored depends on the property's value conversion,
     // which the translator cannot see, so `Status == Status.Active` would compare against 0 on a
     // text column and fail at apply time. Refuse it here, at the declaration.
-    private static string VisitOperand(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static string VisitOperand(System.Linq.Expressions.Expression node, Scope root)
     {
         RefuseEnum(node);
         return Visit(node, root);
@@ -380,11 +405,63 @@ internal static class LambdaTranslator
             throw new NotSupportedException(SchemaKitStrings.EnumNotTranslated(node));
     }
 
+    private static bool IsEnum(Type type) => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
+
+    /// <summary>
+    /// A comparison of a property with a value: one side is a property path and nothing else, the
+    /// other reads nothing from the entity. The value is then written as the property's column
+    /// stores it, which only the model knows: through a converter, as an enum's name or number, as
+    /// the provider writes a date.
+    /// </summary>
+    private static (System.Linq.Expressions.Expression Path, string Name, object Value)? ValueComparison(BinaryExpression comparison, Scope root)
+    {
+        if (PathOf(comparison.Left, root) is { } left && !DependsOnParameter(comparison.Right, root) && Evaluate(comparison.Right) is { } right)
+            return (comparison.Left, left, right);
+        if (PathOf(comparison.Right, root) is { } rightPath && !DependsOnParameter(comparison.Left, root) && Evaluate(comparison.Left) is { } leftValue)
+            return (comparison.Right, rightPath, leftValue);
+
+        return null;
+    }
+
+    /// <summary>The path of a node that is a property of the entity and nothing else, under conversions and <c>Nullable&lt;T&gt;.Value</c>; else null.</summary>
+    private static string? PathOf(System.Linq.Expressions.Expression node, Scope root)
+    {
+        while (true)
+        {
+            if (Converted(node) is { } operand) node = operand;
+            else if (node is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } target } && Nullable.GetUnderlyingType(target.Type) is not null) node = target;
+            else break;
+        }
+
+        return node is MemberExpression member && !TryGetValueMember(member, out _) && IsOfEntity(member, root) && TryGetPath(member, root, out var path) ? path : null;
+    }
+
+    private static bool IsOfEntity(MemberExpression member, Scope root)
+    {
+        System.Linq.Expressions.Expression? current = member;
+        while (current is MemberExpression m) current = m.Expression;
+        return ReferenceEquals(current, root.Parameter);
+    }
+
     // C# compares chars as ints: x.Grade == 'A' arrives as Convert(x.Grade) == 65, and the constant
     // rendered as 65 met a character column, which PostgreSQL refuses at apply. The constant goes
     // back to the char it was written as, as EF Core renders it.
-    private static (string Left, string Right) VisitOperands(BinaryExpression comparison, ParameterExpression root)
+    private static (string Left, string Right) VisitOperands(BinaryExpression comparison, Scope root)
     {
+        if (ValueComparison(comparison, root) is var (side, path, value))
+        {
+            var ordered = comparison.NodeType is not (ExpressionType.Equal or ExpressionType.NotEqual);
+            if (ordered && !root.Facts.KeepsOrder(path))
+                throw new NotSupportedException(SchemaKitStrings.OrderOfConverted(comparison, path));
+
+            var literal = root.Facts.Literal(path, value) ?? ValueWithoutTheModel(side, value, root);
+            if (literal is not null)
+            {
+                var column = "{" + path + "}";
+                return ReferenceEquals(side, comparison.Left) ? (column, literal) : (literal, column);
+            }
+        }
+
         var left  = VisitOperand(comparison.Left, root);
         var right = VisitOperand(comparison.Right, root);
 
@@ -396,13 +473,23 @@ internal static class LambdaTranslator
         return (left, right);
     }
 
+    // Where the lambda is written nothing knows how the property is stored. A value the translator
+    // has no literal of its own for, or an enum, is written as a mark: the translation at the call
+    // is thrown away, and the one that is stored is made from the model. With the model's facts a
+    // value they do not write falls through to the translator's own rule.
+    /// <summary>What stands for a value in the translation at the call, where only the model can write it. It is no SQL and is never stored.</summary>
+    internal const string BoundLater = "<bound when the model is finalized>";
+
+    private static string? ValueWithoutTheModel(System.Linq.Expressions.Expression side, object value, Scope root)
+        => !root.Facts.OfTheModel && (IsEnum(Unconverted(side).Type) || !LiteralTypes.Contains(value.GetType())) ? BoundLater : null;
+
     private static bool IsConvertedChar(System.Linq.Expressions.Expression node)
         => Converted(node) is { } operand
         && (Nullable.GetUnderlyingType(operand.Type) ?? operand.Type) == typeof(char);
 
     // A number no char has would wrap round to another char (65601 to 'A'), and the comparison C#
     // answers alike for every row would hold for some rows only (#168).
-    private static char? CharCode(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static char? CharCode(System.Linq.Expressions.Expression node, Scope root)
     {
         if (DependsOnParameter(node, root) || Evaluate(node) is not int code)
             return null;
@@ -413,16 +500,20 @@ internal static class LambdaTranslator
         return (char)code;
     }
 
-    private static bool IsHasValue(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static bool IsHasValue(System.Linq.Expressions.Expression node, Scope root)
         => node is MemberExpression { Member.Name: nameof(Nullable<int>.HasValue), Expression: { } target }
         && Nullable.GetUnderlyingType(target.Type) is not null
         && DependsOnParameter(target, root);
+
+    private static bool IsStoredFlag(System.Linq.Expressions.Expression node, Scope root)
+        => Unconverted(node) is MemberExpression { } member && member.Type == typeof(bool)
+        && PathOf(member, root) is { } flag && !root.Facts.IsBooleanColumn(flag);
 
     private static string Negate(string predicate, bool negated)
         => negated ? $"NOT ({predicate})" : predicate;
 
     // A literal null or a captured value that evaluates to null.
-    private static bool IsNullValue(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static bool IsNullValue(System.Linq.Expressions.Expression node, Scope root)
     {
         node = Unconverted(node);
 
@@ -432,7 +523,7 @@ internal static class LambdaTranslator
 
     // Whether a comparison under `node` has an operand that can be null, i.e. whether wrapping it in
     // NOT (…) could leave NULL where C# has true. Null checks themselves never produce NULL.
-    private static bool ComparesNullable(System.Linq.Expressions.Expression node, ParameterExpression root) => node switch
+    private static bool ComparesNullable(System.Linq.Expressions.Expression node, Scope root) => node switch
     {
         _ when Converted(node) is { } operand
             => ComparesNullable(operand, root),
@@ -452,7 +543,7 @@ internal static class LambdaTranslator
 
     // `operand IS [NOT] NULL` as EF Core writes it: over the operand's nullable columns rather than
     // the operand itself where the two are null together, else over the operand.
-    private static string NullTest(System.Linq.Expressions.Expression operand, ParameterExpression root, bool isNull)
+    private static string NullTest(System.Linq.Expressions.Expression operand, Scope root, bool isNull)
         => NullCheck(operand, root, isNull) ?? $"{VisitOperand(operand, root)} IS {(isNull ? "" : "NOT ")}NULL";
 
     // The test for an operand being null (or not), written over the columns it is null through, or
@@ -460,7 +551,7 @@ internal static class LambdaTranslator
     // exactly when x is, so its test is its nullable inputs' tests ORed (ANDed for IS NOT NULL). A
     // coalesce is null when all its inputs are, a concatenation never (its operands are coalesced),
     // HasValue never.
-    private static string? NullCheck(System.Linq.Expressions.Expression node, ParameterExpression root, bool isNull)
+    private static string? NullCheck(System.Linq.Expressions.Expression node, Scope root, bool isNull)
     {
         node = Unconverted(node);
 
@@ -505,7 +596,7 @@ internal static class LambdaTranslator
     // non-nullable — oblivious code counts as nullable); anything computed from paths is nullable
     // when one of them is, since lower(NULL) and length(NULL) are NULL. A coalesce is nullable
     // only through its fallback, and a concatenation never is (its operands are coalesced).
-    private static bool CanBeNull(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static bool CanBeNull(System.Linq.Expressions.Expression node, Scope root)
     {
         node = Unconverted(node);
 
@@ -524,7 +615,7 @@ internal static class LambdaTranslator
         return finder.Found;
     }
 
-    private sealed class NullableMemberFinder(ParameterExpression root) : ExpressionVisitor
+    private sealed class NullableMemberFinder(Scope root) : ExpressionVisitor
     {
         private readonly NullabilityInfoContext _nullability = new();
 
@@ -545,6 +636,14 @@ internal static class LambdaTranslator
 
         protected override System.Linq.Expressions.Expression VisitMember(MemberExpression node)
         {
+            // A property path the model knows: its column's nullability is the model's fact, not
+            // the annotation's. IsRequired() and IsRequired(false) change one and not the other.
+            if (!TryGetValueMember(node, out _) && IsOfEntity(node, root) && PathIfMapped(node) is { } path && root.Facts.CanBeNull(path) is { } nullable)
+            {
+                if (nullable) Found = true;
+                return node;
+            }
+
             // HasValue is never null, whatever its target is.
             if (node.Member.Name == nameof(Nullable<int>.HasValue) && Nullable.GetUnderlyingType(node.Member.DeclaringType!) is not null)
                 return node;
@@ -565,6 +664,16 @@ internal static class LambdaTranslator
             return base.VisitMember(node);
         }
 
+        // The path of a member chain, without the refusal of a member of a scalar: that is the
+        // dispatch's to give, with its own message.
+        private static string PathIfMapped(MemberExpression member)
+        {
+            var segments = new Stack<string>();
+            for (System.Linq.Expressions.Expression? current = member; current is MemberExpression m; current = m.Expression)
+                segments.Push(m.Member.Name);
+            return string.Join(".", segments);
+        }
+
         protected override System.Linq.Expressions.Expression VisitBinary(BinaryExpression node)
         {
             // A concatenation is never null: its nullable operands are coalesced.
@@ -580,7 +689,7 @@ internal static class LambdaTranslator
         }
     }
 
-    private static string Visit(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static string Visit(System.Linq.Expressions.Expression node, Scope root)
     {
         switch (node)
         {
@@ -623,7 +732,7 @@ internal static class LambdaTranslator
     // writes COALESCE("Name", '')) and, unique, checked none of those rows. An operand that can be
     // null is wrapped as EF Core wraps it; a non-string one is cast to text first, as COALESCE
     // needs one type.
-    private static string ConcatOperand(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static string ConcatOperand(System.Linq.Expressions.Expression node, Scope root)
     {
         if (!CanBeNull(node, root))
             return Visit(node, root);
@@ -640,7 +749,7 @@ internal static class LambdaTranslator
     private static bool IsConcatenation(System.Linq.Expressions.Expression node)
         => node is BinaryExpression { NodeType: ExpressionType.Add } add && add.Type == typeof(string);
 
-    private static string VisitCall(MethodCallExpression call, ParameterExpression root)
+    private static string VisitCall(MethodCallExpression call, Scope root)
     {
         if (call.Object is not null && StringMethods.TryGetValue(call.Method, out var render))
             return render(Visit(call.Object, root), call.Arguments, argument => Visit(argument, root));
@@ -648,7 +757,7 @@ internal static class LambdaTranslator
         throw NotSupported(call);
     }
 
-    private static bool TryGetPath(MemberExpression member, ParameterExpression root, out string path)
+    private static bool TryGetPath(MemberExpression member, Scope root, out string path)
     {
         var segments = new Stack<string>();
 
@@ -660,7 +769,7 @@ internal static class LambdaTranslator
         }
 
         path = string.Join(".", segments);
-        if (!ReferenceEquals(current, root))
+        if (!ReferenceEquals(current, root.Parameter))
             return false;
 
         // A member of a scalar type (CreatedAt.Year, RevokedAt.Value outside the table above) is no
@@ -697,9 +806,9 @@ internal static class LambdaTranslator
     private static object? Evaluate(System.Linq.Expressions.Expression node)
         => System.Linq.Expressions.Expression.Lambda(node).Compile().DynamicInvoke();
 
-    private static bool DependsOnParameter(System.Linq.Expressions.Expression node, ParameterExpression root)
+    private static bool DependsOnParameter(System.Linq.Expressions.Expression node, Scope root)
     {
-        var finder = new ParameterFinder(root);
+        var finder = new ParameterFinder(root.Parameter);
         finder.Visit(node);
         return finder.Found;
     }

@@ -31,23 +31,25 @@ public sealed class SqlServerSpellingLiveTests
 
     /// <summary>
     /// A boolean property is a predicate on PostgreSQL and a number on SQL Server: the filter the
-    /// spelling writes is no condition here (Msg 102), and its comparison with <c>TRUE</c> is none
-    /// a filtered index takes (Msg 10735).
+    /// spelling writes for the property alone is no condition here (Msg 102). Its comparison with
+    /// a value is one, since the value is written by the property's mapping, which is SQL
+    /// Server's (issue 180): <c>CAST(1 AS bit)</c>, where the spelling's own <c>TRUE</c> was
+    /// refused (Msg 10735).
     /// </summary>
     [TestMethod]
-    public void The_server_refuses_what_the_one_spelling_writes_for_a_boolean()
+    public void The_server_refuses_what_the_one_spelling_writes_for_a_boolean_alone()
     {
         Assert.AreEqual("[Active]", Spelled(x => x.Active));
-        Assert.AreEqual("[Active] = TRUE", Spelled(x => x.Active == true));
+        Assert.AreEqual("[Active] = CAST(1 AS bit)", Spelled(x => x.Active == true));
 
         using var database = new SqlServerDatabase();
         database.Execute(Table);
 
         Assert.AreEqual(102, Refused(database, Filtered("IX_bare", Spelled(x => x.Active))));
-        Assert.AreEqual(10735, Refused(database, Filtered("IX_compared", Spelled(x => x.Active == true))));
+        Assert.AreEqual(10735, Refused(database, Filtered("IX_true", "[Active] = TRUE")));
 
-        // As SQL Server's own queries spell it.
-        database.Execute(Filtered("IX_own", "[Active] = CAST(1 AS bit)"));
+        // As SQL Server's own queries spell it, and as the comparison is bound.
+        database.Execute(Filtered("IX_compared", Spelled(x => x.Active == true)));
     }
 
     /// <summary>
@@ -59,12 +61,12 @@ public sealed class SqlServerSpellingLiveTests
     [TestMethod]
     public void The_server_refuses_the_null_compensation_of_an_inequality_in_a_filter()
     {
-        Assert.AreEqual("([Tag] <> 'blocked' OR [Tag] IS NULL)", Spelled(x => x.Tag != "blocked"));
+        Assert.AreEqual("([Tag] <> N'blocked' OR [Tag] IS NULL)", Spelled(x => x.Tag != "blocked"));
 
         using var database = new SqlServerDatabase();
         database.Execute(Table);
 
         Assert.AreEqual(156, Refused(database, Filtered("IX_compensated", Spelled(x => x.Tag != "blocked"))));
-        database.Execute(Filtered("IX_plain", "[Tag] <> 'blocked'"));
+        database.Execute(Filtered("IX_plain", "[Tag] <> N'blocked'"));
     }
 }

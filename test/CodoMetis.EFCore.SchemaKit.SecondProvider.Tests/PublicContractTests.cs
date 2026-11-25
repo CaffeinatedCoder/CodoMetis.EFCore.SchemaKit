@@ -90,9 +90,10 @@ public sealed class PublicContractTests
             new[] { nameof(SqlSpelling.PostgreSql) },
             typeof(SqlSpelling).GetProperties(BindingFlags.Public | BindingFlags.Static).Where(p => p.PropertyType == typeof(SqlSpelling)).Select(p => p.Name).ToList());
 
-        // SQL Server has no boolean expression that is a column (SqlServerSpellingLiveTests), and no TRUE.
+        // SQL Server has no boolean expression that is a column (SqlServerSpellingLiveTests). A value
+        // compared with a property is the property's mapping's to write, and that is SQL Server's.
         Assert.AreEqual("{Active}", Bound.Where<Flagged>(x => x.Active));
-        Assert.AreEqual("{Active} = TRUE", Bound.Where<Flagged>(x => x.Active == true));
+        Assert.AreEqual("{Active} = CAST(1 AS bit)", Bound.Where<Flagged>(x => x.Active == true));
 
         // Neither SQL Server nor SQLite has btrim, nor a string that begins with E.
         Assert.AreEqual(new KeyTarget.Template(SqlTemplate.FromPlaceholders("""btrim({Name}, E' \t\n\r')""")), Bound.Key((Flagged x) => x.Name.Trim()));

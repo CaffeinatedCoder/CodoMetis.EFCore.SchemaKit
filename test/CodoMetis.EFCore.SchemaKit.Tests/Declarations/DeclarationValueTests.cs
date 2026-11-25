@@ -173,6 +173,19 @@ public sealed class DeclarationValueTests
         Assert.IsTrue(SqlTemplate.FromPlaceholders("{A}").IsBound);
     }
 
+    /// <summary>
+    /// A value only the model can write is a mark in the translation at the call, and a mark is
+    /// no SQL: bound without a model, as these tests bind, such a lambda is refused, not stored.
+    /// </summary>
+    [TestMethod]
+    public void A_value_only_the_model_can_write_is_not_bound_without_one()
+    {
+                var condition = Predicate.Of<Person>(x => x.RevokedOn == new DateOnly(2026, 1, 2), SqlSpelling.PostgreSql);
+
+        Assert.IsFalse(condition.Template.IsBound);
+        StringAssert.Contains(Assert.ThrowsExactly<NotSupportedException>(() => Bound(condition.Template)).Message, "only the model can write");
+    }
+
     /// <summary>A lambda that names a property and nothing else is a path, and a path waits for nothing.</summary>
     [TestMethod]
     public void A_lambda_that_is_one_property_is_a_column_at_once()

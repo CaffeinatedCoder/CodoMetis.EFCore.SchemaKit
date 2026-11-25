@@ -173,6 +173,24 @@ internal static class SchemaKitStrings
     public static string SegmentNotAPropertyPath(string path)
         => $"'{path}' is not a property path. A path is property names separated by dots, such as 'Address.City'.";
 
+    public static string NoMappingForLiteral(string entity, string path)
+        => $"A value compared with '{path}' on {entity} cannot be written: the provider has no mapping for the property that writes a literal.";
+
+    public static string LiteralRefusedByMapping(string entity, string path, string reason)
+        => $"A value compared with '{path}' on {entity} cannot be written as that column stores it: {reason}";
+
+    public static string NeedsTheModel(string lambda)
+        => $"The lambda '{lambda}' compares a property with a value only the model can write: an enum, or a value of a type with no " +
+           "literal of its own. It becomes SQL when its model is finalized.";
+
+    public static string OrderOfConverted(object comparison, string path)
+        => $"The comparison '{comparison}' orders by '{path}', which is stored through a value converter: what is stored may order otherwise " +
+           "than the property does. Compare it with == or !=.";
+
+    public static string ModelChangedAfterBinding(string entity, string declaration, string? stored, string now)
+        => $"The model changed after the declaration {declaration} on {entity} was bound: a convention that runs after SchemaKit's changed a " +
+           $"column's nullability or a property's conversion. Stored: {stored}. Bound on the finalized model: {now}.";
+
     public static string TemplateNotBound(string template)
         => $"The SQL of '{template}' is not there yet: a lambda becomes SQL when its model is finalized. Read the declaration from the " +
            "finalized model, or compare and combine it as it is.";
