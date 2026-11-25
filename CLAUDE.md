@@ -312,6 +312,18 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 - **Order:** drops, EF Core's operations untouched, in-place statements, creates; contributors by
   placement, and a `BeforeTables` contributor the other way round (created before, dropped after,
   never rebuilt).
+- **Within a phase, what an object needs decides** (#195, slice B of #115): a create comes after
+  the creates of what its `Dependency.SchemaObject`s name, and a drop before their drops, whatever
+  the placement and the model's order say. The model's order is the order of the stored keys, not
+  the one written. A circle is refused with its members named, and so is an object created
+  before the tables that needs one created after them. Which object is needed is its owner, its
+  scope and its name together, as its descriptor says them.
+- **A dependency on an object the model does not declare is refused, in the context's own model
+  only.** A snapshot that holds one is read: it describes a database that exists.
+- **What this does not do:** it orders SchemaKit's own statements among themselves. A place
+  among EF Core's operations, such as a create behind the `EnsureSchema` of its schema, is the
+  one ordered list of #115's slice C, at the gate of `rc.1`. An object that stays while what it
+  needs is rebuilt is not looked at either.
 - **A rename in place whose name is held when it runs is a rebuild** (`KeepInPlace`, #99). A
   change in place runs after EF Core's operations: an index EF Core creates under the name a
   constraint gives up fails with 42P07. Both names are compared, through `NameClaims`, with what

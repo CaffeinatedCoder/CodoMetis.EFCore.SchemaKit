@@ -292,7 +292,7 @@ silence (CaffeinatedCoder/EFCore.ComplexIndexes#142), a schema move (Caffeinated
 new core has one mechanism.
 
 - **Every descriptor lists what it depends on**, as a closed union: `Column(table, name)`,
-  `WholeTable(table)`, `SchemaObject(owner, name)`, `Extension(name)`. Placeholders give the columns
+  `WholeTable(table)`, `SchemaObject(owner, scope, name)`, `Extension(name)`. Placeholders give the columns
   of an expression exactly.
 - **The kernel normalises EF's operations into a closed `BaseChange`:** `ColumnRenamed`,
   `ColumnAltered`, `ColumnDropped`, `TableRenamed`, `TableMoved`, `TableDropped`, `TableRebuilt`.

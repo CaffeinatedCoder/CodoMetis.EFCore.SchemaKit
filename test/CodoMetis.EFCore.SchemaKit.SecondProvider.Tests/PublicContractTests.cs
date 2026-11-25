@@ -128,11 +128,11 @@ public sealed class PublicContractTests
     /// <summary>
     /// An index of SQL Server is named within its table, so its descriptor's name has no schema
     /// and its scope is the table: the two together are its identity, and the planner tells two
-    /// indexes of one name apart by them. A dependency on a schema object holds an owner and a
-    /// name and no scope, so it cannot say which of the two it means.
+    /// indexes of one name apart by them. A dependency on a schema object holds the scope beside
+    /// the owner and the name (#195), so it says which of the two it means.
     /// </summary>
     [TestMethod]
-    public void A_dependency_on_an_index_cannot_say_which_tables_index_it_means()
+    public void A_dependency_on_an_index_says_which_tables_index_it_means()
     {
         using var context = Contexts.SqlServer<Sales.TwoTables>();
         _ = context.FirstMigration();
@@ -141,9 +141,12 @@ public sealed class PublicContractTests
 
         Assert.AreNotEqual(onOrders.Scope, onInvoices.Scope);
         Assert.AreEqual(onOrders.Name, onInvoices.Name);
+        Assert.AreNotEqual(
+            new Dependency.SchemaObject(ProbeIndex.OwnerId, onOrders.Scope, onOrders.Name),
+            new Dependency.SchemaObject(ProbeIndex.OwnerId, onInvoices.Scope, onInvoices.Name));
         Assert.AreEqual(
-            new Dependency.SchemaObject(ProbeIndex.OwnerId, onOrders.Name),
-            new Dependency.SchemaObject(ProbeIndex.OwnerId, onInvoices.Name));
+            new Dependency.SchemaObject(ProbeIndex.OwnerId, onOrders.Scope, onOrders.Name),
+            new Dependency.SchemaObject(ProbeIndex.OwnerId, onOrders.Scope, onOrders.Name));
     }
 
     // ── NameClaim, SchemaDialect.Claims ──

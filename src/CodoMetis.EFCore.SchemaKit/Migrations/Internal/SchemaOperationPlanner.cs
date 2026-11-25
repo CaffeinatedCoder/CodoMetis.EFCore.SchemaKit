@@ -256,20 +256,96 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         foreach (var extension in needed)
             Dialect.EnsureExtension(extension, target!.Model, before);
 
+        // What the consumer's model says an object needs has to be there to need: a dependency
+        // on an object nothing declares would be a create that fails at apply, or one on a
+        // leftover of the database nobody tracks.
+        if (to.Count > 0 && IsOwn(target!))
+            RequireDependencies(targetOrder);
+
         // Before EF Core's operations: what is attached to tables goes first, the latest placement
-        // first, then what tables are made of is created.
-        foreach (var drop in AttachedToTables(drops).OrderByDescending(d => d.Contributor.Placement.Rank).ThenByDescending(drops.IndexOf))
+        // first, then what tables are made of is created. Within each, an object that needs
+        // another is dropped before it and created after it, whatever the placement and the
+        // model's order say (#115).
+        foreach (var drop in DependentsFirst([.. AttachedToTables(drops).OrderByDescending(d => d.Contributor.Placement.Rank).ThenByDescending(drops.IndexOf)]))
             drop.Contributor.Drop(drop.Before, before);
-        foreach (var create in MadeBeforeTables(creates))
+        foreach (var create in DependenciesFirst([.. MadeBeforeTables(creates)], created: targetOrder))
             create.Contributor.Create(create.Descriptor, before);
 
         // After them: changes in place, then creates by placement, then what tables were made of.
-        foreach (var create in AttachedToTables(creates).OrderBy(c => c.Contributor.Placement.Rank).ThenBy(creates.IndexOf))
+        foreach (var create in DependenciesFirst([.. AttachedToTables(creates).OrderBy(c => c.Contributor.Placement.Rank).ThenBy(creates.IndexOf)], created: targetOrder))
             create.Contributor.Create(create.Descriptor, after);
-        foreach (var drop in MadeBeforeTables(drops).Reverse())
+        foreach (var drop in DependentsFirst([.. MadeBeforeTables(drops).Reverse()]))
             drop.Contributor.Drop(drop.Descriptor, after);
 
         return new SchemaOperationPlan(before.Operations, [.. inPlace.Operations, .. after.Operations]);
+    }
+
+    private static bool Is(Resolved candidate, ISchemaDescriptor descriptor, Dependency.SchemaObject needed)
+        => string.Equals(candidate.Declaration.Owner, needed.Owner, StringComparison.Ordinal)
+           && descriptor.Scope.Equals(needed.Scope)
+           && descriptor.Name.Equals(needed.Name);
+
+    private static IEnumerable<Dependency.SchemaObject> Needs(ISchemaDescriptor descriptor) => descriptor.Dependencies.OfType<Dependency.SchemaObject>();
+
+    private static string Named(Resolved resolved) => $"{DeclarationCodec.Describe(resolved.Declaration)} on {resolved.EntityType.ShortName()}";
+
+    /// <summary>Every object of the consumer's model that another one says it needs is declared in it.</summary>
+    private static void RequireDependencies(List<Resolved> targets)
+    {
+        foreach (var target in targets)
+        {
+            foreach (var needed in Needs(target.Descriptor))
+            {
+                if (!targets.Any(candidate => Is(candidate, candidate.Descriptor, needed)))
+                    throw new InvalidOperationException(SchemaKitStrings.DependsOnAnUndeclaredObject(Named(target), needed.Owner, needed.Name));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The creates of one phase, each after the creates of what it needs; otherwise in the order
+    /// given. What is created before the tables cannot wait for what is created after them: a
+    /// dependency that asks for it is refused.
+    /// </summary>
+    private static List<Resolved> DependenciesFirst(List<Resolved> creates, List<Resolved> created)
+    {
+        foreach (var create in creates.Where(create => create.Contributor.Placement.IsBeforeTables))
+        {
+            foreach (var needed in Needs(create.Descriptor))
+            {
+                if (created.FirstOrDefault(candidate => Is(candidate, candidate.Descriptor, needed)) is { } later && !later.Contributor.Placement.IsBeforeTables)
+                    throw new InvalidOperationException(SchemaKitStrings.NeedsWhatIsCreatedLater(Named(create), Named(later)));
+            }
+        }
+
+        return InOrder(creates, (item, other) => Needs(item.Descriptor).Any(needed => Is(other, other.Descriptor, needed)));
+    }
+
+    /// <summary>The drops of one phase, each before the drops of what it needs, as the database has them before the migration.</summary>
+    private static List<Resolved> DependentsFirst(List<Resolved> drops)
+        => InOrder(drops, (item, other) => Needs(other.Before).Any(needed => Is(item, item.Before, needed)));
+
+    /// <summary>
+    /// The items with each one behind those it <paramref name="waitsFor" />, and otherwise in the
+    /// order given: of the items that wait for nothing left, the first goes next. When every item
+    /// left waits for another, they need each other in a circle, and no order creates them.
+    /// </summary>
+    private static List<Resolved> InOrder(List<Resolved> items, Func<Resolved, Resolved, bool> waitsFor)
+    {
+        List<Resolved> left = [.. items];
+        List<Resolved> ordered = [];
+
+        while (left.Count > 0)
+        {
+            var next = left.FirstOrDefault(item => !left.Any(other => !ReferenceEquals(other, item) && waitsFor(item, other)));
+            if (next is null)
+                throw new InvalidOperationException(SchemaKitStrings.DependencyCycle([.. left.Select(Named)]));
+
+            ordered.Add(next);
+            left.Remove(next);
+        }
+
+        return ordered;
     }
 
     private static void RefuseCreatesARebuildWouldLose(IEnumerable<Resolved> creates, BaseChanges changes)

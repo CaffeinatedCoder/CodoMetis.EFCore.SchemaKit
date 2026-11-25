@@ -122,10 +122,15 @@ public closed record Dependency
     /// <param name="Ref">The table.</param>
     public sealed record WholeTable(TableRef Ref) : Dependency;
 
-    /// <summary>Another schema object, which is created before this one and dropped after it.</summary>
+    /// <summary>
+    /// Another schema object, which is created before this one and dropped after it. The three
+    /// together say which object: a name alone does not where it is unique within a table, as an
+    /// index's is on SQL Server.
+    /// </summary>
     /// <param name="Owner">The owner of the contributor that renders it.</param>
-    /// <param name="Name">Its name.</param>
-    public sealed record SchemaObject(string Owner, QualifiedName Name) : Dependency;
+    /// <param name="Scope">Where it lives, as its descriptor says.</param>
+    /// <param name="Name">Its name, as its descriptor says.</param>
+    public sealed record SchemaObject(string Owner, SchemaScope Scope, QualifiedName Name) : Dependency;
 
     /// <summary>A database extension that must be installed, such as <c>btree_gist</c>.</summary>
     /// <param name="Name">The extension.</param>

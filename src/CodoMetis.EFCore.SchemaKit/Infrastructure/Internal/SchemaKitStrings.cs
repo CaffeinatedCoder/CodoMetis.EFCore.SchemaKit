@@ -240,6 +240,16 @@ internal static class SchemaKitStrings
            "says which table the SQL means: the columns the declaration names by a property are in every one of them. Name a " +
            "column of the table by its property, or map the entity to one table.";
 
+    public static string DependsOnAnUndeclaredObject(string dependent, string owner, QualifiedName name)
+        => $"{dependent} needs the object '{name}' of {owner}, and the model declares no such object. It would be created on " +
+           "something that is not there, or on something in the database no model describes. Declare what it needs in the model.";
+
+    public static string NeedsWhatIsCreatedLater(string dependent, string later)
+        => $"{dependent} is created before the tables and needs {later}, which is created after them. No order creates both.";
+
+    public static string DependencyCycle(IReadOnlyList<string> members)
+        => $"These objects need each other in a circle, and no order creates or drops them: {string.Join("; ", members)}.";
+
     public static string CreateOnARebuiltTable(string entity, string declaration, TableRef table)
         => $"{entity} declares {declaration}, which this migration has to create on the table '{table}', and the migration " +
            "changes that table in a way SQLite's provider writes as a rebuild: a new table, the rows copied, the old table " +
