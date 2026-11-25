@@ -9,7 +9,7 @@
 # being a 5.x consumer. Packages come from nuget.org into a private folder, so nothing built here
 # can stand in for a published one.
 #
-# The result replaces ../Scaffolded and ../ScaffoldedOtherKinds. It is checked in and never edited by hand: the tests compile
+# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds and ../ScaffoldedTpc. It is checked in and never edited by hand: the tests compile
 # these files as they are. EF Core stamps a migration with the time it was added; the name is fixed
 # here so that a second run changes nothing else.
 set -euo pipefail
@@ -64,6 +64,8 @@ scaffold() {
 # The exclusion constraints, which SchemaKit reads (#92), and the kinds it does not read yet (#93).
 scaffold LegacyContext Scaffolded Legacy5x.Migrations
 scaffold OtherKindsContext ScaffoldedOtherKinds Legacy5x.Migrations.OtherKinds
+# The exclusion constraints of two TPC hierarchies, a copy in every table (#189).
+scaffold TpcContext ScaffoldedTpc Legacy5x.Migrations.Tpc
 
 # The design-time reference is what puts 5.x's differ in front. Without it a migration would be
 # EF Core's alone and hold nothing of 5.x's, and the fixture would prove nothing.
@@ -71,5 +73,7 @@ grep -q "EXCLUDE USING" "$here/Scaffolded/Initial.cs" \
   || { echo "The migration holds no exclusion constraint: 5.x did not take part." >&2; exit 1; }
 grep -q "WITHOUT OVERLAPS" "$here/ScaffoldedOtherKinds/Initial.cs" \
   || { echo "The migration holds no temporal constraint: 5.x did not take part." >&2; exit 1; }
+[ "$(grep -c "EXCLUDE USING" "$here/ScaffoldedTpc/Initial.cs")" -ge 8 ] \
+  || { echo "The TPC migration holds fewer than eight exclusion constraints: 5.x made no copies." >&2; exit 1; }
 
 echo "Scaffolded into $here/Scaffolded"

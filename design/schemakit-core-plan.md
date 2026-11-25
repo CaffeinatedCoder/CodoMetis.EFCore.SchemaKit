@@ -522,7 +522,8 @@ constraint would never be equal as text; read into one declaration type they are
 safe is measured, not argued: a snapshot scaffolded by the published 5.6.0 diffs to nothing
 against the same model declared with SchemaKit, and the database 5.x's migration builds has the
 catalog `EnsureCreated()` builds. Where the two sets of rules do not describe one object the
-reader refuses: a constraint on the root of a TPC hierarchy, an access method `PgExclusion` does
+reader refuses: a constraint on a TPC type with derived types in a snapshot from before 5.5.0 (from then on 5.x made a copy per
+table, as a declaration here does; #118), an access method `PgExclusion` does
 not have, a constraint of equality elements only. A filter over a member of a JSON document, which
 5.x pinned to its first rendering, is refused by the resolver until #43; it will need 5.x's
 rendering there, in the `Legacy` namespace as this section says.

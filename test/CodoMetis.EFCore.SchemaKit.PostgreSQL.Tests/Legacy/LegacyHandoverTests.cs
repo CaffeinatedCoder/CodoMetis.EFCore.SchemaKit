@@ -36,6 +36,56 @@ public sealed class LegacyHandoverTests
         Assert.IsFalse(context.GetService<IMigrationsModelDiffer>().HasDifferences(LegacyFixture.Snapshot(context), context.Relational()));
     }
 
+    // ── A constraint on a type of a TPC hierarchy: a copy in every table (#189) ──
+
+    [TestMethod]
+    public void The_TPC_fixture_is_what_5x_wrote()
+    {
+        var snapshot = File.ReadAllText(Path.Combine(LegacyFixture.TpcFolder, "TpcContextModelSnapshot.cs"));
+
+        // One annotation per declaring type, and nothing of the copies: 5.x made them at the diff.
+        Assert.AreEqual(2, snapshot.Split("\"CustomExclusion:Constraints\"").Length - 1);
+        StringAssert.Contains(snapshot, "\"CustomIndex:RenderingVersion\", 3");
+        Assert.AreEqual(8, LegacyFixture.TpcUp.Sql().Count(sql => sql.Contains("EXCLUDE USING")));
+    }
+
+    /// <summary>
+    /// The copies are 5.x's objects under 5.x's names, and a declaration here lands on the same
+    /// tables under the same names: nothing to do, from the snapshot to the model and back.
+    /// </summary>
+    [TestMethod]
+    public void The_5x_snapshot_of_a_TPC_hierarchy_against_the_same_model_declared_here_is_no_operations()
+    {
+        using var context = LegacyFixture.Context<MovedModels.TpcDeclared>();
+        var differ = context.GetService<IMigrationsModelDiffer>();
+        var (snapshot, model) = (LegacyFixture.TpcSnapshot(context), context.Relational());
+
+        CollectionAssert.AreEqual(Array.Empty<string>(), differ.GetDifferences(snapshot, model).Shape());
+        CollectionAssert.AreEqual(Array.Empty<string>(), differ.GetDifferences(model, snapshot).Shape());
+        Assert.IsFalse(differ.HasDifferences(snapshot, model));
+    }
+
+    /// <summary>The control: every copy is seen, under the name 5.x gave it, and dropped by it.</summary>
+    [TestMethod]
+    public void Against_a_model_that_declares_nothing_every_copy_of_the_snapshot_is_dropped()
+    {
+        using var context = LegacyFixture.Context<MovedModels.TpcNothingDeclared>();
+
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                """ALTER TABLE rentals DROP CONSTRAINT ex_rental;""",
+                """ALTER TABLE boat_rentals DROP CONSTRAINT ex_rental_boat_rentals;""",
+                """ALTER TABLE car_rentals DROP CONSTRAINT ex_rental_car_rentals;""",
+                """ALTER TABLE rentals DROP CONSTRAINT "EX_rentals_During";""",
+                """ALTER TABLE boat_rentals DROP CONSTRAINT "EX_boat_rentals_During";""",
+                """ALTER TABLE car_rentals DROP CONSTRAINT "EX_car_rentals_During";""",
+                """ALTER TABLE fishing_permits DROP CONSTRAINT ex_permit_fishing_permits;""",
+                """ALTER TABLE parking_permits DROP CONSTRAINT ex_permit_parking_permits;""",
+            },
+            context.GetService<IMigrationsModelDiffer>().GetDifferences(LegacyFixture.TpcSnapshot(context), context.Relational()).Shape());
+    }
+
     /// <summary>
     /// The control of the test above, and what a consumer gets who has not declared anything yet:
     /// every constraint of the snapshot is seen, under the name 5.x gave it, and is dropped by it.

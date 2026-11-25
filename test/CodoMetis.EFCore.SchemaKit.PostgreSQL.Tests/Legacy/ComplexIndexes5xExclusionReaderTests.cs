@@ -147,19 +147,31 @@ public sealed class ComplexIndexes5xExclusionReaderTests
     }
 
     /// <summary>
-    /// 5.x gave every table of a TPC hierarchy a copy of the root's constraint. Read as one
-    /// constraint, the copies would stay in the database with nothing that knows them (#43).
+    /// From 5.5.0 on (rendering version 3), 5.x gave every table of a TPC hierarchy a copy of the
+    /// root's constraint, and so the constraint is read: a copy per table, each dropped when the
+    /// target declares nothing. A snapshot from before has the constraint in no derived table,
+    /// which nothing here can say, and is refused with the way off it.
     /// </summary>
     [TestMethod]
-    public void A_constraint_on_the_root_of_a_TPC_hierarchy_is_refused()
+    public void A_constraint_on_the_root_of_a_TPC_hierarchy_is_read_from_the_version_that_made_copies()
     {
-        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => LegacyFixture.DiffFrom<MovedModels.SlotAlone>(source =>
+        static void Hierarchy(ModelBuilder source, int? version)
         {
+            if (version is { } stamped) source.HasAnnotation("CustomIndex:RenderingVersion", stamped);
             source.Entity<Vehicle>().UseTpcMappingStrategy().HasAnnotation(Annotation, """[{"parts":[{"path":"During","op":"&&"}]}]""");
             source.Entity<Car>();
             source.Entity<Truck>();
-        }));
+        }
 
-        StringAssert.Contains(refused.Message, "on Vehicle, the root of a TPC hierarchy");
+        var drops = LegacyFixture.DiffFrom<MovedModels.SlotAlone>(source => Hierarchy(source, 3)).Shape().Where(sql => sql.Contains("DROP CONSTRAINT")).ToList();
+        CollectionAssert.AreEquivalent(
+            new[] { """ALTER TABLE "Car" DROP CONSTRAINT "EX_Car_During";""", """ALTER TABLE "Truck" DROP CONSTRAINT "EX_Truck_During";""" },
+            drops);
+
+        foreach (var version in new int?[] { null, 1, 2 })
+        {
+            var refused = Assert.ThrowsExactly<InvalidOperationException>(() => LegacyFixture.DiffFrom<MovedModels.SlotAlone>(source => Hierarchy(source, version)));
+            StringAssert.Contains(refused.Message, "on Vehicle, a type of a TPC hierarchy with derived types, and was scaffolded before 5.5.0");
+        }
     }
 }
