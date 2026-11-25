@@ -433,16 +433,46 @@ public sealed class PgExclusionMigrationTests
 
     /// <summary>
     /// Declared on the root of a TPC hierarchy, the constraint reached the root's table alone and
-    /// overlapping stays and holds were accepted (#101). It is refused until a declaration is
-    /// carried to every table (#118); on a type without derived types it is in that type's table.
+    /// overlapping stays and holds were accepted (#101). It is a constraint in every table of the
+    /// hierarchy (#118): the root's keeps the name, and a derived table's has its table's name
+    /// behind it, since the index behind a constraint is a relation of the schema. Without a name
+    /// each gets the default for its table. On a type without derived types it is in that type's
+    /// table alone.
     /// </summary>
     [TestMethod]
-    public void A_constraint_on_a_type_of_TPC_with_derived_tables_is_refused_and_one_on_a_leaf_is_in_its_table()
+    public void A_constraint_on_a_type_of_TPC_is_in_every_table_of_the_hierarchy_below_it()
     {
-        var refused = Assert.ThrowsExactly<InvalidOperationException>(
-            () => Contexts.Diff<Models.ReservationsInThreeTables, Models.ReservationsInThreeTablesDeclaredOnTheRoot>());
-        StringAssert.Contains(refused.Message, "Reservation declares Pg.Exclusion gist 'ex_reservation', but is mapped with TPC");
-        StringAssert.Contains(refused.Message, "(Hold, Stay)");
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension,
+                """ALTER TABLE reservations ADD CONSTRAINT ex_reservation EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""",
+                """ALTER TABLE holds ADD CONSTRAINT ex_reservation_holds EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""",
+                """ALTER TABLE stays ADD CONSTRAINT ex_reservation_stays EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.ReservationsInThreeTables, Models.ReservationsInThreeTablesDeclaredOnTheRoot>().Shape());
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                Extension,
+                """ALTER TABLE reservations ADD CONSTRAINT "EX_reservations_RoomId_Period" EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""",
+                """ALTER TABLE holds ADD CONSTRAINT "EX_holds_RoomId_Period" EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""",
+                """ALTER TABLE stays ADD CONSTRAINT "EX_stays_RoomId_Period" EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""",
+            },
+            Contexts.Diff<Models.ReservationsInThreeTables, Models.ReservationsInThreeTablesDeclaredOnTheRootWithoutAName>().Shape());
+
+        // Against itself the model is no migration, and taking the declaration away drops every
+        // copy, the last created first.
+        Assert.AreEqual(0, Contexts.Diff<Models.ReservationsInThreeTablesDeclaredOnTheRoot, Models.ReservationsInThreeTablesDeclaredOnTheRoot>().Count);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "ALTER TABLE stays DROP CONSTRAINT ex_reservation_stays;",
+                "ALTER TABLE holds DROP CONSTRAINT ex_reservation_holds;",
+                "ALTER TABLE reservations DROP CONSTRAINT ex_reservation;",
+            },
+            Contexts.Diff<Models.ReservationsInThreeTablesDeclaredOnTheRoot, Models.ReservationsInThreeTables>().Shape());
 
         CollectionAssert.AreEqual(
             new[] { Extension, """ALTER TABLE stays ADD CONSTRAINT ex_stay EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&);""" },

@@ -248,6 +248,9 @@ public abstract class SchemaResolver
     /// <summary>The table a default name is built from: <see cref="Table" />, unless the resolver answers under a rename.</summary>
     private protected virtual TableRef NamedAfter => Table;
 
+    /// <summary>The name a declaration states, as this table's object takes it.</summary>
+    private protected virtual string Declared(string name) => name;
+
     /// <summary>For composing the descriptor's fragments. Statements written to it go nowhere.</summary>
     public SchemaSql Sql => field ??= new SchemaSql(Dialect);
 
@@ -302,7 +305,7 @@ public abstract class SchemaResolver
     {
         ArgumentException.ThrowIfNullOrEmpty(prefix);
         ArgumentNullException.ThrowIfNull(parts);
-        if (declared is not null) return Dialect.Identifier(declared);
+        if (declared is not null) return Dialect.Identifier(Declared(declared));
 
         var tokens = parts.Select(part => part.NameToken ?? NameTokens.Of(part.Text));
         return Dialect.Identifier(string.Join("_", [prefix, NamedAfter.Name.Name, .. tokens]));

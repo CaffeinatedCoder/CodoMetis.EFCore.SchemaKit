@@ -150,13 +150,15 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
     {
         TestGuard.Unique unique => new(
             resolver.Table,
-            resolver.Table.Qualify(resolver.Dialect.Identifier(unique.Name ?? $"ux_{string.Join("_", unique.Keys.Select(k => k.Column))}")),
+            // A stated name goes through the resolver, which knows which table's object this is; the
+            // default is this sample's own and names no table.
+            resolver.Table.Qualify(unique.Name is { } stated ? resolver.Name(stated, "UX", []) : resolver.Dialect.Identifier($"ux_{string.Join("_", unique.Keys.Select(k => k.Column))}")),
             [.. unique.Keys.Select(k => SampleColumns.Of(resolver, k.Column))],
             IsTrigger: false,
             new Operational<bool>(unique.Concurrently)),
         TestGuard.Trigger trigger => new(
             resolver.Table,
-            new QualifiedName(null, resolver.Dialect.Identifier(trigger.Name ?? $"tr_{trigger.Column}")),
+            new QualifiedName(null, trigger.Name is { } named ? resolver.Name(named, "TR", []) : resolver.Dialect.Identifier($"tr_{trigger.Column}")),
             [SampleColumns.Of(resolver, trigger.Column)],
             IsTrigger: true,
             new Operational<bool>(false)),
