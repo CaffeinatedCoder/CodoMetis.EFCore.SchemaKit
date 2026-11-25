@@ -299,6 +299,42 @@ public sealed class PgExclusionLiveTests
     }
 
     /// <summary>
+    /// An entity split over two tables (#191): the constraint is in the second, where its column
+    /// is, as <c>EnsureCreated()</c> builds it too, and two berths whose periods overlap are refused.
+    /// </summary>
+    [TestMethod]
+    public void On_a_split_entity_the_table_with_the_column_refuses_overlapping_rows()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.BerthPeriodsMayNotOverlap>();
+
+        CollectionAssert.AreEqual(
+            new[] { """public.berth_periods | ex_berth | index ex_berth | EXCLUDE USING gist ("Period" WITH &&)""" },
+            database.Exclusions());
+
+        using (var created = new LiveDatabase())
+        {
+            using var fresh = Contexts.Of<Models.BerthPeriodsMayNotOverlap>(created.ConnectionString);
+            fresh.Database.EnsureCreated();
+            CollectionAssert.AreEqual(database.Exclusions(), created.Exclusions());
+        }
+
+        void Save(Berth berth)
+        {
+            using var context = Contexts.Of<Models.BerthPeriodsMayNotOverlap>(database.ConnectionString);
+            context.Add(berth);
+            context.SaveChanges();
+        }
+
+        Save(new Berth { PierId = 1, Period = Days(1, 10) });
+        Save(new Berth { PierId = 1, Period = Days(10, 20) });
+
+        var refusal = (PostgresException)Assert.ThrowsExactly<DbUpdateException>(() => Save(new Berth { PierId = 2, Period = Days(5, 15) })).InnerException!;
+        Assert.AreEqual(PostgresErrorCodes.ExclusionViolation, refusal.SqlState);
+        Assert.AreEqual("ex_berth", refusal.ConstraintName);
+    }
+
+    /// <summary>
     /// A constraint declared on the root of a TPC hierarchy is in every table of it (#118), and
     /// each table refuses its own overlapping rows, under its own constraint's name. What a
     /// migration leaves is what <c>EnsureCreated()</c> builds. A stay and a hold of one room that

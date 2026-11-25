@@ -8,6 +8,27 @@ using Microsoft.EntityFrameworkCore.Storage;
 namespace CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 
 /// <summary>
+/// The refusal of a path whose property has no column in the table a declaration is resolved in.
+/// It is the <see cref="InvalidOperationException" /> the contract says, and carries its path:
+/// the planner asks a table on purpose where an entity is split over tables, and has to tell
+/// this refusal from every other one.
+/// </summary>
+internal static class MissingColumn
+{
+    private const string Key = "CodoMetis.SchemaKit.PathWithoutColumn";
+
+    public static InvalidOperationException Refusal(string message, string path)
+    {
+        var refusal = new InvalidOperationException(message);
+        refusal.Data[Key] = path;
+        return refusal;
+    }
+
+    /// <summary>The path, when the exception is this refusal; else null.</summary>
+    public static string? PathOf(Exception exception) => exception.Data[Key] as string;
+}
+
+/// <summary>
 /// The kernel's resolver: one declaration's paths and templates, turned into the SQL of one table.
 /// </summary>
 /// <remarks>
@@ -86,7 +107,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         // Asked of the declared property in this table, as its column is. A snapshot holds the type
         // as an annotation and a configured model computes it from the mapping: one answer.
         return FindProperty(path).GetColumnType(_storeObject)
-               ?? throw new InvalidOperationException(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable));
+               ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
     }
 
     public override SqlFragment Template(SqlTemplate template)
@@ -135,7 +156,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     {
         var property = FindProperty(path);
         var own = property.GetColumnName(_storeObject)
-                  ?? throw new InvalidOperationException(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable));
+                  ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
         var column = Dialect.Identifier(own);
         return (_renames?.Forward(Table, column) ?? column, own);
     }

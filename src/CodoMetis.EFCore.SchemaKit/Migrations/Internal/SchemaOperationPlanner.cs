@@ -466,9 +466,17 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         if (landings.Count == 0)
             throw new InvalidOperationException(SchemaKitStrings.DeclaredOnUnmappedType(entityType.ShortName(), DeclarationCodec.Describe(declaration)));
 
+        // An entity split over tables: the declaration is in the one that has its columns.
+        if (landings is [{ IsCopy: false }] && Landings.Fragments(entityType) is { Count: > 1 } fragments)
+        {
+            var (table, split) = InItsFragment(contributor, entityType, declaration, fragments);
+            yield return new Resolved(contributor, split, entityType, declaration) { Table = table };
+            yield break;
+        }
+
         foreach (var landing in landings)
         {
-            var descriptor = contributor.Resolve(declaration, Resolvers.Create(entityType, landing.Table, declaration));
+            var descriptor = ResolveIn(contributor, entityType, landing.Table, declaration);
 
             // A copy's name is the declaration's, and where a name is taken beyond its table two
             // objects cannot have it. Whether it is, the contributor's claims say, of the object as
@@ -480,6 +488,68 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
             yield return new Resolved(contributor, descriptor, entityType, declaration) { Table = landing.Table, Suffixed = suffixed };
         }
+    }
+
+    /// <summary>
+    /// The declaration resolved in one table. A path without a column there is refused by the
+    /// resolver; where the property is one the type inherits and the base type's table has it, the
+    /// refusal names that type. An object there would hold among the rows of every type of the
+    /// hierarchy, so it is the base type's to declare, as in a shared table (#82).
+    /// </summary>
+    private ISchemaDescriptor ResolveIn(ISchemaContributor contributor, IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaObject declaration)
+    {
+        try
+        {
+            return contributor.Resolve(declaration, Resolvers.Create(entityType, table, declaration));
+        }
+        catch (InvalidOperationException missing) when (MissingColumn.PathOf(missing) is { } path && InheritedFrom(entityType, path) is { } owner)
+        {
+            throw new InvalidOperationException(
+                SchemaKitStrings.ReadsAnInheritedColumn(entityType.ShortName(), DeclarationCodec.Describe(declaration), path, owner.ShortName()), missing);
+        }
+    }
+
+    /// <summary>The base type that declares the path's property and has a column for it in a table of its own, or null.</summary>
+    private static IReadOnlyEntityType? InheritedFrom(IReadOnlyEntityType entityType, string path)
+    {
+        var root = path.Split('.')[0];
+        var declaring = (IReadOnlyEntityType?)(entityType.FindProperty(root)?.DeclaringType ?? entityType.FindComplexProperty(root)?.DeclaringType);
+
+        return declaring is not null && declaring != entityType && StoreObjectIdentifier.Create(declaring, StoreObjectType.Table) is not null ? declaring : null;
+    }
+
+    /// <summary>
+    /// The one table of a split entity's that has a column for every path the declaration reads
+    /// (#118). None: the declaration reads columns of more than one table, and an object is in
+    /// one. More than one: it reads the key's columns alone, which every table repeats, and is in
+    /// the first; unless it holds SQL written by hand, where nothing says which table is meant.
+    /// </summary>
+    private (StoreObjectIdentifier Table, ISchemaDescriptor Descriptor) InItsFragment(
+        ISchemaContributor contributor, IReadOnlyEntityType entityType, ISchemaObject declaration, IReadOnlyList<StoreObjectIdentifier> fragments)
+    {
+        List<(StoreObjectIdentifier Table, ISchemaDescriptor Descriptor)> fits = [];
+        InvalidOperationException? first = null;
+
+        foreach (var table in fragments)
+        {
+            try
+            {
+                fits.Add((table, contributor.Resolve(declaration, Resolvers.Create(entityType, table, declaration))));
+            }
+            catch (InvalidOperationException missing) when (MissingColumn.PathOf(missing) is not null)
+            {
+                first ??= missing;
+            }
+        }
+
+        var tables = string.Join(", ", fragments.Select(table => table.Name));
+        if (fits.Count == 0)
+            throw new InvalidOperationException(SchemaKitStrings.ReadsColumnsOfSeveralFragments(entityType.ShortName(), DeclarationCodec.Describe(declaration), tables), first);
+
+        if (fits.Count > 1 && fits[0].Descriptor.Dependencies.Any(dependency => dependency is Dependency.WholeTable))
+            throw new InvalidOperationException(SchemaKitStrings.HandWrittenSqlOnASplitEntity(entityType.ShortName(), DeclarationCodec.Describe(declaration), tables));
+
+        return fits[0];
     }
 
     /// <summary>Every declaration of a model as a descriptor, in the order of its entity types and of their annotation keys.</summary>

@@ -19,6 +19,7 @@ One section per version, newest first, in the form
 
 - A declaration on a type of a TPC hierarchy is an object in that type's table and in the table of every type derived from it, where it was refused. A name the declaration states is the declaring type's table's, and a derived type's copy is `{name}_{table}`; a default name has its table in it ([#187](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/187)).
 - A 5.x snapshot with an exclusion constraint on a type of a TPC hierarchy is read, and the same model declared with SchemaKit scaffolds no operations, where the snapshot was refused. A snapshot scaffolded before 5.5.0 stays refused, with the way off it ([#189](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/189)).
+- A declaration on an entity split over two tables (`SplitToTable`) is created in the table that has the columns it reads, where one on a column of the second table was refused. One that reads a column of each table is refused ([#191](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/191)).
 - A property compared with a value is written as the column stores that value: an enum as its number or its name, a property with a value converter through the converter, a `bool` stored as text, a `DateTime`, a `Guid`. An enum comparison and a `DateTime` or `Guid` in a comparison were refused ([#180](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/180)).
 
 ### Changed

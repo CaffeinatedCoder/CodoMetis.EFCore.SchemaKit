@@ -22,8 +22,12 @@ internal sealed record Landing(StoreObjectIdentifier Table, IReadOnlyEntityType 
 /// put its copies from 5.5.0 on. A TPC root without a table lands on its derived types' alone.
 /// </para>
 /// <para>
-/// What is not answered here yet: an entity split over two tables lands on its first, and a
-/// derived type of a shared table is refused by the planner, in the consumer's own model.
+/// An entity split over tables has more than one table too, but a declaration is in one of them
+/// alone: the one that has a column for everything it reads. Which that is depends on the
+/// declaration, so the planner asks each of <see cref="Fragments" /> in turn.
+/// </para>
+/// <para>
+/// A derived type of a shared table is refused by the planner, in the consumer's own model.
 /// </para>
 /// </remarks>
 internal static class Landings
@@ -45,5 +49,19 @@ internal static class Landings
         }
 
         return landings;
+    }
+
+    /// <summary>
+    /// The tables an entity type is split over, its own first, or its own alone when it is not
+    /// split. Every one of them has the key's columns, and each other column is in one.
+    /// </summary>
+    public static IReadOnlyList<StoreObjectIdentifier> Fragments(IReadOnlyEntityType entityType)
+    {
+        List<StoreObjectIdentifier> tables = [];
+        if (StoreObjectIdentifier.Create(entityType, StoreObjectType.Table) is { } own)
+            tables.Add(own);
+
+        tables.AddRange(entityType.GetMappingFragments(StoreObjectType.Table).Select(fragment => fragment.StoreObject).OrderBy(table => table.Name, StringComparer.Ordinal));
+        return tables;
     }
 }

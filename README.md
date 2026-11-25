@@ -78,6 +78,8 @@ SQL for fails in `OnModelCreating`, not in a migration.
   type's table keeps a name you give, and a derived type's table gets it with the table's name
   behind it (`ex_reservation_stays`). Each table refuses its own overlapping rows; a row of one
   table and a row of another are not compared, since no constraint holds across tables.
+- **An entity split over two tables:** a constraint is created in the table that has the columns
+  it reads. One that reads a column of each table is refused, since a constraint is in one table.
 - **`btree_gist`** is installed by the migration that first needs it, unless the model declares it
   with `HasPostgresExtension("btree_gist")` or calls `SuppressBtreeGistInjection()`.
 - **The move from `EFCore.ComplexIndexes` 5.x for exclusion constraints:** a snapshot 5.x scaffolded
@@ -95,7 +97,6 @@ SQL for fails in `OnModelCreating`, not in a migration.
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor until a create after SQLite's table rebuild is placed after it | [plan, section 3.12](design/schemakit-core-plan.md#312-other-providers-and-sqlite) |
-| A declaration on an entity split over two tables: resolved against its first table | [#118](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118) |
 | A declaration on a column only a derived type has, while the type shares its table: refused | [#85](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/85) |
 | A cast in a lambda that changes the value, such as `(int)x.Amount == 2`: refused | [#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103) |
 | Raw SQL in an element, and a factory for SP-GiST | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |

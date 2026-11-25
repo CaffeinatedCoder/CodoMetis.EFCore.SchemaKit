@@ -365,6 +365,16 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   resolves a copy once to read its claims and a second time for the name. A contributor that
   names an object without `Name` gives every copy one name, which is refused as `SK1001`. A
   name that is too long is refused by the dialect; 5.x's shortening is not ported.
+- **A declaration on a split entity lands on the one table that has its columns** (#191). The
+  planner resolves it in each of `Landings.Fragments` and takes the table where no path lacks a
+  column. The resolver's refusal of such a path carries the path (`MissingColumn`), and only
+  that refusal is caught, so a path that names no property still fails as itself. No table: refused, the columns
+  are in more than one. More than one table: the declaration reads the key's columns alone, and
+  is in the first; with SQL written by hand it is refused, since nothing says which table the
+  SQL means.
+- **A derived type with a table of its own that reads an inherited column is refused with the
+  base type named** (#191). The column is in the base type's table; the refusal was there
+  before, as a path without a column.
 - **A copy in a derived type's table is that table's alone:** a row of one table and a row of
   another are not compared, on any database. `PgExclusionLiveTests` holds each table's refusal.
 - **On EF Core 11 a complex property's column is in a TPC derived table too** (measured;
