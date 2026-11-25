@@ -299,6 +299,62 @@ public sealed class PgExclusionLiveTests
     }
 
     /// <summary>
+    /// A constraint declared on the root of a TPC hierarchy is in every table of it (#118), and
+    /// each table refuses its own overlapping rows, under its own constraint's name. What a
+    /// migration leaves is what <c>EnsureCreated()</c> builds. A stay and a hold of one room that
+    /// overlap are both taken: they are rows of two tables, and no constraint holds across tables.
+    /// </summary>
+    [TestMethod]
+    public void On_the_root_of_TPC_each_table_refuses_its_own_overlapping_rows()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.ReservationsInThreeTablesDeclaredOnTheRoot>();
+
+        const string Definition = """EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&)""";
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                $"public.holds | ex_reservation_holds | index ex_reservation_holds | {Definition}",
+                $"public.reservations | ex_reservation | index ex_reservation | {Definition}",
+                $"public.stays | ex_reservation_stays | index ex_reservation_stays | {Definition}",
+            },
+            database.Exclusions());
+
+        using (var created = new LiveDatabase())
+        {
+            using var context = Contexts.Of<Models.ReservationsInThreeTablesDeclaredOnTheRoot>(created.ConnectionString);
+            context.Database.EnsureCreated();
+            CollectionAssert.AreEqual(database.Exclusions(), created.Exclusions());
+        }
+
+        var id = 0;
+        void Save(Reservation reservation)
+        {
+            reservation.Id = ++id;
+            using var context = Contexts.Of<Models.ReservationsInThreeTablesDeclaredOnTheRoot>(database.ConnectionString);
+            context.Add(reservation);
+            context.SaveChanges();
+        }
+
+        string Refused(Reservation reservation)
+        {
+            var refusal = (PostgresException)Assert.ThrowsExactly<DbUpdateException>(() => Save(reservation)).InnerException!;
+            Assert.AreEqual(PostgresErrorCodes.ExclusionViolation, refusal.SqlState);
+            return refusal.ConstraintName!;
+        }
+
+        Save(new Reservation { RoomId = 1, Period = Days(1, 10) });
+        Save(new Stay { RoomId = 1, Period = Days(1, 10) });
+        Save(new Hold { RoomId = 1, Period = Days(1, 10) });
+
+        Assert.AreEqual("ex_reservation", Refused(new Reservation { RoomId = 1, Period = Days(5, 15) }));
+        Assert.AreEqual("ex_reservation_stays", Refused(new Stay { RoomId = 1, Period = Days(5, 15) }));
+        Assert.AreEqual("ex_reservation_holds", Refused(new Hold { RoomId = 1, Period = Days(5, 15) }));
+
+        Save(new Stay { RoomId = 2, Period = Days(5, 15) });
+    }
+
+    /// <summary>
     /// A multirange, as an array of ranges and as a list of them, reaches the catalog as one, and
     /// the constraint refuses rows whose ranges overlap anywhere (#104). The equality element on
     /// the integer brings btree_gist; the multirange needs nothing.

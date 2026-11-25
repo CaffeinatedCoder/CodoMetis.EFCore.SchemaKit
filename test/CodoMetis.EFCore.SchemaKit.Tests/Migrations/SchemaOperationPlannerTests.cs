@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.Extensions.DependencyInjection;
+using CodoMetis.EFCore.SchemaKit.Resolution.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Migrations;
 
@@ -129,6 +130,55 @@ public static class PlanModels
         {
             Vehicles(modelBuilder);
             modelBuilder.Entity<Car>().Metadata.Declare([Plate]);
+        }
+    }
+
+    /// <summary>The hierarchy before the roadster has a table of its own: Car is a type without derived types.</summary>
+    public sealed class OnACarBeforeTheRoadster : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Vehicle>().UseTpcMappingStrategy().Property(v => v.Id).ValueGeneratedNever();
+            modelBuilder.Entity<Car>().ToTable("Cars").Metadata.Declare([Plate]);
+            modelBuilder.Entity<Truck>().ToTable("Trucks");
+        }
+    }
+
+    /// <summary>The same declaration on Car, with the roadsters' table under another name.</summary>
+    public sealed class OnACarWithTheRoadstersRenamed : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Vehicle>().UseTpcMappingStrategy().Property(v => v.Id).ValueGeneratedNever();
+            modelBuilder.Entity<Car>().ToTable("Cars").Metadata.Declare([Plate]);
+            modelBuilder.Entity<Roadster>().ToTable("Sportscars");
+            modelBuilder.Entity<Truck>().ToTable("Trucks");
+        }
+    }
+
+    /// <summary>A type mapped to a view: it has no table, and nothing derives from it.</summary>
+    public sealed class OnATypeWithoutATable : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<Animal>().ToView("AnimalsView").Metadata.Declare([AnimalName]);
+    }
+
+    /// <summary>On the root without a name: each table's object gets the name the kernel builds for it.</summary>
+    public sealed class OnTheRootOfTpcWithoutAName : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Vehicles(modelBuilder);
+            modelBuilder.Entity<Vehicle>().Metadata.Declare([Plate with { Name = null }]);
+        }
+    }
+
+    /// <summary>An object whose name is taken within its table: a trigger.</summary>
+    public sealed class ATriggerOnACarOfTpc : IPlanModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            Vehicles(modelBuilder);
+            modelBuilder.Entity<Car>().Metadata.Declare([new TestGuard.Trigger("Plate") { Name = "tr_plate" }]);
         }
     }
 
@@ -506,34 +556,98 @@ public sealed class SchemaOperationPlannerTests
         CollectionAssert.Contains(Describe(bare.GetService<IMigrationsModelDiffer>().GetDifferences(Model(derived), Model(bare))), "DROP INDEX ux_animal;");
     }
 
+    // Each provider delimits in its own way, and PostgreSQL a name with a capital in it.
+    private static List<string> Unquoted(IEnumerable<MigrationOperation> operations)
+        => [.. Describe(operations).Select(statement => statement.Replace("\"", "").Replace("[", "").Replace("]", ""))];
+
+    private static List<string> Created(Provider provider, DbContext context)
+        => [.. Describe(context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)))
+            .Where(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal) || statement.StartsWith("CREATE TRIGGER", StringComparison.Ordinal))
+            .Select(statement => statement.Replace("\"", "").Replace("[", "").Replace("]", ""))];
+
     /// <summary>
-    /// The other way round (#101): a type of a TPC hierarchy whose derived types have tables of
-    /// their own. A declaration is resolved against one table, so the others would get nothing,
-    /// where EF Core gives an index declared there to every table. Refused until a declaration is
-    /// carried to each (#118), for a root without a table as for a type that has one.
+    /// The other way round (#101, #118): a type of a TPC hierarchy whose derived types have tables
+    /// of their own. Each of those tables repeats the type's columns, and the declaration is an
+    /// object in each, as an index of EF Core's declared there is. The declaring type's own table
+    /// keeps a name the declaration states, and a derived type's copy has its table's name behind
+    /// it, since a relation's name is taken in the whole schema. A root without a table has
+    /// copies alone.
     /// </summary>
     [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
-    public void A_declaration_on_a_type_of_TPC_whose_derived_types_have_tables_is_refused(Provider provider)
+    public void A_declaration_on_a_type_of_TPC_lands_on_every_table_of_the_hierarchy_below_it(Provider provider)
     {
         using var onTheRoot = Context<PlanModels.OnTheRootOfTpc>(provider);
-        using var inTheMiddle = Context<PlanModels.OnATypeOfTpcWithADerivedType>(provider);
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "CREATE UNIQUE INDEX ux_plate_Cars ON Cars (Plate);",
+                "CREATE UNIQUE INDEX ux_plate_Roadsters ON Roadsters (Plate);",
+                "CREATE UNIQUE INDEX ux_plate_Trucks ON Trucks (Plate);",
+            },
+            Created(provider, onTheRoot));
 
-        var root = Assert.ThrowsExactly<InvalidOperationException>(() => onTheRoot.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(onTheRoot)));
-        StringAssert.Contains(root.Message, "Vehicle declares Test.Guard unique 'ux_plate', but is mapped with TPC");
-        // Every derived type with a table, not only the direct ones.
-        StringAssert.Contains(root.Message, "(Car, Truck, Roadster)");
-        StringAssert.Contains(root.Message, "issues/118");
-
-        // A derived type without a table is not one of them: the tables are what would be left out.
+        // A derived type without a table is passed over, and the table below it is reached.
         using var aboveAnAbstractType = Context<PlanModels.OnTheRootOfTpcAboveAnAbstractType>(provider);
-        var above = Assert.ThrowsExactly<InvalidOperationException>(
-            () => aboveAnAbstractType.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(aboveAnAbstractType)));
-        StringAssert.Contains(above.Message, "tables of their own (Caravan)");
+        CollectionAssert.AreEqual(new[] { "CREATE UNIQUE INDEX ux_plate_Caravans ON Caravans (Plate);" }, Created(provider, aboveAnAbstractType));
 
-        var middle = Assert.ThrowsExactly<InvalidOperationException>(() => inTheMiddle.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(inTheMiddle)));
-        StringAssert.Contains(middle.Message, "Car declares Test.Guard unique 'ux_plate'");
-        StringAssert.Contains(middle.Message, "(Roadster)");
-        Assert.ThrowsExactly<InvalidOperationException>(() => inTheMiddle.GetService<IMigrationsModelDiffer>().HasDifferences(null, Model(inTheMiddle)));
+        using var inTheMiddle = Context<PlanModels.OnATypeOfTpcWithADerivedType>(provider);
+        CollectionAssert.AreEquivalent(
+            new[] { "CREATE UNIQUE INDEX ux_plate ON Cars (Plate);", "CREATE UNIQUE INDEX ux_plate_Roadsters ON Roadsters (Plate);" },
+            Created(provider, inTheMiddle));
+        Assert.IsTrue(inTheMiddle.GetService<IMigrationsModelDiffer>().HasDifferences(null, Model(inTheMiddle)));
+    }
+
+    /// <summary>
+    /// The copies' names are made by the resolver's <c>Name</c>. A contributor that names an
+    /// object without it gives every table's object one name: here the sample's own default,
+    /// which names no table. That is refused as the collision it is, every pair of it, and not
+    /// left to the database.
+    /// </summary>
+    [TestMethod]
+    public void A_name_made_without_the_resolver_is_one_name_for_every_copy_and_is_refused()
+    {
+        using var context = Context<PlanModels.OnTheRootOfTpcWithoutAName>();
+
+        var refused = Assert.ThrowsExactly<SchemaValidationException>(() => context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+        Assert.IsTrue(refused.Diagnostics.All(diagnostic => diagnostic.Id == "SK1001"), refused.Message);
+        StringAssert.Contains(refused.Message, "'ux_Plate'");
+    }
+
+    /// <summary>
+    /// The table's name goes behind a name only where two objects cannot share it. A trigger's
+    /// name is taken within its table, as the contributor's claims say, so every copy keeps it:
+    /// that is what 5.x did for an index of SQL Server.
+    /// </summary>
+    [TestMethod]
+    public void A_name_that_is_taken_within_its_table_is_every_copys_name()
+    {
+        using var context = Context<PlanModels.ATriggerOnACarOfTpc>();
+
+        CollectionAssert.AreEquivalent(
+            new[] { "CREATE TRIGGER tr_plate ON Cars (Plate);", "CREATE TRIGGER tr_plate ON Roadsters (Plate);" },
+            Created(Provider.Npgsql, context));
+    }
+
+    /// <summary>
+    /// The copies are made when a model is read, on both sides of a diff, and nothing of them is
+    /// stored. So a model against its own snapshot is no migration, a derived type that gets a
+    /// table gets its copy by the next one, and one that loses its table loses the copy.
+    /// </summary>
+    [TestMethod]
+    public void The_copies_follow_the_hierarchy_from_one_migration_to_the_next()
+    {
+        using var before = Context<PlanModels.OnACarBeforeTheRoadster>();
+        using var after = Context<PlanModels.OnATypeOfTpcWithADerivedType>();
+        var differ = after.GetService<IMigrationsModelDiffer>();
+
+        Assert.AreEqual(0, differ.GetDifferences(Snapshot(after), Model(after)).Count);
+        Assert.IsFalse(differ.HasDifferences(Snapshot(after), Model(after)));
+
+        var added = Unquoted(differ.GetDifferences(Snapshot(before), Model(after)));
+        CollectionAssert.AreEqual(new[] { "CreateTableOperation", "CREATE UNIQUE INDEX ux_plate_Roadsters ON Roadsters (Plate);" }, added);
+
+        var removed = Unquoted(differ.GetDifferences(Snapshot(after), Model(before)));
+        CollectionAssert.AreEqual(new[] { "DROP INDEX ux_plate_Roadsters;", "DropTableOperation" }, removed);
     }
 
     /// <summary>A type without derived types has one table, its own, with the columns it inherits in it.</summary>
@@ -551,16 +665,73 @@ public sealed class SchemaOperationPlannerTests
         Assert.AreEqual(2, statements.Count(statement => statement.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal)));
     }
 
-    /// <summary>The refusal is for the context's own model: a snapshot that holds such a declaration is read, both ways (#98).</summary>
+    /// <summary>A declaration that lands on no table would produce nothing, without an error: it is refused.</summary>
     [TestMethod]
-    public void A_snapshot_with_a_declaration_on_such_a_type_of_TPC_is_read()
+    public void A_declaration_on_a_type_without_a_table_is_refused()
     {
-        using var snapshot = Context<PlanModels.OnATypeOfTpcWithADerivedType>();
+        using var context = Context<PlanModels.OnATypeWithoutATable>();
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>().GetDifferences(null, Model(context)));
+        StringAssert.Contains(refused.Message, "Animal declares Test.Guard unique 'ux_animal', but is not mapped to a table");
+    }
+
+    /// <summary>
+    /// A copy follows a rename of its own table, like any object: it is resolved again in that
+    /// table, not in the declaring type's, and what is left is its name, which has the table in it.
+    /// </summary>
+    [TestMethod]
+    public void A_copy_follows_the_rename_of_its_table()
+    {
+        using var before = Context<PlanModels.OnATypeOfTpcWithADerivedType>();
+        using var after = Context<PlanModels.OnACarWithTheRoadstersRenamed>();
+
+        var got = Unquoted(after.GetService<IMigrationsModelDiffer>().GetDifferences(Snapshot(before), Model(after)));
+        // EF Core renames the table and its primary key; nothing is dropped or created for the copy.
+        CollectionAssert.AreEqual(
+            new[] { "DropPrimaryKeyOperation", "RenameTableOperation", "AddPrimaryKeyOperation", "ALTER INDEX ux_plate_Roadsters RENAME TO ux_plate_Sportscars;" },
+            got, string.Join(" | ", got));
+    }
+
+    /// <summary>
+    /// The function itself, on a model and on its compiled snapshot: the tables are the same and
+    /// in the same order, the declaring type's own first and marked as no copy. A type that is not
+    /// mapped with TPC has its own table and nothing else, whatever derives from it.
+    /// </summary>
+    [TestMethod]
+    public void The_landings_of_a_type_are_the_same_on_a_model_and_on_its_snapshot()
+    {
+        using var vehicles = Context<PlanModels.OnATypeOfTpcWithADerivedType>();
+        using var animals = Context<PlanModels.OnTheBaseTypeOfASharedTable>();
+
+        foreach (var model in new[] { Model(vehicles).Model, Snapshot(vehicles).Model })
+        {
+            CollectionAssert.AreEqual(new[] { "Cars copy", "Roadsters copy", "Trucks copy" }, Of(model, typeof(Vehicle)));
+            CollectionAssert.AreEqual(new[] { "Cars", "Roadsters copy" }, Of(model, typeof(Car)));
+            CollectionAssert.AreEqual(new[] { "Roadsters" }, Of(model, typeof(Roadster)));
+        }
+
+        foreach (var model in new[] { Model(animals).Model, Snapshot(animals).Model })
+        {
+            CollectionAssert.AreEqual(new[] { "Animal" }, Of(model, typeof(Animal)));
+            CollectionAssert.AreEqual(new[] { "Animal" }, Of(model, typeof(Dog)));
+        }
+
+        static List<string> Of(IModel model, Type type)
+            => [.. Landings.Of(model.FindEntityType(type.FullName!)!).Select(landing => landing.Table.Name + (landing.IsCopy ? " copy" : ""))];
+    }
+
+    /// <summary>A snapshot is read by the same rule, whichever side of a diff it is on (#98): every copy is dropped, and every copy comes back.</summary>
+    [TestMethod]
+    public void A_snapshot_with_a_declaration_on_such_a_type_of_TPC_is_read_by_the_same_rule()
+    {
+        using var declared = Context<PlanModels.OnATypeOfTpcWithADerivedType>();
         using var undeclared = Context<PlanModels.VehiclesUndeclared>();
         var differ = undeclared.GetService<IMigrationsModelDiffer>();
 
-        CollectionAssert.AreEqual(new[] { "DROP INDEX ux_plate;" }, Describe(differ.GetDifferences(Model(snapshot), Model(undeclared))));
-        Assert.AreEqual(1, Describe(differ.GetDifferences(Model(undeclared), Model(snapshot))).Count(statement => statement.Contains("ux_plate")));
+        CollectionAssert.AreEquivalent(
+            new[] { "DROP INDEX ux_plate;", "DROP INDEX ux_plate_Roadsters;" },
+            Unquoted(differ.GetDifferences(Snapshot(declared), Model(undeclared))));
+        Assert.AreEqual(2, Describe(differ.GetDifferences(Model(undeclared), Snapshot(declared))).Count(statement => statement.Contains("ux_plate")));
     }
 
     /// <summary>

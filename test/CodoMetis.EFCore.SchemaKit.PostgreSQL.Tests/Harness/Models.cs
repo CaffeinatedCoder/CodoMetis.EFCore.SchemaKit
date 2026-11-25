@@ -449,6 +449,16 @@ public static class Models
         }
     }
 
+    /// <summary>The same without a name: each table's constraint gets the name the kernel builds for it.</summary>
+    public sealed class ReservationsInThreeTablesDeclaredOnTheRootWithoutAName : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            ReservationsInTablesOfTheirOwn(modelBuilder);
+            modelBuilder.Entity<Reservation>().DeclarePostgres(pg => [pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period))]);
+        }
+    }
+
     /// <summary>The constraint declared on a type without derived types: no two stays of a room overlap, in the stays' own table.</summary>
     public sealed class StaysInTheirOwnTableMayNotOverlap : ITestModel
     {

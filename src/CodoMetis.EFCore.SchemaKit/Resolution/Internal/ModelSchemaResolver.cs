@@ -29,6 +29,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     private readonly StoreObjectIdentifier _storeObject;
     private readonly ISchemaRenames? _renames;
     private readonly TableRef _ownTable;
+    private readonly bool _suffixed;
 
     /// <param name="entityType">The entity type the declaration is on.</param>
     /// <param name="table">The table, as the entity type's own model names it.</param>
@@ -37,11 +38,16 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     /// For the source side of a diff whose objects follow EF Core's renames: the table and its
     /// columns are answered as the target model names them. Null to resolve a model as it is.
     /// </param>
-    public ModelSchemaResolver(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaDialect dialect, ISchemaRenames? renames = null)
+    /// <param name="suffixed">
+    /// For a copy of a declaration on a table of a derived type, when its name is taken beyond the
+    /// table: a name the declaration states gets the table's name behind it.
+    /// </param>
+    public ModelSchemaResolver(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaDialect dialect, ISchemaRenames? renames = null, bool suffixed = false)
     {
         _entityType = entityType;
         _storeObject = table;
         _renames = renames;
+        _suffixed = suffixed;
         Dialect = dialect;
         _ownTable = new TableRef(table.Schema is null ? null : dialect.Identifier(table.Schema), dialect.Identifier(table.Name));
         Table = renames?.Forward(_ownTable) ?? _ownTable;
@@ -53,6 +59,11 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     // rename the object's SQL takes the new names and its name does not, so that it differs from
     // the target's in the name alone: a rename of the object, not another object.
     private protected override TableRef NamedAfter => _ownTable;
+
+    // One declaration on a TPC type is an object in each table of the hierarchy below it, and a
+    // name that is taken in the schema can be only one of them. The declaring type's own table
+    // keeps the name, and a derived type's copy has its table's name behind it, as 5.x named it.
+    private protected override string Declared(string name) => _suffixed ? $"{name}_{_ownTable.Name.Name}" : name;
 
     public override ISchemaDialect Dialect { get; }
 
@@ -292,15 +303,20 @@ internal sealed class SchemaResolverFactory(ISchemaDialect dialect)
             declaration,
             renames);
 
-    /// <summary>The resolver for a declaration of an entity type, in one of the type's tables.</summary>
-    public SchemaResolver Create(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaObject declaration, ISchemaRenames? renames = null)
+    /// <summary>The resolver for a declaration of an entity type, in one of the tables it lands on.</summary>
+    /// <param name="entityType">The entity type the declaration is on.</param>
+    /// <param name="table">The table.</param>
+    /// <param name="declaration">The declaration.</param>
+    /// <param name="renames">For the source side of a diff, EF Core's renames to resolve under; null for a model as it is.</param>
+    /// <param name="suffixed">Whether a name the declaration states gets the table's name behind it.</param>
+    public SchemaResolver Create(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaObject declaration, ISchemaRenames? renames = null, bool suffixed = false)
     {
         // An epoch this version does not know is how a later version resolves. Resolving it as
         // epoch 1 would give the source side of a diff another answer than the version that wrote it.
         if (declaration.Epoch != ResolutionEpoch.Current)
             throw new InvalidOperationException(SchemaKitStrings.UnknownEpoch(entityType.ShortName(), Describe(declaration), declaration.Epoch, ResolutionEpoch.Current));
 
-        return new ModelSchemaResolver(entityType, table, dialect, renames);
+        return new ModelSchemaResolver(entityType, table, dialect, renames, suffixed);
     }
 
     private static string Describe(ISchemaObject declaration)

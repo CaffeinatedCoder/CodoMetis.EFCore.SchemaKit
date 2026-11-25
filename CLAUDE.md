@@ -352,12 +352,24 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   declaration describes an object that exists; moved to the base type it is the same object and
   the migration is empty, Up and Down. The cost for now: a column only the derived type has cannot be
   named from the base type, so nothing can be declared on it while the two share a table.
-- **A declaration on a type of a TPC hierarchy whose derived types have tables is refused, in the
-  context's own model only** (#101). It is the same rule the other way round: a declaration is
-  resolved against one table, so the derived types' tables got nothing, where EF Core gives an
-  index declared there to every table. A root without a table is refused the same way. A type
-  without derived types has one table, its own, and is declared on as any other, on the columns
-  it inherits too. Carrying a declaration to every table is #118; this refusal goes with it.
+- **A declaration lands on every table `Landings.Of` names** (#118, #187; it replaced the refusal
+  of #101). A type has one table, its own, unless it is mapped with TPC: then the declaration is
+  one object in its own table and in the table of every type derived from it that has one, as
+  an index of EF Core's declared there is. A root without a table has the derived types' alone.
+  The function is asked for both sides of a diff and nothing of the copies is stored, so a
+  derived type that gets a table gets its copy by the next migration.
+- **A copy's name is made by the resolver's `Name`.** A default name has its table in it. A
+  stated name stays as it is in the declaring type's own table; in a derived type's table it
+  gets `_{table}` behind it when the object's claims hold a `NameClaim.Relation`, a name taken
+  in the whole schema, and stays as it is otherwise. That is 5.x's rule for a copy. The planner
+  resolves a copy once to read its claims and a second time for the name. A contributor that
+  names an object without `Name` gives every copy one name, which is refused as `SK1001`. A
+  name that is too long is refused by the dialect; 5.x's shortening is not ported.
+- **A copy in a derived type's table is that table's alone:** a row of one table and a row of
+  another are not compared, on any database. `PgExclusionLiveTests` holds each table's refusal.
+- **On EF Core 11 a complex property's column is in a TPC derived table too** (measured;
+  5.x found the opposite on EF Core 10). A path with no column in a landing's table is still
+  refused, by the resolver.
 - **A name the model takes twice is refused, every collision at once** (`NameClaims`, #96). Each
   contributor says which namespaces its object's name is in (`Claims`), the dialect says it for
   EF Core's own tables, indexes, keys, foreign keys, check constraints and sequences

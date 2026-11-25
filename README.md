@@ -73,6 +73,11 @@ SQL for fails in `OnModelCreating`, not in a migration.
   the constraint stays. A column EF Core drops is answered as the server answers it: PostgreSQL
   drops a constraint with a column it compares, and refuses to drop a column that only an
   expression or the condition reads, so there the constraint is dropped before and created after.
+- **A table per concrete type (TPC):** a constraint declared on a type of such a hierarchy is
+  created in that type's table and in the table of every type derived from it. The declaring
+  type's table keeps a name you give, and a derived type's table gets it with the table's name
+  behind it (`ex_reservation_stays`). Each table refuses its own overlapping rows; a row of one
+  table and a row of another are not compared, since no constraint holds across tables.
 - **`btree_gist`** is installed by the migration that first needs it, unless the model declares it
   with `HasPostgresExtension("btree_gist")` or calls `SuppressBtreeGistInjection()`.
 - **The move from `EFCore.ComplexIndexes` 5.x for exclusion constraints:** a snapshot 5.x scaffolded
@@ -90,7 +95,8 @@ SQL for fails in `OnModelCreating`, not in a migration.
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor until a create after SQLite's table rebuild is placed after it | [plan, section 3.12](design/schemakit-core-plan.md#312-other-providers-and-sqlite) |
-| A declaration on a type of a TPC hierarchy whose derived types have tables: refused | [#118](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118) |
+| A 5.x snapshot with an exclusion constraint on the root of a TPC hierarchy: refused | [#118](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118) |
+| A declaration on an entity split over two tables: resolved against its first table | [#118](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/118) |
 | A declaration on a column only a derived type has, while the type shares its table: refused | [#85](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/85) |
 | A cast in a lambda that changes the value, such as `(int)x.Amount == 2`: refused | [#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103) |
 | Raw SQL in an element, and a factory for SP-GiST | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |

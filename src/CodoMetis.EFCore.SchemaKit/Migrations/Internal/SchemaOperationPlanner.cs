@@ -93,6 +93,12 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
     /// <param name="Declaration">The declaration.</param>
     private sealed record Resolved(ISchemaContributor Contributor, ISchemaDescriptor Descriptor, IReadOnlyEntityType EntityType, ISchemaObject Declaration)
     {
+        /// <summary>The table of those the declaration lands on that this object is in.</summary>
+        public required StoreObjectIdentifier Table { get; init; }
+
+        /// <summary>Whether a name the declaration states has the table's name behind it: a copy whose name is taken beyond its table.</summary>
+        public bool Suffixed { get; init; }
+
         /// <summary>The object as the database has it before EF Core's operations, which is what a drop names.</summary>
         public ISchemaDescriptor Before { get; init; } = Descriptor;
 
@@ -378,7 +384,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         if (!renamed || !follows)
             return source with { Impact = worst };
 
-        var resolver = Resolvers.Create(source.EntityType, source.Declaration, changes);
+        var resolver = Resolvers.Create(source.EntityType, source.Table, source.Declaration, changes, source.Suffixed);
         return source with { Descriptor = source.Contributor.Resolve(source.Declaration, resolver), Before = source.Descriptor, Impact = worst };
 
         static int Weight(Impact impact) => impact switch
@@ -448,16 +454,33 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
     }
 
     /// <summary>
-    /// The derived types of a TPC hierarchy that have a table of their own, each a copy of the
-    /// entity type's columns. EF Core gives an index declared on such a type to every one of those
-    /// tables, and so a consumer expects of a declaration; this planner resolves one against one
-    /// table. Until it lands a declaration on each (#118), one on such a type is refused. A type
-    /// without derived types has one table, its own, and is declared on as any other.
+    /// The declaration as an object in each table it lands on (#118): one, unless its type is
+    /// mapped with TPC and types derived from it have tables. The same on both sides of a diff, so
+    /// a derived type that is added gets its copy by the next migration, and one that goes loses it.
     /// </summary>
-    private static List<IReadOnlyEntityType> TablesBelow(IReadOnlyEntityType entityType)
-        => entityType.GetMappingStrategy() == RelationalAnnotationNames.TpcMappingStrategy
-            ? [.. entityType.GetDerivedTypes().Where(derived => StoreObjectIdentifier.Create(derived, StoreObjectType.Table) is not null)]
-            : [];
+    private IEnumerable<Resolved> Land(ISchemaContributor contributor, IReadOnlyEntityType entityType, ISchemaObject declaration)
+    {
+        var landings = Landings.Of(entityType);
+
+        // A declaration nothing lands would produce nothing, without an error.
+        if (landings.Count == 0)
+            throw new InvalidOperationException(SchemaKitStrings.DeclaredOnUnmappedType(entityType.ShortName(), DeclarationCodec.Describe(declaration)));
+
+        foreach (var landing in landings)
+        {
+            var descriptor = contributor.Resolve(declaration, Resolvers.Create(entityType, landing.Table, declaration));
+
+            // A copy's name is the declaration's, and where a name is taken beyond its table two
+            // objects cannot have it. Whether it is, the contributor's claims say, of the object as
+            // resolved: then the copy is resolved again with its table's name behind the name. A
+            // name the kernel builds has the table in it already.
+            var suffixed = landing.IsCopy && declaration.Name is not null && contributor.Claims(descriptor).Any(claim => claim is NameClaim.Relation);
+            if (suffixed)
+                descriptor = contributor.Resolve(declaration, Resolvers.Create(entityType, landing.Table, declaration, suffixed: true));
+
+            yield return new Resolved(contributor, descriptor, entityType, declaration) { Table = landing.Table, Suffixed = suffixed };
+        }
+    }
 
     /// <summary>Every declaration of a model as a descriptor, in the order of its entity types and of their annotation keys.</summary>
     private List<Resolved> Resolve(IRelationalModel? model)
@@ -499,14 +522,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                         throw new InvalidOperationException(SchemaKitStrings.DeclaredOnDerivedTypeOfSharedTable(
                             entityType.ShortName(), DeclarationCodec.Describe(declaration), tableOwner.ShortName()));
 
-                    // The other way round: a type whose derived types have tables of their own. The
-                    // declaration is resolved against one table, so theirs would get nothing, and
-                    // nothing would say so (#101). Only in the consumer's own model, as above.
-                    if (TablesBelow(entityType) is { Count: > 0 } below && IsOwn(model))
-                        throw new InvalidOperationException(SchemaKitStrings.DeclaredOnTypeWithTablesBelow(
-                            entityType.ShortName(), DeclarationCodec.Describe(declaration), [.. below.Select(type => type.ShortName())]));
-
-                    resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
+                    resolved.AddRange(Land(contributor, entityType, declaration));
                 }
             }
 
@@ -527,7 +543,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                                   ?? throw new InvalidOperationException(SchemaKitStrings.NoContributorForOwner(entityType.ShortName(), reader.Owner));
 
                 foreach (var declaration in reader.Read(entityType, annotation.Value))
-                    resolved.Add(new Resolved(contributor, contributor.Resolve(declaration, Resolvers.Create(entityType, declaration)), entityType, declaration));
+                    resolved.AddRange(Land(contributor, entityType, declaration));
             }
         }
 
