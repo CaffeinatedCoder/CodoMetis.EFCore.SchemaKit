@@ -14,6 +14,10 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 /// The extension the index cannot be created without, or null. Not compared: it says how the
 /// index comes to be, and an index that is there needs nothing done for it.
 /// </param>
+/// <param name="Concurrently">
+/// Whether the index is built with <c>CONCURRENTLY</c>. Not compared: an index built either way
+/// is the same index.
+/// </param>
 internal sealed record PgIndexDescriptor(
     TableRef Table,
     QualifiedName Name,
@@ -24,7 +28,8 @@ internal sealed record PgIndexDescriptor(
     ValueList<SqlFragment> Include,
     ValueList<SqlFragment> Parameters,
     SqlFragment Where,
-    Operational<SqlName?> Extension) : ISchemaDescriptor
+    Operational<SqlName?> Extension,
+    Operational<bool> Concurrently) : ISchemaDescriptor
 {
     public SchemaScope Scope => new SchemaScope.Table(Table);
 
@@ -155,7 +160,8 @@ internal sealed class PgIndexContributor(SchemaContributorDependencies dependenc
             [.. IncludeOf(declaration).Select(path => resolver.Column(path).As(ColumnRole.Included))],
             [.. ParametersOf(declaration, sql)],
             declaration.Where is { } where ? resolver.Template(where.Template).As(ColumnRole.Condition) : SqlFragment.Empty,
-            new Operational<SqlName?>(NeedsBtreeGist(declaration, resolver) ? resolver.Dialect.Name(PgExclusionContributor.BtreeGist) : null));
+            new Operational<SqlName?>(NeedsBtreeGist(declaration, resolver) ? resolver.Dialect.Name(PgExclusionContributor.BtreeGist) : null),
+            new Operational<bool>(declaration.Concurrently));
     }
 
     // The rule of an exclusion constraint, for what an index can say: under GiST a column whose
@@ -180,7 +186,14 @@ internal sealed class PgIndexContributor(SchemaContributorDependencies dependenc
         var with = descriptor.Parameters.Count > 0 ? sql.Fragment($" WITH ({sql.List(descriptor.Parameters)})") : SqlFragment.Empty;
         var where = descriptor.Where.IsEmpty ? SqlFragment.Empty : sql.Fragment($" WHERE {descriptor.Where}");
 
-        sql.Statement($"CREATE {unique}INDEX {descriptor.Name.Name} ON {descriptor.Table}{method} ({sql.List(descriptor.Keys)}){include}{nulls}{with}{where}");
+        // CONCURRENTLY cannot run in a transaction, so the statement is written outside the
+        // migration's. It is how the index is built and no part of the descriptor's equality:
+        // an index built either way is the same index.
+        var concurrently = descriptor.Concurrently.Value ? sql.Fragment($"CONCURRENTLY ") : SqlFragment.Empty;
+
+        sql.Statement(
+            $"CREATE {unique}INDEX {concurrently}{descriptor.Name.Name} ON {descriptor.Table}{method} ({sql.List(descriptor.Keys)}){include}{nulls}{with}{where}",
+            suppressTransaction: descriptor.Concurrently.Value);
     }
 
     // By its qualified name: without the schema PostgreSQL takes the first index of that name on

@@ -116,6 +116,35 @@ What PostgreSQL has no statement for does not compile. `pg.Gin(…)` has no `inc
 `Desc()` does not go into `pg.Gist([…])`, and a GIN operator class such as
 `GinOpClass.JsonbPathOps` does not go onto a B-tree key. `Collate` exists on a key of text only.
 
+`concurrently: true` builds an index without locking the table against writes. Every method
+takes it:
+
+```csharp
+modelBuilder.Entity<RoleGrant>().ToTable("role_grants").DeclarePostgres(pg =>
+[
+    pg.BTree(x => x.RoleId, concurrently: true, name: "ix_role_grant_role"),
+]);
+```
+
+```sql
+CREATE INDEX CONCURRENTLY ix_role_grant_role ON role_grants ("RoleId");
+```
+
+PostgreSQL does not run this statement in a transaction, so the migration runs it outside its own
+(`suppressTransaction: true`). Beside the statement, the migration notes which index it is for, in
+an annotation named `CodoMetis:SchemaKit:Object`.
+
+- **`migrations script --idempotent` fails for such a migration** (`InvalidOperationException`)
+  and names the index. An idempotent script holds every statement in a `DO` block, where
+  PostgreSQL rejects this one (25001). `migrations script`, a bundle, `dotnet ef database update`
+  and `Migrate()` all run it.
+- **The migration is not applied as one.** What stands before the statement is committed when the
+  statement starts. If the build then fails, for example a unique index on rows that are not
+  unique (23505), PostgreSQL keeps an invalid index under the name. The next run fails on that
+  name (42P07): drop the invalid index, fix the rows, and apply the migration again.
+- **It is about creating the index only.** A drop and a rename are written as for any index.
+  Adding `concurrently:` to an index you already declared, or taking it away, is no migration.
+
 Good to know:
 
 - **A storage parameter out of PostgreSQL's range throws where you write it**
@@ -180,7 +209,7 @@ Good to know:
 
 | | Issue |
 |---|---|
-| Indexes: `CONCURRENTLY`, and a member of a JSON document as a key | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
+| Indexes: a member of a JSON document as a key | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor yet. A create on a table the same migration rebuilds is refused until it is placed after the rebuild | [#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145), [#115](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/115) |

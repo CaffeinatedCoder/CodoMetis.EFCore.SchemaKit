@@ -74,6 +74,55 @@ public static class IndexModels
             => Grants(modelBuilder).DeclarePostgres(pg => [pg.BTree([pg.Key(x => x.GranteeId), pg.Key(x => x.Note!.ToLower())])]);
     }
 
+    /// <summary><see cref="WithActive" />, built without locking the table against writes.</summary>
+    public sealed class WithActiveConcurrently : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Concurrently = true }]);
+    }
+
+    public sealed class ActiveConcurrentlyRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Concurrently = true, Name = "ux_renamed" }]);
+    }
+
+    /// <summary>Another index under the name, still built concurrently: a rebuild.</summary>
+    public sealed class ActiveConcurrentlyNotUnique : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Concurrently = true, Unique = null }]);
+    }
+
+    /// <summary>An index built in the migration's transaction, and one built outside it.</summary>
+    public sealed class ByNoteAndActiveConcurrently : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(_ => [ByNote, Active with { Concurrently = true }]);
+    }
+
+    /// <summary>The grants with the grantee as a <c>bigint</c>, and no index.</summary>
+    public sealed class LongGrantees : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).Property(x => x.GranteeId).HasColumnType("bigint");
+    }
+
+    /// <summary><see cref="LongGrantees" /> with <see cref="Active" /> built concurrently: from <see cref="Models.Bare" />, a column altered and then the index.</summary>
+    public sealed class ActiveConcurrentlyForLongGrantees : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.GranteeId).HasColumnType("bigint");
+            grants.DeclarePostgres(_ => [Active with { Concurrently = true }]);
+        }
+    }
+
+    public sealed class UnnamedConcurrently : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(pg => [pg.BTree([pg.Key(x => x.GranteeId), pg.Key(x => x.Note!.ToLower())], concurrently: true)]);
+    }
+
     public sealed class ActiveRenamed : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder) => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Name = "ux_renamed" }]);
@@ -438,6 +487,13 @@ public static class IndexModels
             pg.Brin([pg.Key(x => x.Rank)], where: x => x.Rank > 0, pagesPerRange: 16, autosummarize: false, name: "ix_doc_rank_brin"),
             pg.BTree([pg.Key(x => x.Title.ToLower()).Collate("POSIX").Ops(BTreeOpClass.TextPatternOps).Desc()], fillFactor: 70, deduplicateItems: false, name: "ix_doc_title"),
         ]);
+    }
+
+    /// <summary><see cref="EveryMethod" />, each index built <c>CONCURRENTLY</c>.</summary>
+    public sealed class EveryMethodConcurrently : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Documents(modelBuilder).DeclarePostgres(_ => EveryMethod.Declared.Select(index => index with { Concurrently = true }));
     }
 
     /// <summary>The range alone under GiST: its type has an operator class without any extension.</summary>

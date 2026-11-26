@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
+using CodoMetis.EFCore.SchemaKit.Migrations.Internal;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
 namespace CodoMetis.EFCore.SchemaKit;
@@ -31,6 +32,12 @@ public sealed partial class SchemaSql
     /// <summary>The statements so far, as the operations a migration carries.</summary>
     internal IReadOnlyList<SqlOperation> Operations => _operations;
 
+    /// <summary>
+    /// What the statements written next are for, in words a person reads: the planner says it
+    /// before it hands the builder to a contributor or to the dialect.
+    /// </summary>
+    internal string? Subject { get; set; }
+
     /// <summary>Adds another builder's statements, in their order: a contributor's answer the planner keeps.</summary>
     internal void Append(SchemaSql other) => _operations.AddRange(other._operations);
 
@@ -47,6 +54,13 @@ public sealed partial class SchemaSql
     /// A <c>DROP … IF EXISTS</c> is refused. A drop that cannot fail hides an object that is already
     /// gone, which means the database and the snapshot disagree, and that is the thing to hear about.
     /// </para>
+    /// <para>
+    /// A statement with the transaction suppressed says which object it is for, as an annotation
+    /// on its operation, which <c>migrations add</c> writes into the migration. Not every way of
+    /// applying a migration carries such a statement
+    /// (<see cref="ISchemaDialect.WhyNotOutsideTransaction" />), and the one that does not is known
+    /// only when the SQL is generated, where nothing but the operation is at hand.
+    /// </para>
     /// </remarks>
     /// <param name="sql">The statement, as an interpolated string.</param>
     /// <param name="suppressTransaction">True for a statement that cannot run in a transaction, such as <c>CREATE INDEX CONCURRENTLY</c>.</param>
@@ -60,7 +74,11 @@ public sealed partial class SchemaSql
         if (DropIfExists().IsMatch(text))
             throw new InvalidOperationException(SchemaKitStrings.DropIfExists(text));
 
-        _operations.Add(new SqlOperation { Sql = text + Dialect.StatementTerminator, SuppressTransaction = suppressTransaction });
+        var operation = new SqlOperation { Sql = text + Dialect.StatementTerminator, SuppressTransaction = suppressTransaction };
+        if (suppressTransaction && Subject is not null)
+            StatementStamp.Stamp(operation, Subject);
+
+        _operations.Add(operation);
     }
 
     /// <summary>Composes a piece of SQL from the same kinds of value a statement takes.</summary>

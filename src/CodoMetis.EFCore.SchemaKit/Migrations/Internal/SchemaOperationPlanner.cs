@@ -210,7 +210,7 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
 
             // The answer's statements are kept only if the change stays in place: the planner can
             // still turn it into a rebuild below, and then they must not reach the migration.
-            var statements = new SchemaSql(Dialect);
+            var statements = new SchemaSql(Dialect) { Subject = Subject(becomes, becomes.Descriptor) };
             switch (was.Contributor.Plan(was.Descriptor, becomes.Descriptor, statements))
             {
                 case SchemaChange.None:
@@ -265,7 +265,10 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
             .Concat(same.Concat(changed).SelectMany(pair => Extensions(pair.Target.Descriptor).Except(Extensions(pair.Source.Before))))
             .Distinct();
         foreach (var extension in needed)
+        {
+            before.Subject = SchemaKitStrings.TheExtension(extension.Name);
             Dialect.EnsureExtension(extension, target!.Model, before);
+        }
 
         // What the consumer's model says an object needs has to be there to need: a dependency
         // on an object nothing declares would be a create that fails at apply, or one on a
@@ -278,15 +281,15 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
         // another is dropped before it and created after it, whatever the placement and the
         // model's order say (#115).
         foreach (var drop in DependentsFirst([.. AttachedToTables(drops).OrderByDescending(d => d.Contributor.Placement.Rank).ThenByDescending(drops.IndexOf)]))
-            drop.Contributor.Drop(drop.Before, before);
+            drop.Contributor.Drop(drop.Before, For(before, drop, drop.Before));
         foreach (var create in DependenciesFirst([.. MadeBeforeTables(creates)], created: targetOrder))
-            create.Contributor.Create(create.Descriptor, before);
+            create.Contributor.Create(create.Descriptor, For(before, create, create.Descriptor));
 
         // After them: changes in place, then creates by placement, then what tables were made of.
         foreach (var create in DependenciesFirst([.. AttachedToTables(creates).OrderBy(c => c.Contributor.Placement.Rank).ThenBy(creates.IndexOf)], created: targetOrder))
-            create.Contributor.Create(create.Descriptor, after);
+            create.Contributor.Create(create.Descriptor, For(after, create, create.Descriptor));
         foreach (var drop in DependentsFirst([.. MadeBeforeTables(drops).Reverse()]))
-            drop.Contributor.Drop(drop.Descriptor, after);
+            drop.Contributor.Drop(drop.Descriptor, For(after, drop, drop.Descriptor));
 
         return new SchemaOperationPlan(before.Operations, [.. inPlace.Operations, .. after.Operations]);
     }
@@ -297,6 +300,17 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
            && descriptor.Name.Equals(needed.Name);
 
     private static IEnumerable<Dependency.SchemaObject> Needs(ISchemaDescriptor descriptor) => descriptor.Dependencies.OfType<Dependency.SchemaObject>();
+
+    // What a statement is for, as the migration says it of one that runs outside a transaction:
+    // the object by the name the database has for it, which a declaration without a name lacks.
+    private static string Subject(Resolved resolved, ISchemaDescriptor descriptor)
+        => SchemaKitStrings.TheObject(resolved.Declaration.Owner, descriptor.Name, resolved.EntityType.ShortName());
+
+    private static SchemaSql For(SchemaSql sql, Resolved resolved, ISchemaDescriptor descriptor)
+    {
+        sql.Subject = Subject(resolved, descriptor);
+        return sql;
+    }
 
     private static string Named(Resolved resolved) => $"{DeclarationCodec.Describe(resolved.Declaration)} on {resolved.EntityType.ShortName()}";
 

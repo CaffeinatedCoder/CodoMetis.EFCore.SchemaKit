@@ -38,6 +38,11 @@ internal static class PgStrings
     public static string UnknownBuffering(string token)
         => $"'{token}' is no buffering of a GiST index. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
 
+    public const string NotInAnIdempotentScript =
+        "An idempotent script holds every statement in a DO block, where PostgreSQL runs nothing that cannot run in a transaction " +
+        "(25001): psql would go on after the error and record the migration without the object. Write the script without " +
+        "--idempotent, or apply the migration with a bundle or with 'dotnet ef database update'.";
+
     public static string OperatorClassNotForType(string index, string opClass, string method, string path, string storeType)
         => $"The index '{index}' gives its key '{path}' the operator class '{opClass}' of {method}, which PostgreSQL has for other types than "
            + $"the column's, '{storeType}': the server would refuse the index when the migration is applied. Leave the class out for the "

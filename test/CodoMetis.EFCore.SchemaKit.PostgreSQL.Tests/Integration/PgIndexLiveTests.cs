@@ -429,6 +429,100 @@ public sealed class PgIndexLiveTests
         AssertMigratesTo<IndexModels.OneReservationPerRoom, Models.ReservationsInThreeTables>((migrated, _) => Assert.AreEqual(0, migrated.Indexes().Count));
     }
 
+    // ── CONCURRENTLY ──
+
+    /// <summary>Each index with whether PostgreSQL holds it as valid: a concurrent build that failed leaves one that is not.</summary>
+    private static List<string> Validity(LiveDatabase database)
+    {
+        using var connection = database.Open();
+        return connection.Column(
+            """
+            SELECT c.relname || CASE WHEN i.indisvalid THEN ' valid' ELSE ' invalid' END
+            FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE NOT i.indisprimary AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+            ORDER BY 1
+            """);
+    }
+
+    private static string TypeOf(LiveDatabase database, string table, string column)
+    {
+        using var connection = database.Open();
+        return connection.Column($"SELECT data_type::text FROM information_schema.columns WHERE table_name = '{table}' AND column_name = '{column}'").Single();
+    }
+
+    /// <summary>
+    /// An index built concurrently is the index a build in the transaction makes: the catalog
+    /// after the migration is what <c>EnsureCreated()</c> builds, which runs the statement too,
+    /// and the index is valid. PostgreSQL refuses the statement in a transaction (25001), so
+    /// that it applies at all says it ran outside one.
+    /// </summary>
+    [TestMethod]
+    public void An_index_built_concurrently_is_the_index_EnsureCreated_builds()
+    {
+        AssertMigratesTo<Models.Bare, IndexModels.WithActiveConcurrently>((migrated, created) =>
+        {
+            CollectionAssert.AreEqual(new[] { Active }, migrated.Indexes());
+            CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(migrated));
+            CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(created));
+        });
+
+        // A rebuild: dropped in the transaction, built again outside it.
+        AssertMigratesTo<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyNotUnique>((migrated, _) =>
+            CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(migrated)));
+
+        // Every access method, beside the extension one of them needs.
+        AssertMigratesTo<IndexModels.DocumentsBare, IndexModels.EveryMethodConcurrently>((migrated, _) =>
+        {
+            Assert.AreEqual(7, migrated.Indexes().Count);
+            Assert.IsTrue(Validity(migrated).All(index => index.EndsWith(" valid", StringComparison.Ordinal)));
+        });
+    }
+
+    /// <summary>It is the same index to the model as well: a migration between the two is empty, and applies as nothing.</summary>
+    [TestMethod]
+    public void Asking_for_concurrently_later_leaves_the_index_alone()
+    {
+        using var database = new LiveDatabase();
+        database.Create<IndexModels.WithActive>();
+        var oid = database.IndexOid(IndexModels.ActiveName);
+
+        database.Migrate<IndexModels.WithActive, IndexModels.WithActiveConcurrently>();
+
+        Assert.AreEqual(oid, database.IndexOid(IndexModels.ActiveName));
+    }
+
+    /// <summary>
+    /// What a concurrent build that fails leaves behind, which is PostgreSQL's and EF Core's doing
+    /// and the price of the statement: the migration is not applied as one. What stood before the
+    /// statement is committed, the index is there and invalid, and the same statement then fails
+    /// on its name (42P07). The way on is to drop the invalid index by hand, mend the rows, and
+    /// apply what is left.
+    /// </summary>
+    [TestMethod]
+    public void A_concurrent_build_that_fails_leaves_an_invalid_index_and_what_stood_before_it()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.Bare>();
+        Save<Models.Bare>(database, Grant(1, 1));
+        Save<Models.Bare>(database, Grant(1, 1));
+
+        var refusal = Assert.ThrowsExactly<PostgresException>(database.Migrate<Models.Bare, IndexModels.ActiveConcurrentlyForLongGrantees>);
+
+        Assert.AreEqual(PostgresErrorCodes.UniqueViolation, refusal.SqlState);
+        Assert.AreEqual("bigint", TypeOf(database, "role_grants", "GranteeId"), "The column altered before the statement stays altered.");
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active invalid" }, Validity(database));
+
+        // What is left of the migration is the index alone, and it meets its own leftover.
+        var again = Assert.ThrowsExactly<PostgresException>(database.Migrate<IndexModels.LongGrantees, IndexModels.ActiveConcurrentlyForLongGrantees>);
+        Assert.AreEqual(PostgresErrorCodes.DuplicateTable, again.SqlState);
+
+        database.Execute("DROP INDEX ux_role_grant_active");
+        database.Execute("""DELETE FROM role_grants WHERE "Id" = (SELECT max("Id") FROM role_grants)""");
+        database.Migrate<IndexModels.LongGrantees, IndexModels.ActiveConcurrentlyForLongGrantees>();
+
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(database));
+    }
+
     // ── The other access methods ──
 
     [TestMethod]

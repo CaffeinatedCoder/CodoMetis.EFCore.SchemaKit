@@ -140,6 +140,9 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
     /// <summary>What the next <see cref="Plan" /> answers in place of its own judgement, for the tests of the base class.</summary>
     public Func<SchemaSql, SchemaChange>? PlanOverride { get; set; }
 
+    /// <summary>True to write every statement with the transaction suppressed, for the tests of what such a statement says of itself.</summary>
+    public bool OutsideTransaction { get; set; }
+
     /// <summary>The same for <see cref="ImpactOf" />.</summary>
     public Func<BaseChange, Impact>? ImpactOverride { get; set; }
 
@@ -167,17 +170,17 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
     protected override void Create(TestGuardDescriptor descriptor, SchemaSql sql)
     {
         if (descriptor.IsTrigger)
-            sql.Statement($"CREATE TRIGGER {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})");
+            sql.Statement($"CREATE TRIGGER {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})", suppressTransaction: OutsideTransaction);
         else
-            sql.Statement($"CREATE UNIQUE INDEX {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})");
+            sql.Statement($"CREATE UNIQUE INDEX {descriptor.Name.Name} ON {descriptor.Table} ({sql.List(descriptor.Columns)})", suppressTransaction: OutsideTransaction);
     }
 
     protected override void Drop(TestGuardDescriptor descriptor, SchemaSql sql)
     {
         if (descriptor.IsTrigger)
-            sql.Statement($"DROP TRIGGER {descriptor.Name.Name} ON {descriptor.Table}");
+            sql.Statement($"DROP TRIGGER {descriptor.Name.Name} ON {descriptor.Table}", suppressTransaction: OutsideTransaction);
         else
-            sql.Statement($"DROP INDEX {descriptor.Name}");
+            sql.Statement($"DROP INDEX {descriptor.Name}", suppressTransaction: OutsideTransaction);
     }
 
     protected override SchemaChange Plan(TestGuardDescriptor from, TestGuardDescriptor to, SchemaSql sql)
@@ -185,7 +188,7 @@ public sealed class TestGuardContributor(SchemaContributorDependencies dependenc
         if (PlanOverride is not null) return PlanOverride(sql);
         if (!from.WithName(to.Name).Equals(to)) return new SchemaChange.Rebuild();
 
-        sql.Statement($"ALTER INDEX {from.Name} RENAME TO {to.Name.Name}");
+        sql.Statement($"ALTER INDEX {from.Name} RENAME TO {to.Name.Name}", suppressTransaction: OutsideTransaction);
         return new SchemaChange.InPlace();
     }
 
@@ -306,15 +309,20 @@ public sealed class TestDomainContributor(SchemaContributorDependencies dependen
 
     public Func<BaseChange, Impact>? ImpactOverride { get; set; }
 
-    protected override void Create(TestDomainDescriptor descriptor, SchemaSql sql) => sql.Statement($"CREATE DOMAIN {descriptor.Name} AS {descriptor.Type}");
+    /// <summary>True to write every statement with the transaction suppressed, for the tests of what such a statement says of itself.</summary>
+    public bool OutsideTransaction { get; set; }
 
-    protected override void Drop(TestDomainDescriptor descriptor, SchemaSql sql) => sql.Statement($"DROP DOMAIN {descriptor.Name}");
+    protected override void Create(TestDomainDescriptor descriptor, SchemaSql sql)
+        => sql.Statement($"CREATE DOMAIN {descriptor.Name} AS {descriptor.Type}", suppressTransaction: OutsideTransaction);
+
+    protected override void Drop(TestDomainDescriptor descriptor, SchemaSql sql)
+        => sql.Statement($"DROP DOMAIN {descriptor.Name}", suppressTransaction: OutsideTransaction);
 
     protected override SchemaChange Plan(TestDomainDescriptor from, TestDomainDescriptor to, SchemaSql sql)
     {
         if (!from.WithName(to.Name).Equals(to)) return new SchemaChange.Rebuild();
 
-        sql.Statement($"ALTER DOMAIN {from.Name} RENAME TO {to.Name.Name}");
+        sql.Statement($"ALTER DOMAIN {from.Name} RENAME TO {to.Name.Name}", suppressTransaction: OutsideTransaction);
         return new SchemaChange.InPlace();
     }
 

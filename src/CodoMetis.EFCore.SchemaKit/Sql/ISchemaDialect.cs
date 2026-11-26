@@ -75,6 +75,20 @@ public interface ISchemaDialect
     OperationEffect EffectOf(Microsoft.EntityFrameworkCore.Migrations.Operations.MigrationOperation operation);
 
     /// <summary>
+    /// Why a migration applied in this way cannot hold a statement that runs outside a
+    /// transaction, or null when it can. The answer is a sentence of the provider's package that
+    /// ends with the way out, since only that package knows it.
+    /// </summary>
+    /// <remarks>
+    /// Asked when the SQL of a migration is generated, of a statement written with
+    /// <c>suppressTransaction: true</c>. Such a statement is refused with the answer, and the
+    /// object it is for named, and nothing is written. The migration itself is not at fault: the
+    /// same one is applied by a bundle and written into a script.
+    /// </remarks>
+    /// <param name="options">How the migration is applied: as a script, an idempotent one, or by commands.</param>
+    string? WhyNotOutsideTransaction(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions options);
+
+    /// <summary>
     /// The schema the database puts an object in when its statement names none, or null when the
     /// dialect does not know it. A name claimed by a table without a schema is compared under it
     /// with one in that schema.
@@ -240,6 +254,13 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
     /// table without one.
     /// </remarks>
     public virtual Identifier? DefaultSchema => null;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Null here: a provider without a package is taken to carry the statement wherever it writes
+    /// the migration. SQL Server does, in an idempotent script too (spike D).
+    /// </remarks>
+    public virtual string? WhyNotOutsideTransaction(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions options) => null;
 
     /// <inheritdoc />
     /// <remarks>

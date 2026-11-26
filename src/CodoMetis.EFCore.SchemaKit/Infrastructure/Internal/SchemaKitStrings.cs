@@ -258,6 +258,14 @@ internal static class SchemaKitStrings
            "provider writes no statement: the database would stay as it is while the model and the migration say otherwise, " +
            $"and the object would be created or kept where the table is not. {wayOut}";
 
+    public static string TheObject(string owner, object name, string entity) => $"{owner} '{name}' on {entity}";
+
+    public static string TheExtension(string name) => $"the extension '{name}'";
+
+    public static string NotCarriedOutsideATransaction(string subject, string statement, string why)
+        => $"The statement for {subject} runs outside a transaction, and the migration cannot be written this way with it: " +
+           $"{statement} {why}";
+
     public static string CreateOnARebuiltTable(string entity, string declaration, TableRef table)
         => $"{entity} declares {declaration}, which this migration has to create on the table '{table}', and the migration " +
            "changes that table in a way SQLite's provider writes as a rebuild: a new table, the rows copied, the old table " +
