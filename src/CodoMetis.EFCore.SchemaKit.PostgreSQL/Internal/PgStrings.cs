@@ -38,6 +38,10 @@ internal static class PgStrings
     public static string UnknownBuffering(string token)
         => $"'{token}' is no buffering of a GiST index. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
 
+    public static string NameTooLong(string name, int length, int limit)
+        => $"The name '{name}' is {length} bytes long and PostgreSQL keeps {limit}. It shortens a longer name without an error, " +
+           "and a collation or an operator class of the shortened name would be taken in its place.";
+
     public const string NotInAnIdempotentScript =
         "An idempotent script holds every statement in a DO block, where PostgreSQL runs nothing that cannot run in a transaction " +
         "(25001): psql would go on after the error and record the migration without the object. Write the script without " +

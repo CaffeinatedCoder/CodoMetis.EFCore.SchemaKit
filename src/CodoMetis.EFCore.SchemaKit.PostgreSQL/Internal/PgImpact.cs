@@ -92,6 +92,15 @@ internal static class PgImpact
             _                                => null,
         };
 
+        // SQL written by hand names its columns and its table in its own text, which nothing
+        // here reads. PostgreSQL carries a rename into the object, and the SQL in the model goes
+        // on saying the old name: left to follow, the model would describe an object the
+        // database does not hold, on a column that is gone or on another one that took the name.
+        // Rebuilt around the rename, such SQL fails the migration, and SQL that never named what
+        // was renamed is built again as it was. Measured for an index and for a constraint.
+        if (change is (BaseChange.ColumnRenamed or BaseChange.TableRenamed or BaseChange.TableMoved) && reads.Any(read => read is Dependency.WholeTable))
+            return new Impact.RebuildAround();
+
         var roles = column is null ? [] : reads.OfType<Dependency.Column>().Where(read => read.Name.Equals(column)).Select(read => read.Role).ToHashSet();
 
         foreach (var row in Rows)

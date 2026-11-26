@@ -199,9 +199,14 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   is not a constant is CA1857, a warning in a contributor's build and an error here. The kernel
   probes run the SDK's .NET analyzers for it (`E11`).
 - **Values come from the dialect:** `ISchemaDialect.Identifier` checks the length, `Operator` the
-  operator grammar. None of the value types has a public constructor taking text.
+  operator grammar. PostgreSQL's dialect holds `Name` to the server's 63 bytes as well (#210):
+  the server shortens a collation of 64 bytes without an error and takes the collation of the
+  shortened name where there is one
+  (`A_collation_longer_than_PostgreSQL_keeps_would_be_another_one`). The limit is the
+  server's and not the model's, which may state a shorter one for its own names. None of the value types has a public constructor taking text.
 - **`SchemaSql` appends the provider's statement terminator** and refuses a statement that brings
-  one, an empty one, and a `DROP … IF EXISTS`.
+  one, an empty one, and a `DROP … IF EXISTS`. The drop is looked for in the statement without
+  its string literals and delimited names (#211): a value that holds the words is no drop.
 - **A schema-scoped object is dropped by `table.Qualify(name)`.** Whether a kind takes a qualified
   name is the database's rule (a PostgreSQL index does; a constraint and a trigger are named within
   their table), so the contributor calls it. `PostgresStatementTests` holds the reason as a fact
@@ -635,7 +640,11 @@ what is still missing).
   the test of the rule fails and the rule and its refusal go.
 - **`Plan` is a rename or a rebuild.** PostgreSQL alters nothing else about an exclusion constraint.
 - **`ImpactOf` is the package's one measured table, `PgImpact`** (#117; plan, section 3.7), keyed
-  by the object's kind, the role the column is read in and the change. Renames follow, an
+  by the object's kind, the role the column is read in and the change. Renames follow, except
+  under an object with SQL written by hand, which is rebuilt around a rename of a column, of
+  the table or of its schema (#209): PostgreSQL carries the rename into the object and the
+  model's SQL goes on saying the old name, so left to follow the migration applied and the model described what the
+  database did not hold. Beyond that, an
   altered column leaves the constraint alone, a dropped column that is an element by itself
   takes the constraint with it (`Lost`), whatever else reads it; one that only an element's
   expression or only the condition reads has to have the constraint out of its way

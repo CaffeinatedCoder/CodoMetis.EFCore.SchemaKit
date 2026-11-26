@@ -71,7 +71,9 @@ public sealed partial class SchemaSql
             throw new InvalidOperationException(SchemaKitStrings.EmptyStatement);
         if (text.EndsWith(Dialect.StatementTerminator, StringComparison.Ordinal))
             throw new InvalidOperationException(SchemaKitStrings.StatementHasTerminator(text, Dialect.StatementTerminator));
-        if (DropIfExists().IsMatch(text))
+        // Asked of the statement without what it quotes: a value or a name that holds the words
+        // is no drop, and a condition that compares a column with them is a statement like any other.
+        if (DropIfExists().IsMatch(Quoted().Replace(text, "''")))
             throw new InvalidOperationException(SchemaKitStrings.DropIfExists(text));
 
         var operation = new SqlOperation { Sql = text + Dialect.StatementTerminator, SuppressTransaction = suppressTransaction };
@@ -108,6 +110,10 @@ public sealed partial class SchemaSql
 
     [GeneratedRegex(@"\bDROP\b[^;]*\bIF\s+EXISTS\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DropIfExists();
+
+    // A string literal with its doubled quotes, and a name delimited by double quotes, brackets or backticks.
+    [GeneratedRegex("""'(?:[^']|'')*'|"(?:[^"]|"")*"|\[(?:[^\]]|\]\])*\]|`(?:[^`]|``)*`""", RegexOptions.CultureInvariant)]
+    private static partial Regex Quoted();
 }
 
 /// <summary>

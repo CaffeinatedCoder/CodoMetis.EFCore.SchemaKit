@@ -47,6 +47,52 @@ public sealed class NpgsqlWiringTests
         StringAssert.Contains(refusal.Message, "80");
     }
 
+    /// <summary>A collation and an operator class are counted the same way, and refused where the index is declared in the model.</summary>
+    [TestMethod]
+    public void A_collation_or_an_operator_class_longer_than_PostgreSQL_keeps_is_refused()
+    {
+        using var context = Contexts.Of<Models.Bare>();
+        var dialect = context.GetService<ISchemaDialect>();
+
+        Assert.AreEqual(63, dialect.Name(new string('c', 63)).Name.Length);
+        Assert.ThrowsExactly<InvalidOperationException>(() => dialect.Name(new string('c', 64)));
+        Assert.ThrowsExactly<InvalidOperationException>(() => dialect.Name(new string('ä', 32)));
+
+        var collated = Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<Models.Bare, LongCollation>());
+        StringAssert.Contains(collated.Message, "is 64 bytes long and PostgreSQL keeps 63");
+        var classed = Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<Models.Bare, LongOperatorClass>());
+        StringAssert.Contains(classed.Message, "is 64 bytes long and PostgreSQL keeps 63");
+
+        // The limit is the server's, not the model's: a model that states a shorter one for its
+        // own names still writes PostgreSQL's.
+        Assert.AreEqual(2, Contexts.Diff<Models.Bare, AShortLimitOfItsOwn>().Sql().Count);
+    }
+
+    private sealed class AShortLimitOfItsOwn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Model.SetMaxIdentifierLength(12);
+            modelBuilder.Entity<RoleGrant>().ToTable("role_grants").DeclarePostgres(pg =>
+            [
+                pg.BTree([pg.Key(x => x.Note!).Ops(BTreeOpClass.VarcharPatternOps)], deduplicateItems: true, name: "ix_a"),
+                pg.Gin(x => x.Note!, new GinOpClass("gin_trgm_ops_x"), name: "ix_b"),
+            ]);
+        }
+    }
+
+    private sealed class LongCollation : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants")
+            .DeclarePostgres(pg => [pg.BTree([pg.Key(x => x.Note!).Collate(new string('c', 64))], name: "ix_long")]);
+    }
+
+    private sealed class LongOperatorClass : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>().ToTable("role_grants")
+            .DeclarePostgres(pg => [pg.BTree([pg.Key(x => x.Note!).Ops(new BTreeOpClass(new string('t', 64)))], name: "ix_long")]);
+    }
+
     private sealed class KernelOnly(DbContextOptions<KernelOnly> options) : DbContext(options)
     {
         protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.Entity<RoleGrant>();

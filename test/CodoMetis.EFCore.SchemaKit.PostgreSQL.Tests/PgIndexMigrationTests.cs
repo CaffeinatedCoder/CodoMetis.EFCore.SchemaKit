@@ -316,6 +316,38 @@ public sealed class PgIndexMigrationTests
     }
 
     /// <summary>
+    /// SQL written by hand names its columns in its own text, which nothing here reads. PostgreSQL
+    /// renames a column inside the index, and the SQL in the model still says the old name: left
+    /// to follow, the database would hold an index on the renamed column while the model
+    /// describes one on a column that is gone, or on another column that took the name. So the
+    /// index is rebuilt around a column's rename, whichever column it is: the create then fails
+    /// on SQL that names the old column, or builds what the SQL says.
+    /// </summary>
+    [TestMethod]
+    public void A_renamed_column_under_SQL_written_by_hand_is_rebuilt_around()
+    {
+        const string create = """CREATE INDEX ix_by_hand ON role_grants ((upper("Note")));""";
+
+        CollectionAssert.AreEqual(
+            new[] { "DROP INDEX ix_by_hand;", "RenameColumnOperation", create },
+            Contexts.Diff<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlWithTheNoteRenamed>().Shape());
+        CollectionAssert.AreEqual(
+            new[] { "DROP INDEX ix_by_hand;", "RenameColumnOperation", "CREATE INDEX ix_by_hand ON role_grants ((upper(memo)));" },
+            Contexts.Diff<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlForTheMemo>().Shape());
+        CollectionAssert.AreEqual(
+            new[] { "DROP INDEX ix_by_hand;", "RenameColumnOperation", create },
+            Contexts.Diff<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlWithTheRoleRenamed>().Shape());
+
+        // The table's own name can stand in such SQL too, so its rename and its move are the same.
+        CollectionAssert.AreEqual(
+            new[] { "DROP INDEX ix_by_hand;", "RenameTableOperation", """CREATE INDEX ix_by_hand ON grants ((upper("Note")));""" },
+            Contexts.Diff<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlOnARenamedTable>().Shape().Where(o => o is not ("DropPrimaryKeyOperation" or "AddPrimaryKeyOperation")).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "DROP INDEX ix_by_hand;", "EnsureSchemaOperation", "RenameTableOperation", """CREATE INDEX ix_by_hand ON grants.role_grants ((upper("Note")));""" },
+            Contexts.Diff<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlInASchema>().Shape());
+    }
+
+    /// <summary>
     /// SQL written by hand names no column, so nothing says whether it reads the one that goes.
     /// The index is taken out of the way and created again: were it read, the create fails.
     /// </summary>

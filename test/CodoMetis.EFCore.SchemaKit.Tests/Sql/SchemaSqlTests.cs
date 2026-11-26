@@ -142,6 +142,27 @@ public sealed class SchemaSqlTests
         Assert.ThrowsExactly<InvalidOperationException>(() => sql.Statement($"  "));
     }
 
+    /// <summary>
+    /// The words inside a value or a delimited name are no drop: an index whose condition compares
+    /// a column with them is a statement like any other. What is quoted is quoted by the dialect,
+    /// so the test writes it through the dialect too.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void The_words_of_a_drop_inside_a_value_or_a_name_are_no_drop(Provider provider)
+    {
+        using var context = Context(provider);
+        var dialect = context.GetService<ISchemaDialect>();
+        var sql = new SchemaSql(dialect);
+
+        sql.Statement($"CREATE INDEX ix ON t (c) WHERE c = {sql.Literal("DROP TABLE IF EXISTS it's")}");
+        sql.Statement($"CREATE INDEX {dialect.Identifier("drop it if exists")} ON t (c)");
+        Assert.AreEqual(2, sql.Operations.Count);
+
+        // And outside the quotes it still is one, with a value before it and after it.
+        Assert.ThrowsExactly<InvalidOperationException>(() => sql.Statement($"COMMENT ON t IS {sql.Literal("a")}; DROP INDEX IF EXISTS x"));
+        Assert.ThrowsExactly<InvalidOperationException>(() => sql.Statement($"ALTER TABLE t DROP CONSTRAINT IF EXISTS {dialect.Identifier("c")}"));
+    }
+
     [TestMethod]
     [DataRow("DROP INDEX IF EXISTS x")]
     [DataRow("ALTER TABLE t DROP CONSTRAINT IF EXISTS c")]

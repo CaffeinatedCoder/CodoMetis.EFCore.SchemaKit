@@ -380,6 +380,42 @@ public sealed class PgIndexLiveTests
     public void Dropping_a_column_and_its_index_from_the_model()
         => AssertMigratesTo<IndexModels.WithByNote, IndexModels.NoNoteAndNothingDeclared>((migrated, _) => Assert.AreEqual(0, migrated.Indexes().Count));
 
+    /// <summary>
+    /// The server's side of the rule for a renamed column under SQL written by hand. It renames
+    /// the column inside the index and says nothing, so an index left to follow is one the model
+    /// no longer describes. Rebuilt around the rename, SQL that still names the old column fails
+    /// the migration (42703) and the database stays as it was; SQL written for the new name, or
+    /// that never read the column, is built as the model says.
+    /// </summary>
+    [TestMethod]
+    public void Renaming_a_column_under_SQL_written_by_hand()
+    {
+        using (var database = new LiveDatabase())
+        {
+            database.Create<IndexModels.ByHandWrittenSql>();
+            var before = database.Indexes();
+
+            var refusal = Assert.ThrowsExactly<PostgresException>(database.Migrate<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlWithTheNoteRenamed>);
+
+            Assert.AreEqual(PostgresErrorCodes.UndefinedColumn, refusal.SqlState);
+            CollectionAssert.AreEqual(before, database.Indexes());
+        }
+
+        AssertMigratesTo<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlForTheMemo>((migrated, _) => Assert.AreEqual(1, migrated.Indexes().Count));
+        AssertMigratesTo<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlWithTheRoleRenamed>((migrated, _) => Assert.AreEqual(1, migrated.Indexes().Count));
+
+        AssertMigratesTo<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlOnARenamedTable>((migrated, _) => Assert.AreEqual(1, migrated.Indexes().Count));
+        AssertMigratesTo<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlInASchema>((migrated, _) => Assert.AreEqual(1, migrated.Indexes().Count));
+
+        // What the server does by itself, which is why the index is not left to follow.
+        using var byHand = new LiveDatabase();
+        byHand.Create<IndexModels.ByHandWrittenSql>();
+        byHand.Execute("""ALTER TABLE role_grants RENAME COLUMN "Note" TO memo""");
+        CollectionAssert.AreEqual(
+            new[] { "public.role_grants | CREATE INDEX ix_by_hand ON public.role_grants USING btree (upper(memo))" },
+            byHand.Indexes());
+    }
+
     [TestMethod]
     public void Dropping_a_column_beside_SQL_written_by_hand()
         => AssertMigratesTo<IndexModels.ByHandWrittenSql, IndexModels.ByHandWrittenSqlWithoutTheRole>((migrated, _) => Assert.AreEqual(1, migrated.Indexes().Count));
@@ -427,6 +463,27 @@ public sealed class PgIndexLiveTests
         AssertMigratesTo<Models.ReservationsInThreeTables, IndexModels.OneReservationPerRoom>((migrated, _) => Assert.AreEqual(3, migrated.Indexes().Count));
         AssertMigratesTo<Models.ReservationsInThreeTables, IndexModels.OneReservationPerRoomWithoutAName>((migrated, _) => Assert.AreEqual(3, migrated.Indexes().Count));
         AssertMigratesTo<IndexModels.OneReservationPerRoom, Models.ReservationsInThreeTables>((migrated, _) => Assert.AreEqual(0, migrated.Indexes().Count));
+    }
+
+    /// <summary>
+    /// Why a collation's name is held to 63 bytes where the index is declared: PostgreSQL shortens
+    /// a longer one with a notice and no error, and builds the index with the collation of the
+    /// shortened name where there is one.
+    /// </summary>
+    [TestMethod]
+    public void A_collation_longer_than_PostgreSQL_keeps_would_be_another_one()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.Bare>();
+        var kept = new string('c', 63);
+        database.Execute($"""CREATE COLLATION "{kept}" (provider = libc, locale = 'C')""");
+
+        database.Execute($"""CREATE INDEX ix_long ON role_grants ("Note" COLLATE "{kept}c")""");
+
+        using var connection = database.Open();
+        CollectionAssert.AreEqual(
+            new[] { kept },
+            connection.Column("SELECT c.collname::text FROM pg_index i JOIN pg_collation c ON c.oid = i.indcollation[0] WHERE i.indexrelid = 'ix_long'::regclass"));
     }
 
     // ── CONCURRENTLY ──
@@ -521,6 +578,56 @@ public sealed class PgIndexLiveTests
         database.Migrate<IndexModels.LongGrantees, IndexModels.ActiveConcurrentlyForLongGrantees>();
 
         CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(database));
+    }
+
+    /// <summary>
+    /// The same migration applied again starts from its first statement, and a statement that
+    /// cannot run twice fails there: the index is not reached. So an index built concurrently
+    /// belongs in a migration of its own, which holds nothing that is committed before it.
+    /// </summary>
+    [TestMethod]
+    public void After_a_failed_concurrent_build_the_same_migration_fails_at_what_it_did_before()
+    {
+        using var database = new LiveDatabase();
+        database.Create<Models.Bare>();
+        Save<Models.Bare>(database, Grant(1, 1));
+        Save<Models.Bare>(database, Grant(1, 1));
+
+        var first = Assert.ThrowsExactly<PostgresException>(database.Migrate<Models.Bare, IndexModels.ActiveConcurrentlyWithOneMoreColumn>);
+        Assert.AreEqual(PostgresErrorCodes.UniqueViolation, first.SqlState);
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active invalid" }, Validity(database));
+
+        var again = Assert.ThrowsExactly<PostgresException>(database.Migrate<Models.Bare, IndexModels.ActiveConcurrentlyWithOneMoreColumn>);
+        Assert.AreEqual(PostgresErrorCodes.DuplicateColumn, again.SqlState);
+    }
+
+    /// <summary>
+    /// A changed index is dropped and built again, and with <c>CONCURRENTLY</c> the drop is
+    /// committed before the build begins. Until the build ends the table has no such index, and
+    /// when the build fails it has none that is valid: the one that was there is gone.
+    /// </summary>
+    [TestMethod]
+    public void A_concurrent_rebuild_that_fails_leaves_the_table_without_the_index_it_had()
+    {
+        using var database = new LiveDatabase();
+        database.Create<IndexModels.ActiveConcurrentlyNotUnique>();
+        Save<IndexModels.ActiveConcurrentlyNotUnique>(database, Grant(1, 1));
+        Save<IndexModels.ActiveConcurrentlyNotUnique>(database, Grant(1, 1));
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(database));
+
+        var refusal = Assert.ThrowsExactly<PostgresException>(database.Migrate<IndexModels.ActiveConcurrentlyNotUnique, IndexModels.WithActiveConcurrently>);
+
+        Assert.AreEqual(PostgresErrorCodes.UniqueViolation, refusal.SqlState);
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active invalid" }, Validity(database));
+        StringAssert.Contains(database.Indexes().Single(), "UNIQUE", "What is left is the leftover of the new index, not the old one.");
+
+        // The leftover has the index's name, so the same migration drops it and builds again:
+        // once the rows are mended, applying it again is all there is to do.
+        database.Execute("""DELETE FROM role_grants WHERE "Id" = (SELECT max("Id") FROM role_grants)""");
+        database.Migrate<IndexModels.ActiveConcurrentlyNotUnique, IndexModels.WithActiveConcurrently>();
+
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(database));
+        CollectionAssert.AreEqual(new[] { Active }, database.Indexes());
     }
 
     // ── The other access methods ──

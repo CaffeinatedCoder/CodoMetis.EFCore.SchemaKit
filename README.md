@@ -140,8 +140,15 @@ an annotation named `CodoMetis:SchemaKit:Object`.
   and `Migrate()` all run it.
 - **The migration is not applied as one.** What stands before the statement is committed when the
   statement starts. If the build then fails, for example a unique index on rows that are not
-  unique (23505), PostgreSQL keeps an invalid index under the name. The next run fails on that
-  name (42P07): drop the invalid index, fix the rows, and apply the migration again.
+  unique (23505), PostgreSQL keeps an invalid index under the name. Applied again, the migration
+  starts from its first statement, and one that cannot run twice fails there, such as an added
+  column (42701).
+- **Give such an index a migration of its own.** Then a failed build is mended by dropping the
+  invalid index, fixing the rows and applying the migration again.
+- **A changed index has no index for a while.** Anything but a new name is a drop and a create,
+  and the drop is committed before a concurrent build starts. Until the build ends a unique
+  index does not hold, and if the build fails the old index is gone. Fix the rows and apply the
+  migration again: its drop takes the invalid index away, which has the same name.
 - **It is about creating the index only.** A drop and a rename are written as for any index.
   Adding `concurrently:` to an index you already declared, or taking it away, is no migration.
 

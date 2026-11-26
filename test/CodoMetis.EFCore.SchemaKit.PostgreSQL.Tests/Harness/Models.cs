@@ -413,6 +413,42 @@ public static class Models
         ]);
     }
 
+    /// <summary><see cref="WithTheGranteeBesideSqlThatNamesNoColumn" />, and EF Core renames a column the SQL does not read.</summary>
+    public sealed class WithTheRoleRenamedBesideSqlThatNamesNoColumn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.RoleId).HasColumnName("role");
+            grants.DeclarePostgres(pg =>
+            [
+                new PgExclusion.Gist(
+                [
+                    .. pg.Equal(x => x.GranteeId).Overlaps(x => x.Period).Elements,
+                    new ExclusionElement(new KeyTarget.Template(SqlTemplate.Raw("lower(\"Note\")")), new ExclusionOperator("=")),
+                ]) { Name = OverNotes },
+            ]);
+        }
+    }
+
+    /// <summary>The same, and EF Core renames the column the SQL reads, which still says the old name.</summary>
+    public sealed class WithTheNoteRenamedBesideSqlThatNamesNoColumn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasColumnName("memo");
+            grants.DeclarePostgres(pg =>
+            [
+                new PgExclusion.Gist(
+                [
+                    .. pg.Equal(x => x.GranteeId).Overlaps(x => x.Period).Elements,
+                    new ExclusionElement(new KeyTarget.Template(SqlTemplate.Raw("lower(\"Note\")")), new ExclusionOperator("=")),
+                ]) { Name = OverNotes },
+            ]);
+        }
+    }
+
     /// <summary>Either of the two without the grantee, whose column EF Core drops: the period alone.</summary>
     public sealed class WithoutTheGrantee : ITestModel
     {
