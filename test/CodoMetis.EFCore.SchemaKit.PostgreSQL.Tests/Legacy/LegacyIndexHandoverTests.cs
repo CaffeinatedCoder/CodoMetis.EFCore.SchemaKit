@@ -64,8 +64,8 @@ public sealed class LegacyIndexHandoverTests
 
     /// <summary>
     /// SQL 5.x took as written, a filter or an expression, declared here as the lambda that becomes
-    /// the same SQL: the same index, since a condition and a key compare by their SQL. That is the
-    /// way a consumer has, as long as SQL written by hand is the contract's alone (#26).
+    /// the same SQL: the same index, since a condition and a key compare by their SQL. The other
+    /// way, the SQL kept with <c>Sql.Raw</c>, is how <see cref="MovedIndexes.Declared" /> says it (#220).
     /// </summary>
     [TestMethod]
     public void SQL_of_5x_declared_as_the_lambda_that_becomes_it_is_no_operations()

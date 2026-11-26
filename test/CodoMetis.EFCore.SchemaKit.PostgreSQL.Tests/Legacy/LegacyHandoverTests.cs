@@ -36,6 +36,20 @@ public sealed class LegacyHandoverTests
         Assert.IsFalse(context.GetService<IMigrationsModelDiffer>().HasDifferences(LegacyFixture.Snapshot(context), context.Relational()));
     }
 
+    /// <summary>
+    /// An expression 5.x took as SQL, kept as SQL in the model with <c>Sql.Raw</c>: the same
+    /// constraint under the same default name, whichever side the diff starts from (#220).
+    /// </summary>
+    [TestMethod]
+    public void An_expression_of_5x_kept_as_SQL_is_no_operations()
+    {
+        CollectionAssert.AreEqual(Array.Empty<string>(), LegacyFixture.DiffTo<MovedModels.DeclaredWithTheSqlOf5x>().Shape());
+
+        using var context = LegacyFixture.Context<MovedModels.DeclaredWithTheSqlOf5x>();
+        var differ = context.GetService<IMigrationsModelDiffer>();
+        CollectionAssert.AreEqual(Array.Empty<string>(), differ.GetDifferences(context.Relational(), LegacyFixture.Snapshot(context)).Shape());
+    }
+
     // ── A constraint on a type of a TPC hierarchy: a copy in every table (#189) ──
 
     [TestMethod]

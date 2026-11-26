@@ -187,7 +187,7 @@ created again.
 | `IsDeferrable(initiallyDeferred: true)` | `deferral: Deferral.InitiallyDeferred` | No operations |
 | `IsDeferrable()` | `deferral: Deferral.InitiallyImmediate` | No operations |
 | Not deferrable | No `deferral:`, which is `Deferral.NotDeferrable` | No operations |
-| `WithExpression("lower(\"Code\")", "=")` | `pg.Equal(x => x.Code.ToLower())`. See [Expressions](#expressions) | No operations when the text is the same |
+| `WithExpression("lower(\"Code\")", "=")` | The SQL as it was, `pg.Equal(x => Sql.Raw<string>("lower(\"Code\")"))`, or a lambda, `pg.Equal(x => x.Code.ToLower())`. See [Expressions](#expressions) | No operations with the SQL as it was. With a lambda, when the text is the same |
 | `WithColumn("Column", "-\|-")`, any other operator | `.WithUncheckedOperator(x => x.Column, "-|-")`, after the first element. The database checks the operator when the migration is applied | Not in the fixture |
 | `UseMethod("spgist")`, one element | `new PgExclusion.SpGist(new ExclusionElement(new KeyTarget.Column("…"), ExclusionOperator.Overlaps))`; a factory method comes with [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) | No operations |
 | `UseMethod("gist")` | `pg.Exclusion(…)`, which is GiST | No operations |
@@ -205,9 +205,18 @@ created again.
 
 ### Expressions
 
-5.x had no lambda for an element: an expression was SQL text, written by hand. SchemaKit writes an
-expression from a lambda, as Npgsql's queries spell it. The two are the same constraint, but the
-diff compares what is stored, so they diff to nothing only when the text is the same:
+5.x had no lambda for an element: an expression was SQL text, written by hand. You have two ways
+to move one.
+
+**Keep the SQL.** Put the text into `Sql.Raw<T>` inside the lambda, as it was:
+`pg.Equal(x => Sql.Raw<string>("lower(\"Code\")"))`. The migration has no operations
+(`An_expression_of_5x_kept_as_SQL_is_no_operations`), whatever the SQL is. `T` is what the expression evaluates to. The
+[README](../README.md#sql-you-write-yourself) has the details.
+
+**Write a lambda.** SchemaKit writes the expression as Npgsql's queries spell it, so PostgreSQL
+uses the constraint's index for the same expression in a query. It is the same constraint as
+5.x's, but the diff compares what is stored, so the two diff to nothing only when the text is the
+same:
 
 - `WithExpression("lower(\"Code\")", "=")` against `pg.Equal(x => x.Code.ToLower())`: the column
   `Code` has a capital, Npgsql quotes it, the text is `lower("Code")` on both sides, and the
@@ -216,9 +225,6 @@ diff compares what is stored, so they diff to nothing only when the text is the 
   named `code`: Npgsql writes a lower-case name bare, so the lambda renders `lower(code)`, and the
   migration drops the constraint and creates it again. Written as `lower(code)` in 5.x, it moves
   with no operations.
-
-A raw SQL element that keeps 5.x's text as it was comes with
-[#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25).
 
 ## Indexes
 
@@ -258,7 +264,7 @@ modelBuilder.Entity<Account>().DeclarePostgres(pg =>
     pg.BTree(x => x.Contact.City),
     pg.Unique(x => x.Contact.Phone, where: x => x.DeletedOn == null, name: "ux_account_phone"),
 
-    pg.Unique(x => x.Email, where: x => x.DeletedOn == null, name: "ux_account_email_active"),
+    pg.Unique(x => x.Email, where: x => Sql.Raw<bool>("\"DeletedOn\" IS NULL"), name: "ux_account_email_active"),
     pg.BTree([pg.Key(x => x.Kind), pg.Key(x => x.Rank).Desc(), pg.Key(x => x.Score).NullsFirst()]),
     pg.BTree(
         [pg.Key(x => x.Title).Collate("C"), pg.Key(x => x.Nick)],
@@ -267,7 +273,7 @@ modelBuilder.Entity<Account>().DeclarePostgres(pg =>
     pg.Unique([pg.Key(x => x.Nick).Ops(BTreeOpClass.TextPatternOps)], nullsDistinct: false, name: "ux_account_nick"),
     pg.Gin(x => x.Tags),
 
-    pg.BTree(x => x.Email.ToLower()),
+    pg.BTree(x => Sql.Raw<string>("lower(\"Email\")")),
     pg.Unique(x => x.Title.ToLower()),
     pg.BTree(x => x.Kind, where: x => x.DeletedOn == null, name: "ix_account_kind_live"),
 
@@ -290,7 +296,7 @@ fixture, in both directions. `LegacyIndexHandoverLiveTests` builds a database wi
 | `HasComplexCompositeIndex(x => new { x.A, x.B })` | `pg.BTree([pg.Key(x => x.A), pg.Key(x => x.B)])` |
 | `DbOrder.Desc(x.A)`, `DbOrder.NullsFirst(x.A)`, `DbOrder.NullsLast(x.A)` | `pg.Key(x => x.A).Desc()`, `.NullsFirst()`, `.NullsLast()` |
 | `indexName:`, `HasName(…)` | `name:` |
-| `filter:` with SQL, `HasFilter(string)` | `where:` with the condition as a lambda |
+| `filter:` with SQL, `HasFilter(string)` | `where: x => Sql.Raw<bool>("…")` with the SQL as it was, or the condition as a lambda |
 | a filter as a lambda, `HasFilter<TEntity>(…)` | `where:` |
 | `UseGin()`, `UseGist()`, `UseBrin()`, `UseHash()`, `UseSpGist()` | `pg.Gin(…)`, `pg.Gist(…)`, `pg.Brin(…)`, `pg.Hash(…)`, `pg.SpGist(…)` |
 | `HasOperators("text_pattern_ops")` | `pg.Key(…).Ops(BTreeOpClass.TextPatternOps)`, or `new BTreeOpClass("…")` for a class of an extension |
@@ -299,7 +305,7 @@ fixture, in both directions. `LegacyIndexHandoverLiveTests` builds a database wi
 | `AreNullsDistinct(false)` | `nullsDistinct: false` on `pg.Unique` |
 | `IsCreatedConcurrently()` | `concurrently: true` |
 | `HasStorageParameter("fillfactor", 70)` | the method's own parameter: `fillFactor: 70`, `deduplicateItems:`, `buffering:`, `fastUpdate:`, `pendingListLimit:`, `pagesPerRange:`, `autosummarize:` |
-| `HasExpressionIndex("lower(\"Email\")")` | the expression as a lambda: `pg.BTree(x => x.Email.ToLower())` |
+| `HasExpressionIndex("lower(\"Email\")")` | `pg.BTree(x => Sql.Raw<string>("lower(\"Email\")"))` with the SQL as it was, or the expression as a lambda: `pg.BTree(x => x.Email.ToLower())` |
 | `HasExpressionIndex(x => x.Title.ToLower())` | `pg.BTree(x => x.Title.ToLower())` |
 | `HasComplexIndex(x => x.Prefs.Level)` on a member of a JSON document | `pg.BTree(x => x.Prefs.Level)` |
 
@@ -311,14 +317,17 @@ fixture, in both directions. `LegacyIndexHandoverLiveTests` builds a database wi
 - **A name you did not state stays the same.** 5.x named an index `IX_{table}_{parts}`, and a
   declaration here gets the same default name, for a column, an expression and a member of a JSON
   document alike. The live test compares the names in the catalog.
-- **SQL you gave 5.x is a lambda here.** `filter: "\"DeletedOn\" IS NULL"` becomes
-  `where: x => x.DeletedOn == null`, and `HasExpressionIndex("lower(\"Email\")")` becomes
-  `pg.BTree(x => x.Email.ToLower())`. When the lambda becomes the SQL you wrote, the migration
-  stays empty: the sample above is written that way. When it becomes other SQL for the same thing,
-  the next migration rebuilds that index once.
-- **SQL that no lambda can say has no place yet.** A raw SQL form for a key or a condition is
-  [#26](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/26). Until then such
-  an index stays on 5.x, or is dropped there and created by `migrationBuilder.Sql(…)` of your own.
+- **SQL you gave 5.x stays SQL.** Put it into `Sql.Raw<T>` inside the lambda, as it was:
+  `filter: "\"DeletedOn\" IS NULL"` becomes `where: x => Sql.Raw<bool>("\"DeletedOn\" IS NULL")`,
+  and `HasExpressionIndex("lower(\"Email\")")` becomes
+  `pg.BTree(x => Sql.Raw<string>("lower(\"Email\")"))`. The migration stays empty, whatever the
+  SQL is: the sample above is written that way. A `{Property}` in a 5.x filter stays as it is. The
+  [README](../README.md#sql-you-write-yourself) says what `T` is for.
+- **You can write a lambda instead.** `where: x => x.DeletedOn == null` and
+  `pg.BTree(x => x.Email.ToLower())` are the same two indexes, and PostgreSQL uses an index on a
+  lambda for the same expression in a query. When the lambda becomes the SQL you wrote, the
+  migration stays empty (`SQL_of_5x_declared_as_the_lambda_that_becomes_it_is_no_operations`).
+  When it becomes other SQL for the same thing, the next migration rebuilds that index once.
 - **Applying 5.x's migrations to a new database** works for an index on columns. A migration with
   an index on an expression, or with `NULLS FIRST` or `NULLS LAST`, is rejected
   ([below](#migrations-5x-scaffolded)).
@@ -434,7 +443,7 @@ migration after such a move is not documented here.
 | `ComplexIndexBuilder.IsUnique()`, `HasFilter(string)`, `HasName(string)` | `pg.Unique(…)`, `Where` and `name:`, above |
 | `DbOrder.Asc`, `DbOrder.Desc` | `pg.Key(…)`, `pg.Key(…).Desc()` |
 | `DbOrder.NullsFirst`, `DbOrder.NullsLast`, `DbNullSort` | `pg.Key(…).NullsFirst()`, `pg.Key(…).NullsLast()` |
-| `IIndexExpression`, `SqlIndexExpression` | A key that is a lambda, above. SQL as written is [#26](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/26) |
+| `IIndexExpression`, `SqlIndexExpression` | `Sql.Raw<T>("…")` inside the key's lambda, or a key that is a lambda, above |
 | `GetDeclaredComplexIndexes()`, `GetComplexIndexes()`, `FindComplexIndex(name)` | `GetDeclarations<PgIndex>()` and `FindDeclaration<PgIndex>(name)` |
 | `IMutableEntityType.AddComplexIndex(…)`, `AddComplexIndexFilter(…)` | `Declare` and `Redeclare` on the entity type, with `AndWhere` on the declaration |
 | `UseComplexIndexes()`, `UseComplexIndexes<TContext>()`, `AddComplexIndexes()` | `UseSchemaKit()` on the options builder, `AddEntityFrameworkSchemaKit()`: the kernel alone, for a provider without a SchemaKit package. It declares nothing by itself |
@@ -458,7 +467,7 @@ migration after such a move is not documented here.
 | `AreNullsDistinct(false)` | `nullsDistinct: false` on `pg.Unique` |
 | `UseCollation(…)` | `pg.Key(…).Collate(…)` |
 | `HasStorageParameter(name, value)` | the method's own parameter, above |
-| `HasExpressionIndex(…)`, every overload, and `ExpressionIndexBuilder` | a key that is a lambda, above. SQL as written is #26 |
+| `HasExpressionIndex(…)`, every overload, and `ExpressionIndexBuilder` | `Sql.Raw<T>("…")` inside the key's lambda, or a key that is a lambda, above |
 | `HasFilter<TEntity>(predicate)` on an index builder, `AddComplexIndexFilter<TEntity>(…)` | `where:`, and `AndWhere` on a declaration |
 | `HasTemporalConstraint(…)` | Native: `HasAlternateKey(…).WithoutOverlaps()` or `HasKey(…).WithoutOverlaps()`. Its snapshot is refused until [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | `HasTemporalForeignKey(…)` | Native: `HasForeignKey(…).WithPeriod()`. Its snapshot is refused until #18 |

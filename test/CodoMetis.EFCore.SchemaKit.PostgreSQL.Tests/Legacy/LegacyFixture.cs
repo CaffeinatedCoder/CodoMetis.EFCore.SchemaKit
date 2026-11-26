@@ -160,6 +160,23 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             }
         }
 
+        /// <summary>
+        /// <see cref="Declared" /> with the one expression 5.x took as SQL kept as SQL, in the text
+        /// it had there (issue 220).
+        /// </summary>
+        public sealed class DeclaredWithTheSqlOf5x : ITestModel
+        {
+            public static void Build(ModelBuilder modelBuilder)
+            {
+                Tables(modelBuilder);
+                Bookings(modelBuilder);
+                modelBuilder.Entity<Shift>().DeclarePostgres(pg => [Active(pg), Site(pg)]);
+                modelBuilder.Entity<Lease>().DeclarePostgres(pg =>
+                    [pg.Exclusion(pg.Equal(x => Sql.Raw<string>("lower(\"Code\")")).Overlaps(x => x.Term.Span), deferral: Deferral.InitiallyImmediate)]);
+                Slots(modelBuilder);
+            }
+        }
+
         private static void Hierarchies(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Rental>().UseTpcMappingStrategy().ToTable("rentals");

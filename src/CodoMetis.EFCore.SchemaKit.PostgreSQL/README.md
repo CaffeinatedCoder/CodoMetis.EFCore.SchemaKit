@@ -42,6 +42,12 @@ A key or a condition can read a member of a JSON document, `pg.BTree(x => x.Pref
 complex property mapped with `ToJson()`. It is written as Npgsql writes the member in a query, so
 PostgreSQL uses the index for that query.
 
+Where no lambda says what you need, write the SQL into the lambda:
+`pg.BTree(x => Sql.Raw<string>("upper({Note})"))`, `where: x => Sql.Raw<bool>("{RoleId} % 2 = 0")`.
+`{Note}` stands for the column of the property `Note`. The
+[README](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#sql-you-write-yourself)
+says what to know about it.
+
 `concurrently: true` on any of them builds the index with `CREATE INDEX CONCURRENTLY`, outside the
 migration's transaction. `migrations script --idempotent` fails for a migration with such an
 index and names it, since PostgreSQL rejects the statement in that script (25001). The

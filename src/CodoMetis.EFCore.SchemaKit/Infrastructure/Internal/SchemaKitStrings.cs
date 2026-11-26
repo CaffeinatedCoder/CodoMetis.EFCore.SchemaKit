@@ -310,7 +310,21 @@ internal static class SchemaKitStrings
 
     // ---- translation -----------------------------------------------------------------------------
 
-    private const string WriteItAsSql = "Write that part of the declaration as SQL.";
+    private const string WriteItAsSql = "Write that part of the declaration as SQL, with Sql.Raw<T>(\"…\").";
+
+    public const string RawIsAMarker
+        = "Sql.Raw<T> stands for SQL written by hand in the lambda of a declaration, such as x => Sql.Raw<bool>(\"{DeletedOn} IS NULL\"). " +
+          "It is read from the lambda and cannot be called.";
+
+    public static string RawFromTheEntity(System.Linq.Expressions.Expression marker)
+        => $"The SQL of '{marker}' is read from the entity. Sql.Raw<T> takes text: a column is written into it as its property path " +
+           "in braces, {Name}.";
+
+    public static string RawWithoutSql(System.Linq.Expressions.Expression marker)
+        => $"'{marker}' holds no SQL.";
+
+    public static string RawHoldsAMark(System.Linq.Expressions.Expression marker)
+        => $"The SQL of '{marker}' holds U+FDD0 or U+FDD1, which are no characters and which SchemaKit keeps for itself.";
 
     public static string LambdaTakesOneParameter(System.Linq.Expressions.LambdaExpression lambda)
         => $"The lambda '{lambda}' takes {lambda.Parameters.Count} parameters. A declaration's lambda takes one: the entity it is declared on.";

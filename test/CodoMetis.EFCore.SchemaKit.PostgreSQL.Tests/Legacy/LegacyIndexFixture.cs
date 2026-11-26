@@ -84,10 +84,6 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             return account;
         }
 
-        private static KeyTarget ByHand(string sql) => new KeyTarget.Template(SqlTemplate.Raw(sql));
-
-        private static Predicate WhereByHand(string sql) => new(SqlTemplate.Raw(sql));
-
         /// <summary>Each index of the fixture, in the order 5.x's model declares them.</summary>
         public static PgIndex[] OfAccounts(PgSchema<Account> pg) =>
         [
@@ -97,7 +93,7 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             pg.BTree(x => x.Prefs.Theme),
 
             // On the entity type: a condition 5.x took as SQL is SQL written by hand here.
-            pg.Unique(x => x.Email, name: "ux_account_email_active") with { Where = WhereByHand("\"DeletedOn\" IS NULL") },
+            pg.Unique(x => x.Email, where: x => Sql.Raw<bool>("\"DeletedOn\" IS NULL"), name: "ux_account_email_active"),
             pg.BTree(x => x.Email, name: "ix_account_email_all"),
             pg.Unique([pg.Key(x => x.GranteeId), pg.Key(x => x.Kind)]),
             pg.BTree([pg.Key(x => x.Kind), pg.Key(x => x.Rank).Desc(), pg.Key(x => x.Score).NullsFirst()]),
@@ -119,15 +115,13 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             pg.Hash(x => x.Kind, name: "ix_account_kind_hash"),
 
             // Expressions: SQL 5.x took as written is SQL written by hand, a lambda is a lambda.
-            new PgIndex.BTree([new BTreeKey(ByHand("lower(\"Email\")"))]),
+            pg.BTree(x => Sql.Raw<string>("lower(\"Email\")")),
             pg.Unique(x => x.Title.ToLower()),
             pg.BTree(x => (x.Nick ?? x.Kind) + " " + x.Title),
-            new PgIndex.BTree([new BTreeKey(ByHand("\"Kind\"")), new BTreeKey(ByHand("upper(\"Title\")")).Desc().NullsLast()])
-            {
-                Unique = new Uniqueness(),
-                Where = WhereByHand("\"Rank\" > 0"),
-                Name = "ux_account_kind_title",
-            },
+            pg.Unique(
+                [pg.Key(x => Sql.Raw<string>("\"Kind\"")), pg.Key(x => Sql.Raw<string>("upper(\"Title\")")).Desc().NullsLast()],
+                where: x => Sql.Raw<bool>("\"Rank\" > 0"),
+                name: "ux_account_kind_title"),
 
             // Conditions written as lambdas.
             pg.BTree(x => x.Kind, where: x => x.DeletedOn == null, name: "ix_account_kind_live"),
@@ -151,9 +145,9 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
         }
 
         /// <summary>
-        /// <see cref="Declared" /> as a consumer can write it without the contract: the SQL 5.x took
-        /// as written is a lambda here, wherever a lambda becomes that SQL. The one index whose
-        /// keys are SQL in parentheses, which no lambda writes, is left to the contract's own form.
+        /// <see cref="Declared" /> with a lambda in place of the SQL 5.x took as written, wherever a
+        /// lambda becomes that SQL. The one index whose keys are SQL in parentheses, which no lambda
+        /// writes, stays SQL.
         /// </summary>
         public sealed class DeclaredWithLambdasForTheSql : ITestModel
         {
@@ -161,7 +155,7 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             {
                 Tables(modelBuilder).DeclarePostgres(pg =>
                 [
-                    .. OfAccounts(pg).Where(index => index.Name != "ux_account_email_active" && !(index.Name is null && index is PgIndex.BTree { Keys: [{ Target: KeyTarget.Template { Sql.IsBound: true } }] })),
+                    .. OfAccounts(pg).Where(index => index.Name != "ux_account_email_active" && !(index.Name is null && index is PgIndex.BTree { Keys: [{ Target: KeyTarget.Template template }] } && template.Sql.ToString().Contains("Raw(", StringComparison.Ordinal))),
                     pg.Unique(x => x.Email, where: x => x.DeletedOn == null, name: "ux_account_email_active"),
                     pg.BTree(x => x.Email.ToLower()),
                 ]);

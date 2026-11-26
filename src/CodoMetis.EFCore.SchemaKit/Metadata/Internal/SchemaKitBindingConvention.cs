@@ -109,14 +109,15 @@ internal static class DeclarationBinder
     /// <param name="mappings">Where a property's mapping comes from while the model is being finalized; null for a finalized model.</param>
     public static SqlTemplate Bind(UnboundLambda lambda, IReadOnlyEntityType? entityType, IRelationalTypeMappingSource? mappings = null)
     {
-        var translated = lambda.Translate(entityType is null ? null : new ModelFacts(entityType, mappings));
+        var facts = entityType is null ? null : new ModelFacts(entityType, mappings);
+        var translated = lambda.Translate(facts);
 
         // Without a model a value only the model can write is a mark, and a mark is not SQL.
         if (translated.Contains(LambdaTranslator.BoundLater, StringComparison.Ordinal))
             throw new NotSupportedException(SchemaKitStrings.NeedsTheModel(lambda.ToString()));
 
-#pragma warning disable SK9001 // The kernel's own translator writes placeholders; this is where they become segments.
-        return SqlTemplate.FromPlaceholders(translated);
-#pragma warning restore SK9001
+        // A path in SQL written by hand is the one path no compiler saw. It is asked of the model
+        // here, where every other part of the lambda becomes SQL, and not at the first diff.
+        return RawSql.Template(translated, facts is null ? null : facts.Require);
     }
 }

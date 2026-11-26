@@ -72,11 +72,9 @@ public closed record KeyTarget
         // the two cases it is does not wait: a lambda that names a property and nothing else is a
         // path, and a path needs no binding.
         var unbound = UnboundLambda.Of(key, spelling, isPredicate: false);
-#pragma warning disable SK9001 // The kernel's own translator writes placeholders; this is where they become segments.
-        return SqlTemplate.FromPlaceholders(unbound.Translate()).SingleColumn is { } path
+        return RawSql.Template(unbound.Translate()).SingleColumn is { } path
             ? new Column(path)
             : new Template(SqlTemplate.Unbound(unbound));
-#pragma warning restore SK9001
     }
 
     // A record's `with` goes through init and not through the constructor, so the rule is in both.

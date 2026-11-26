@@ -210,6 +210,50 @@ Good to know:
 - **EF Core's own index metadata does not hold the index.** `GetIndexes()` does not list it;
   `GetDeclarations<PgIndex>()` does.
 
+## SQL you write yourself
+
+Where no lambda says what you need, write the SQL into the lambda with `Sql.Raw<T>`. It goes
+wherever a lambda goes: a key, an element of an exclusion constraint, a condition. `{Note}` stands
+for the column of the property `Note`:
+
+```csharp
+modelBuilder.Entity<RoleGrant>().ToTable("role_grants").DeclarePostgres(pg =>
+[
+    pg.BTree(
+        [pg.Key(x => Sql.Raw<string>("upper({Note})")).Desc(), pg.Key(x => x.RoleId)],
+        where: x => x.GranteeId > 0 && Sql.Raw<bool>("{RoleId} % 2 = 0 OR {Note} ~ '^x'"),
+        name: "ix_role_grant_mixed"),
+]);
+```
+
+```sql
+CREATE INDEX ix_role_grant_mixed ON role_grants ((upper("Note")) DESC, "RoleId") WHERE ("GranteeId" > 0 AND ("RoleId" % 2 = 0 OR "Note" ~ '^x'));
+```
+
+`T` is what the SQL evaluates to. It decides which options the key has, as a property's type
+does: `Collate` for a `string`, `Overlaps` for a range.
+
+Good to know:
+
+- **Your SQL reaches the database as you wrote it.** SchemaKit does not check it and does not
+  quote a name in it. Alone in a lambda it is written as it is, and as a part of a larger
+  expression it gets parentheses around it.
+- **Name a column with `{Property}` where you can.** The placeholder becomes the column's name,
+  quoted where PostgreSQL needs it, and keeps up with a renamed column. A path through a complex
+  property works too: `{Address.City}`. A placeholder that names no property makes the model
+  fail when it is built (`InvalidOperationException`), not only in `migrations add`.
+- **A renamed column or table rebuilds the object.** SchemaKit cannot see which columns your SQL
+  reads outside the placeholders, so the migration drops the index or constraint before the
+  rename and creates it again after it.
+- **`T` says whether the SQL can be NULL.** `Sql.Raw<int>` never is, `Sql.Raw<int?>` can be, and
+  so can a reference type such as `string`. A comparison with SQL that can be NULL gets the same
+  `OR … IS NULL` a nullable property gets, so `Sql.Raw<string>("…") != "a"` keeps the rows C#
+  keeps.
+- **Text from a variable is read once.** `Sql.Raw<bool>(sql)` takes what `sql` holds when
+  `OnModelCreating` reaches the line.
+- **A namespace named `Sql` in your project hides the class.** Add
+  `using Sql = CodoMetis.EFCore.SchemaKit.Sql;` inside your namespace.
+
 ## What this preview does
 
 - **Exclusion constraints on PostgreSQL,** declared with `DeclarePostgres`: elements compared by
@@ -217,6 +261,8 @@ Good to know:
   (`WithUncheckedOperator`, checked by the database when the migration is applied); a condition;
   a deferral; a name, or a default one. An element may be a property, a path through a complex
   type, or an expression the translator renders, such as `x.Code.ToLower()`.
+- **SQL of your own** in a key, an element or a condition, with `Sql.Raw<T>("…")` inside the
+  lambda ([above](#sql-you-write-yourself)).
 - **Indexes on PostgreSQL,** declared with `DeclarePostgres`: B-tree and unique ones, hash, GiST,
   SP-GiST, GIN and BRIN. Keys are properties or expressions, with an operator class and, for
   text, a collation; a B-tree key is ascending or descending with its nulls first or last. A
@@ -259,7 +305,7 @@ Good to know:
 | A table with a constraint that moves back to the default schema, `ToTable("x", "grants")` to `ToTable("x")`: refused, since Npgsql writes no statement for that move. Name the schema, `ToTable("x", "public")`, and it is written | [#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105) |
 | A declaration on a column only a derived type has, while the type shares its table: refused | [#85](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/85) |
 | A cast in a lambda that changes the value, such as `(int)x.Amount == 2`: refused | [#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103) |
-| Raw SQL in an element, and a factory for SP-GiST | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |
+| A factory method for an SP-GiST exclusion constraint | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |
 | A member of an element of a JSON collection, and an owned type mapped with `ToJson()`: refused | [#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43) |
 
 Known defects of this preview, each with what it costs:

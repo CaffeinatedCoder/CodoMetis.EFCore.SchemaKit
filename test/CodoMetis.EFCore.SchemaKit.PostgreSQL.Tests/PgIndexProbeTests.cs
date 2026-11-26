@@ -1,7 +1,7 @@
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests;
 
 /// <summary>
-/// The design's probes for an index (<c>design/schemakit-api.md</c>, P1 and P3), compiled against
+/// The design's probes for an index (<c>design/schemakit-api.md</c>, P1, P3 and P5), compiled against
 /// the shipped assembly: what PostgreSQL has no statement for does not compile, and its twin,
 /// which differs in the one thing, does. The prototype in <c>test/SchemaKit.ApiProbes</c> holds
 /// the same probes against itself; these hold them against what a consumer references.
@@ -29,6 +29,7 @@ public sealed class PgIndexProbeTests
 
     private static string Declares(string declaration) => $$"""
         using Microsoft.EntityFrameworkCore;
+        using CodoMetis.EFCore.SchemaKit;
         using CodoMetis.EFCore.SchemaKit.PostgreSQL;
 
         public static class Probe
@@ -50,6 +51,9 @@ public sealed class PgIndexProbeTests
     [DataRow("P1.opclass-of-other-method", "pg.Gin([pg.Key(x => x.Payload).Ops(GinOpClass.JsonbPathOps)])", "pg.BTree([pg.Key(x => x.Payload).Ops(GinOpClass.JsonbPathOps)])", "CS0029")]
     // P3: an option is typed by the CLR type where that decides the store type.
     [DataRow("P3.collate-on-integer", """pg.BTree([pg.Key(x => x.Name).Collate("C")])""", """pg.BTree([pg.Key(x => x.Rank).Collate("C")])""", "CS1929")]
+    // P5: SQL is a call written inside a lambda, never a string passed in its place.
+    [DataRow("P5.string-filter", """pg.BTree(x => x.Name, where: x => Sql.Raw<bool>("{Rank} > 0"))""", """pg.BTree(x => x.Name, where: "{Rank} > 0")""", "CS1503")]
+    [DataRow("P5.string-key", """pg.BTree(x => Sql.Raw<string>("lower({Name})"))""", """pg.BTree("lower({Name})")""", "CS1503")]
     // Beyond the design's ten: each option of a method that another method lacks.
     [DataRow("deduplicate-items-on-hash", "pg.BTree(x => x.Name, deduplicateItems: false)", "pg.Hash(x => x.Name, deduplicateItems: false)", "CS1739")]
     [DataRow("buffering-on-spgist", "pg.Gist(x => x.Period, buffering: GistBuffering.On)", "pg.SpGist(x => x.Name, buffering: GistBuffering.On)", "CS1739")]
