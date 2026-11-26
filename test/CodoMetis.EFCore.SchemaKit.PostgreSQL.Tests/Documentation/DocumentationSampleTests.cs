@@ -95,6 +95,33 @@ public sealed partial class DocumentationSampleTests
             public bool Active { get; set; }
         }
 
+        public sealed class Account
+        {
+            public int Id { get; set; }
+            public string Email { get; set; } = "";
+            public string? Nick { get; set; }
+            public string Kind { get; set; } = "";
+            public string Title { get; set; } = "";
+            public int Rank { get; set; }
+            public int? Score { get; set; }
+            public DateOnly? DeletedOn { get; set; }
+            public string[] Tags { get; set; } = [];
+            public AccountContact Contact { get; set; } = new();
+            public AccountSettings Prefs { get; set; } = new();
+            public AccountSettings Payload { get; set; } = new();
+        }
+
+        public sealed class AccountContact
+        {
+            public string Phone { get; set; } = "";
+            public string City { get; set; } = "";
+        }
+
+        public sealed class AccountSettings
+        {
+            public int Level { get; set; }
+        }
+
         public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options);
 
         public sealed class Booking

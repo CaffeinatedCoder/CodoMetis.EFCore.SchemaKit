@@ -9,7 +9,7 @@
 # being a 5.x consumer. Packages come from nuget.org into a private folder, so nothing built here
 # can stand in for a published one.
 #
-# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds and ../ScaffoldedTpc. It is checked in and never edited by hand: the tests compile
+# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds, ../ScaffoldedTpc and ../ScaffoldedIndexes. It is checked in and never edited by hand: the tests compile
 # these files as they are. EF Core stamps a migration with the time it was added; the name is fixed
 # here so that a second run changes nothing else.
 set -euo pipefail
@@ -66,6 +66,18 @@ scaffold LegacyContext Scaffolded Legacy5x.Migrations
 scaffold OtherKindsContext ScaffoldedOtherKinds Legacy5x.Migrations.OtherKinds
 # The exclusion constraints of two TPC hierarchies, a copy in every table (#189).
 scaffold TpcContext ScaffoldedTpc Legacy5x.Migrations.Tpc
+# Every kind of index (#218), and the script 5.x's own generator writes for them: SchemaKit does not
+# replay a migration of 5.x that holds an index on an expression (#28), so the database as 5.x
+# built it comes from the SQL 5.x wrote.
+scaffold IndexesContext ScaffoldedIndexes Legacy5x.Migrations.Indexes
+dotnet build "$work/Generator/Legacy5x.csproj" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
+"$work/tools/dotnet-ef" migrations script --no-build \
+  --project "$work/Generator/Legacy5x.csproj" \
+  --context IndexesContext \
+  --output "$here/ScaffoldedIndexes/Initial.sql"
+# The migration's id carries the time here too.
+sed -i.bak -E "s/'[0-9]{14}_Initial'/'20260101000000_Initial'/" "$here/ScaffoldedIndexes/Initial.sql"
+rm "$here/ScaffoldedIndexes/Initial.sql.bak"
 
 # The design-time reference is what puts 5.x's differ in front. Without it a migration would be
 # EF Core's alone and hold nothing of 5.x's, and the fixture would prove nothing.
@@ -75,5 +87,8 @@ grep -q "WITHOUT OVERLAPS" "$here/ScaffoldedOtherKinds/Initial.cs" \
   || { echo "The migration holds no temporal constraint: 5.x did not take part." >&2; exit 1; }
 [ "$(grep -c "EXCLUDE USING" "$here/ScaffoldedTpc/Initial.cs")" -ge 8 ] \
   || { echo "The TPC migration holds fewer than eight exclusion constraints: 5.x made no copies." >&2; exit 1; }
+
+[ "$(grep -c "CREATE .*INDEX" "$here/ScaffoldedIndexes/Initial.sql")" -ge 30 ] \
+  || { echo "The script holds fewer than thirty indexes: 5.x did not take part." >&2; exit 1; }
 
 echo "Scaffolded into $here/Scaffolded"

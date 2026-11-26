@@ -253,7 +253,7 @@ Good to know:
 
 | | Issue |
 |---|---|
-| A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
+| A 5.x project whose snapshot holds temporal constraints, or indexes on SQL Server or SQLite: the snapshot is refused, so the project stays on 5.x for now | [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18), [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor yet. A create on a table the same migration rebuilds is refused until it is placed after the rebuild | [#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145), [#115](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/115) |
 | A table with a constraint that moves back to the default schema, `ToTable("x", "grants")` to `ToTable("x")`: refused, since Npgsql writes no statement for that move. Name the schema, `ToTable("x", "public")`, and it is written | [#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105) |

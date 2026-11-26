@@ -37,12 +37,12 @@ public sealed partial class DocumentationApiTests
     private static readonly HashSet<string> ExternalApi = new(StringComparer.Ordinal)
     {
         // EF Core
-        "EnsureCreated", "Migrate", "GenerateCreateScript", "ToTable", "ToJson", "HasIndex", "GetIndexes", "HasKey", "HasAlternateKey", "HasForeignKey",
-        "HasFilter", "HasDatabaseName", "IsDescending", "IsUnique", "HasFillFactor", "IncludeProperties", "UseCollation",
+        "EnsureCreated", "Migrate", "GenerateCreateScript", "ToTable", "ToJson", "GetIndexes", "HasKey", "HasAlternateKey", "HasForeignKey",
+        "HasFillFactor", "IncludeProperties",
         "HasConversion", "IsRequired",
         // Npgsql
-        "UseNpgsql", "AddEntityFrameworkNpgsql", "HasPostgresExtension", "HasMethod", "HasOperators", "HasNullSortOrder",
-        "IsCreatedConcurrently", "AreNullsDistinct", "HasStorageParameter", "WithoutOverlaps", "WithPeriod",
+        "UseNpgsql", "AddEntityFrameworkNpgsql", "HasPostgresExtension",
+        "AreNullsDistinct", "WithoutOverlaps", "WithPeriod",
         // SQL Server
         "IsClustered", "IsCreatedOnline", "SortInTempDb", "UseDataCompression",
         // The BCL
@@ -55,7 +55,7 @@ public sealed partial class DocumentationApiTests
     /// (<see cref="Mentions" />). Nothing here has 5.x's assemblies, so these names are held by
     /// review alone: add one only for a sentence about 5.x.
     /// </summary>
-    private static readonly HashSet<string> ComplexIndexes5x = new(StringComparer.Ordinal) { "AddNpgsqlComplexIndexes", "WithExpression" };
+    private static readonly HashSet<string> ComplexIndexes5x = new(StringComparer.Ordinal) { "AddNpgsqlComplexIndexes", "WithExpression", "HasExpressionIndex" };
 
     /// <summary>A call as a sentence writes it: <c>UseSchemaKit()</c>, <c>GetDeclarations&lt;T&gt;()</c>.</summary>
     [GeneratedRegex(@"\b([A-Z][A-Za-z0-9]*)(?:<[^<>()]*>)?\(")]

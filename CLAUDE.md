@@ -11,10 +11,11 @@ stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch
 **The kernel has its host, its SQL vocabulary, the contributor contract, the declaration store, the
 resolver, the planner and the lambda translator, and the PostgreSQL package has the first real
 contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
-every path, on PostgreSQL 16 and 18, and a snapshot scaffolded by 5.x with exclusion constraints
-moves to the same model declared here with no operations. An index is the second object: four
-of the five slices of `PgIndex` are in (#27 has the slices and what was decided for them), every
-access method, `concurrently:` and members of a JSON document. Nothing of
+every path, on PostgreSQL 16 and 18. An index is the second object: all five slices of
+`PgIndex` are in (#27 has the slices and what was decided for them), every access method,
+`concurrently:`, members of a JSON document, and the readers for 5.x's indexes. A snapshot
+scaffolded by 5.x with exclusion constraints and indexes moves to the same model declared here
+with no operations. Nothing of
 `preview.2` is published** (what is left of
 the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
 `Sql.Raw<T>` in an element, a factory for SP-GiST, the compile probes). The repository holds:
@@ -24,7 +25,7 @@ the resolver is #43, of the planner #24, of the translator #26, of exclusion con
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
 | `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` and `PgIndex` with their factory `PgSchema<T>` and `DeclarePostgres`, and a contributor for each. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
 | `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
-| `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedTpc/` of two TPC hierarchies with a constraint on a root, `ScaffoldedOtherKinds/` of one with the kinds nothing reads yet (indexes, a temporal constraint). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
+| `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedTpc/` of two TPC hierarchies with a constraint on a root, `ScaffoldedOtherKinds/` of one with an index on a property, one on an entity type and a temporal constraint, which nothing reads yet, `ScaffoldedIndexes/` of one with 32 indexes of every kind 5.x stored, beside the script 5.x's own generator wrote for them (`Initial.sql`). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
 | `test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests` | The second provider (#119): two contributors nobody ships, written against the kernel's public contract alone, since the kernel grants the assembly no `InternalsVisibleTo`. A filtered nonclustered index with included columns on SQL Server and an index on an expression on SQLite, each with a dialect, and their tests: the SQL Server one on a live SQL Server 2022 (`Integration/`), the SQLite one on a database file. A comment that begins `Audit:` marks what the contract could not say |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, E, the impact table of the plan's section 3.7 measured on live servers, and F, which binds a declaration when the model is finalized and says what a convention sees there (no type mapping on a property yet: the mapping source is asked), for #114. B is the consumer smoke test until the real one replaces it |
@@ -331,6 +332,13 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   declarations** (`AddLegacyDeclarationReader`, marked like the rest of the contract). It
   translates and decides nothing: what the old format could say and the declaration cannot is
   thrown, never left out. It takes no dialect, since it runs before anything is resolved.
+- **A `LegacyPropertyDeclarationReader<TDeclaration>` reads an annotation that sits on a
+  property** (#218), as 5.x's marker of an index on a property does. It is asked for every
+  property that is declared on the entity type and carries the annotation, the properties of
+  its complex types included, and is handed the property's path. Declared on it: a property a
+  derived type inherits is read at its base type, or one object would be two
+  (`A_property_is_read_where_it_is_declared`). An annotation of a property and one of an
+  entity type are two annotations, whatever their names.
 - **One annotation has one reader, as one owner has one contributor** (#108). Two reader classes
   for one annotation each read the same objects out of a snapshot: one copy pairs with the model's
   declaration and the other is dropped by the migration, while the model still declares it. The
@@ -388,8 +396,8 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   same objects differ in nothing, whichever of the two the diff starts from. In the context's
   own model the annotation is an error, with a reader for it or without one: nothing renders it
   from a model, and beside a declaration of the same object it would be a second one. In a
-  snapshot, an annotation of 5.x that declares an object and has no reader (its indexes, its
-  temporal constraints, and its exclusion constraints on a context without the PostgreSQL
+  snapshot, an annotation of 5.x that declares an object and has no reader (its temporal
+  constraints, and its indexes and exclusion constraints on a context without the PostgreSQL
   package) is refused (`LegacyFormats`, #93): passed over, its objects would be created a second
   time or never dropped. This applies to a context that declares nothing as well, since the
   snapshot alone says the objects exist. A reader leaves the guard by being registered.
@@ -799,6 +807,33 @@ what is still missing).
   The 5.x format is finished, so the reader changes only when a 5.x snapshot is found that it
   reads wrongly. Regenerating the fixture needs the network and the .NET 10 runtime; CI does not
   do it.
+- **`Legacy/Internal/ComplexIndexes5xIndexReader` and `ComplexIndexes5xPropertyIndexReader` read
+  5.x's indexes into `PgIndex`** (#218, slice E of #27): `CustomIndex:CompositeIndexes` on an
+  entity type, and the marker `CustomIndex:IsIndexed` on a property with `IsUnique`, `Filter`,
+  `Name` and Npgsql's options beside it. Both build through `ComplexIndexes5xIndexes`. A
+  `path` is a column key, an `expr` SQL written by hand, a `tmpl` the package's own text with
+  the doubled braces of its literals written once; a `filter` is SQL written by hand, as an
+  exclusion constraint's is, since its format does not say whether a lambda wrote it.
+- **The oracle for the index readers is 5.x's own SQL.** The fixture's `Initial.sql` is the
+  script the published 5.6.0 generated for its 32 indexes. `LegacyIndexHandoverLiveTests`
+  applies it and compares the catalog with what `EnsureCreated()` builds for the model
+  declared here (`Legacy/LegacyIndexFixture.cs`), and `LegacyIndexHandoverTests` holds the
+  empty diff both ways and that every index is found under the name the script created it
+  by. SchemaKit does not replay 5.x's migration where it holds an index on an expression
+  (#28), which is why the script is the source. A storage parameter is compared as a set and
+  a flag by what it means: 5.x wrote `deduplicate_items=false` where this package writes
+  `off`, and the catalog keeps each as written.
+- **What `PgIndex` cannot say of a 5.x index is refused by name:** a date or a time in a JSON
+  document, which 5.x indexed as the member's text; `NULLS NOT DISTINCT` on an index that is
+  not unique, which PostgreSQL keeps; an order on a key that is no B-tree's; an option or a
+  storage parameter the method does not have; an included entry that is neither a property
+  nor a column; from a snapshot before 5.4.0, a member of a JSON document and an expression
+  without a name (decided with #27); from one before 5.5.0, an index on a TPC type with
+  derived types. `ComplexIndexes5xIndexReaderTests` has a row for each.
+- **SQL that 5.x took as written has no unmarked form here yet** (#26): `SqlTemplate.Raw` is the
+  contract's. A consumer declares such a filter or key as the lambda that becomes the same
+  SQL, which is the same index since fragments compare by their text
+  (`SQL_of_5x_declared_as_the_lambda_that_becomes_it_is_no_operations`); the guide says so.
 - **The live tests take a database each** (`LiveDatabase`) and compare what a migration leaves with
   what `EnsureCreated()` builds for the target model, by the catalog's own text.
 

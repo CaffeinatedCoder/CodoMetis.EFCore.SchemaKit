@@ -5,9 +5,11 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy;
 
 /// <summary>
-/// The snapshot the published 5.6.0 scaffolded for what nothing here reads yet (#93): where 5.x
-/// put each declaration, and that a diff from it is refused. The kernel's guard looks in those
-/// places; were one of them wrong, a real snapshot would pass it.
+/// The snapshot the published 5.6.0 scaffolded for an index on a property, an index on an entity
+/// type and a temporal constraint (#93): where 5.x put each declaration. The kernel's guard looks
+/// in those places; were one of them wrong, a real snapshot would pass it. The indexes are read
+/// since #218; the temporal constraint is what nothing here reads, and a diff from the snapshot
+/// is refused for it.
 /// </summary>
 [TestClass]
 public sealed class UnreadLegacyFixtureTests
@@ -27,14 +29,14 @@ public sealed class UnreadLegacyFixtureTests
         => Assert.AreEqual(value, LegacyFixture.OtherKinds.FindEntityType(entityType)!.FindAnnotation(annotation)?.Value);
 
     [TestMethod]
-    public void A_diff_from_the_snapshot_is_refused_at_the_first_of_them()
+    public void A_diff_from_the_snapshot_is_refused_for_what_nothing_reads()
     {
         using var context = LegacyFixture.Context<MovedModels.SlotAlone>();
 
         var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsModelDiffer>()
             .GetDifferences(LegacyFixture.Prepare(context, LegacyFixture.OtherKinds), context.Relational()));
 
-        StringAssert.Contains(refused.Message, "The model snapshot holds an index on Address.City of Customer as EFCore.ComplexIndexes 5.x stored them");
+        StringAssert.Contains(refused.Message, "The model snapshot holds temporal constraints of Tariff as EFCore.ComplexIndexes 5.x stored them");
     }
 
     /// <summary><c>has-pending-model-changes</c> runs the same plan, so it does not answer "no" over them.</summary>
