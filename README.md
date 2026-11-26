@@ -5,8 +5,8 @@ A declaration reaches the database through every path EF Core turns a model into
 `migrations add`, `EnsureCreated()`, `GenerateCreateScript()` and the pending-changes check.
 The successor of `EFCore.ComplexIndexes` 5.x, with a new API.
 
-> **`11.0.0-preview.1` is a preview.** It declares one kind of object, the PostgreSQL exclusion
-> constraint. Any API may change before `11.0.0`. The stored form of a declaration, which lands in
+> **`11.0.0-preview.2` is a preview.** It declares two kinds of object on PostgreSQL: exclusion
+> constraints and indexes. Any API may change before `11.0.0`. The stored form of a declaration, which lands in
 > your model snapshot, is not final either: a later preview may ask you to scaffold your migrations
 > again. Scaffolding again does not change a database you already built, so try a preview on a
 > database you can build again. The permanent promise for the snapshot starts at `11.0.0`.
@@ -23,6 +23,7 @@ public sealed class RoleGrant
     public int RoleId { get; set; }
     public NpgsqlRange<DateOnly> Period { get; set; }
     public DateOnly? RevokedOn { get; set; }
+    public string? Note { get; set; }
 }
 
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
@@ -88,8 +89,9 @@ CREATE UNIQUE INDEX ux_role_grant_active ON role_grants ("GranteeId", "RoleId") 
 CREATE INDEX ix_role_grant_note ON role_grants ((lower("Note")), "RevokedOn" DESC NULLS LAST);
 ```
 
-An expression is spelled as Npgsql spells the same lambda in a query, so PostgreSQL uses the
-index for `Where(x => x.Note!.ToLower() == "a")`. A test asks the server's planner for that.
+An expression is spelled as Npgsql spells the same lambda in a query, so PostgreSQL can use the
+index for `Where(x => x.Note!.ToLower() == "a")`. A test asks the server's planner for that, with
+sequential scans switched off: on a small table the planner may still prefer one.
 
 The other access methods have a method each, with the options PostgreSQL has for them:
 
@@ -145,11 +147,17 @@ an annotation named `CodoMetis:SchemaKit:Object`.
   column (42701).
 - **Give such an index a migration of its own.** Then a failed build is mended by dropping the
   invalid index, fixing the rows and applying the migration again.
-- **A changed index has no index for a while.** Anything but a new name is a drop and a create,
-  and the drop is committed before a concurrent build starts. Until the build ends a unique
-  index does not hold, and if the build fails the old index is gone. Fix the rows and apply the
-  migration again: its drop takes the invalid index away, which has the same name.
-- **It is about creating the index only.** A drop and a rename are written as for any index.
+- **A changed index keeps the old one until the new one is built.** The migration builds the new
+  index beside the old one as `{name}_ccnew`, the name PostgreSQL itself uses in
+  `REINDEX CONCURRENTLY`. Then it drops the old index and renames the new one, in one
+  transaction. A unique index holds the whole time. If the build fails, the old index is still
+  there and valid, and an invalid `{name}_ccnew` is left: fix the rows, drop that index and apply
+  the migration again. A name too long for the suffix is cut to the 63 bytes PostgreSQL keeps.
+- **A new name and a change at once are two indexes.** The migration drops the old index and
+  then builds the new one, so the table is without either during the build. Change the index in
+  one migration and rename it in another to avoid that. The same holds where a renamed column or
+  table rebuilds an index with SQL of your own.
+- **A drop and a rename are written as for any index.**
   Adding `concurrently:` to an index you already declared, or taking it away, is no migration.
 
 A key or a condition can read a member of a JSON document, which is a complex property mapped
@@ -200,7 +208,8 @@ Good to know:
   `migrations add`,** such as `GinOpClass.JsonbPathOps` on a `text[]` column. A class an extension
   brings, `new GinOpClass("gin_trgm_ops")`, is written as you give it.
 - **A GiST key on a scalar column needs `btree_gist`,** and the migration installs it, as for an
-  exclusion constraint.
+  exclusion constraint. A key that names an operator class, `.Ops(new GistOpClass("gist_int4_ops"))`,
+  gets no extension from the migration: declare it with `HasPostgresExtension("btree_gist")`.
 - **`nullsDistinct:` is a parameter of `pg.Unique` only.** PostgreSQL has `NULLS NOT DISTINCT` for
   a unique index and for no other.
 - **`include:` takes properties.** An expression there throws in `OnModelCreating`
@@ -241,7 +250,13 @@ Good to know:
 - **Name a column with `{Property}` where you can.** The placeholder becomes the column's name,
   quoted where PostgreSQL needs it, and keeps up with a renamed column. A path through a complex
   property works too: `{Address.City}`. A placeholder that names no property makes the model
-  fail when it is built (`InvalidOperationException`), not only in `migrations add`.
+  fail when it is built (`InvalidOperationException`), not only in `migrations add`. The one
+  exception is SQL that is a placeholder and nothing else, `Sql.Raw<int>("{Rank}")` as a key: that
+  is the column, and a wrong name fails in `migrations add`.
+- **Keep a `{…}` out of an `E'…'` or dollar-quoted literal.** A placeholder is left alone inside
+  a plain `'…'` literal. SchemaKit does not know PostgreSQL's other two kinds, so a property's
+  name in braces inside one is replaced by the column
+  ([#224](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/224)).
 - **A renamed column or table rebuilds the object.** SchemaKit cannot see which columns your SQL
   reads outside the placeholders, so the migration drops the index or constraint before the
   rename and creates it again after it.
@@ -308,10 +323,24 @@ Good to know:
 | A factory method for an SP-GiST exclusion constraint | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |
 | A member of an element of a JSON collection, and an owned type mapped with `ToJson()`: refused | [#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43) |
 
-Known defects of this preview, each with what it costs:
+Known limits of this preview, each with what it costs:
 
-- A table moved back to the default schema stays in its old schema on Npgsql, with its constraints
-  ([#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105)).
+- **A lambda is written as EF Core's query writes it, and EF Core compares what is stored.**
+  That is what lets PostgreSQL use the index for the query. It differs from C# where a value
+  converter changes the order of values: with `HasConversion(v => -v, v => -v)`, the condition
+  `x.Score > 5` is `"Score" > -5`, in the index and in EF Core's own query alike. `Trim()` trims
+  the four characters Npgsql's query trims, not every character C# calls white space.
+- **`DROP INDEX` and `ALTER INDEX` name the index without a schema when its table has none,** as
+  Npgsql does for EF Core's own indexes. On a connection whose `search_path` has another schema
+  in front, with an index of the same name in it, PostgreSQL takes that one
+  ([#226](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/226)). Give the table its
+  schema, `ToTable("x", "public")`, and the statements name it.
+- **An `IDesignTimeServices` of your own that registers a differ replaces SchemaKit's.** EF Core
+  adds it last, and nothing can guard that. `migrations add` then writes the tables without your
+  declarations and reports no error. Do not register `IMigrationsModelDiffer` there.
+- **A table without a declaration that moves back to the default schema stays where it was.**
+  That is Npgsql's ([#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105)); with
+  a declaration on the table SchemaKit rejects the migration, as the table above says.
 
 ## Which package for which EF Core
 

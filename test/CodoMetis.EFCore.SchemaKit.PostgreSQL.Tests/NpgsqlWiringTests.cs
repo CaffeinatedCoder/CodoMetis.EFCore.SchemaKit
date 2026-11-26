@@ -47,6 +47,38 @@ public sealed class NpgsqlWiringTests
         StringAssert.Contains(refusal.Message, "80");
     }
 
+    private sealed class ALongerLimitOfItsOwn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Model.SetMaxIdentifierLength(128);
+            modelBuilder.Entity<RoleGrant>().ToTable("role_grants").DeclarePostgres(pg => [pg.BTree(x => x.RoleId, name: new string('a', 64))]);
+        }
+    }
+
+    private sealed class ALongerLimitAndANameThatFits : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Model.SetMaxIdentifierLength(128);
+            modelBuilder.Entity<RoleGrant>().ToTable("role_grants").DeclarePostgres(pg => [pg.BTree(x => x.RoleId, name: new string('a', 63))]);
+        }
+    }
+
+    /// <summary>
+    /// A model can state a shorter limit than the server's and not a longer one: what the server
+    /// keeps is not the model's to say. Believed, a name of 64 bytes was written whole, the
+    /// server shortened it, and the model went on naming an index that is not there (issue 223).
+    /// </summary>
+    [TestMethod]
+    public void A_model_that_states_a_longer_limit_than_PostgreSQL_keeps_is_not_believed()
+    {
+        var refusal = Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<Models.Bare, ALongerLimitOfItsOwn>());
+        StringAssert.Contains(refusal.Message, "is 64 long and this database keeps 63");
+
+        Assert.HasCount(1, Contexts.Diff<Models.Bare, ALongerLimitAndANameThatFits>().Sql());
+    }
+
     /// <summary>A collation and an operator class are counted the same way, and refused where the index is declared in the model.</summary>
     [TestMethod]
     public void A_collation_or_an_operator_class_longer_than_PostgreSQL_keeps_is_refused()

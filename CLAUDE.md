@@ -619,7 +619,9 @@ what is still missing: a member of a collection's element, an owned type mapped 
   rule is tested on both (`SchemaResolverTests`, through `Harness/Snapshots.cs`): an answer that
   differs between them is a migration nobody asked for, or one that is missing.
 - **A snapshot is a property bag without converters.** `Email.Value` resolves to the column on a
-  model only when a converter stores the member's type; on a snapshot the member is taken as it is.
+  model only when the converter stores exactly that member: its `ConvertToProviderExpression` is
+  `e => e.Value`. The member's type alone was the rule, 5.x's, and a second string member of the value object, its domain,
+  named the whole column (#222). On a snapshot the member is taken as it is.
   Refusing it there lets the first `migrations add` pass and fails every diff after it.
 - **The column is asked of the declared property** (`GetColumnName(storeObject)`), never looked up
   by name in the table.
@@ -673,7 +675,8 @@ what is still missing).
   stock database: claims are compared under it, and `NameClaimLiveTests` holds it. A `search_path`
   that points elsewhere is a database the model does not describe.
 - **The dialect counts an identifier's bytes.** PostgreSQL keeps 63 bytes and cuts the rest off
-  without an error. It still delimits through Npgsql's helper, which writes a lower-case name bare:
+  without an error. A model may state a shorter limit and not a longer one: one above 63 is
+  held to 63 (#223). It still delimits through Npgsql's helper, which writes a lower-case name bare:
   `ALTER TABLE role_grants`, not `"role_grants"`.
 - **`PgExclusion`'s stored form is a file format:** owner `Pg.Exclusion`, kinds `gist` and
   `spgist`, an element's `column` or `sql` (exactly one, `sql` as segments) with its `op`,
@@ -791,6 +794,17 @@ what is still missing).
   are written as for any index (decided with #27). `NpgsqlSchemaDialect` says an idempotent
   script does not carry the statement: Npgsql puts each statement of such a script into a `DO`
   block, where PostgreSQL refuses it (25001) and psql goes on to record the migration.
+- **A changed index that is built concurrently is built beside the old one** (#213): `Plan`
+  answers `InPlace` with three statements, the create under `{name}_ccnew` outside the
+  transaction, then the drop of the old index and the rename in one transaction. `_ccnew` is
+  the suffix PostgreSQL's own `REINDEX CONCURRENTLY` uses, and a name too long for it is cut by
+  bytes at a character. A drop ahead of the build was committed before the build began: no
+  index while it ran, and none that was valid when it failed. The target says how the index is
+  built, so a change to an index that is no longer concurrent is a rebuild. Not covered, and
+  said in the README: an index that changes its name too is no pair to the planner, and a
+  `RebuildAround` drops before EF Core's operations; both leave the table without the index
+  during the build. `A_concurrent_rebuild_that_fails_leaves_the_index_the_table_had` and
+  `A_unique_index_holds_while_its_replacement_is_built` hold it on the server.
 - **A concurrent build that fails is PostgreSQL's and EF Core's to leave as they do,** and a
   test holds what that is
   (`A_concurrent_build_that_fails_leaves_an_invalid_index_and_what_stood_before_it`): what

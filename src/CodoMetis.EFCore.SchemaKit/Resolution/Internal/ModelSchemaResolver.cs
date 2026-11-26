@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
@@ -380,15 +381,23 @@ internal static class PropertyPaths
 
     /// <summary>
     /// Whether <c>Property.Member</c> is the property's whole column: the property has a converter
-    /// and the member has the type the converter stores, as <c>Email.Value</c> does with a converter
-    /// to <see cref="string" />. Without the type check <c>CreatedAt.Year</c> would name the whole
-    /// timestamp.
+    /// that stores that member and nothing else, as <c>Email.Value</c> is with
+    /// <c>HasConversion(e => e.Value, …)</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The converter's own expression is asked. The member's type alone was the rule once, and
+    /// <c>Email.Domain</c>, a string like <c>Email.Value</c>, named the whole address: a unique
+    /// index declared on the domain was built on the column and let two addresses of one domain
+    /// in (issue 222). A converter that computes what it stores, or calls a method for it, names
+    /// no member, and a path through it is refused.
+    /// </para>
+    /// <para>
     /// A snapshot has neither the CLR type nor the converter: it keeps the property as an indexer
     /// property of the stored type. There the member is taken as it is, since the path was checked
     /// against the configured model when the snapshot was written. Refusing it would let the first
     /// <c>migrations add</c> pass and fail every diff after it.
+    /// </para>
     /// </remarks>
     private static bool ConvertedMember(IReadOnlyTypeBase declaring, IReadOnlyProperty property, string member, Func<IReadOnlyProperty, CoreTypeMapping?>? mapping)
     {
@@ -396,13 +405,12 @@ internal static class PropertyPaths
         if (converter is null)
             return declaring.IsPropertyBag && property.IsIndexerProperty();
 
-        const BindingFlags Members = BindingFlags.Public | BindingFlags.Instance;
-        var memberType = property.ClrType.GetProperty(member, Members)?.PropertyType
-                         ?? property.ClrType.GetField(member, Members)?.FieldType;
+        // e => e.Value, under the conversions the compiler adds for a nullable or a wider type.
+        var stored = converter.ConvertToProviderExpression.Body;
+        while (stored is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } conversion)
+            stored = conversion.Operand;
 
-        return memberType is not null && Unwrap(memberType) == Unwrap(converter.ProviderClrType);
-
-        static Type Unwrap(Type type) => Nullable.GetUnderlyingType(type) ?? type;
+        return stored is MemberExpression { Expression: ParameterExpression } access && access.Member.Name == member;
     }
 }
 

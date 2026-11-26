@@ -602,32 +602,79 @@ public sealed class PgIndexLiveTests
     }
 
     /// <summary>
-    /// A changed index is dropped and built again, and with <c>CONCURRENTLY</c> the drop is
-    /// committed before the build begins. Until the build ends the table has no such index, and
-    /// when the build fails it has none that is valid: the one that was there is gone.
+    /// A changed index that is built concurrently is built beside the one that is there (issue
+    /// 213). When the build fails, the index the table had is still there, valid and under its
+    /// name, and what is left of the new one has the name PostgreSQL gives such a leftover. A
+    /// drop ahead of the build left the table with no valid index at all.
     /// </summary>
     [TestMethod]
-    public void A_concurrent_rebuild_that_fails_leaves_the_table_without_the_index_it_had()
+    public void A_concurrent_rebuild_that_fails_leaves_the_index_the_table_had()
     {
         using var database = new LiveDatabase();
         database.Create<IndexModels.ActiveConcurrentlyNotUnique>();
         Save<IndexModels.ActiveConcurrentlyNotUnique>(database, Grant(1, 1));
         Save<IndexModels.ActiveConcurrentlyNotUnique>(database, Grant(1, 1));
-        CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(database));
+        var before = database.Indexes();
+        var oid = database.IndexOid(IndexModels.ActiveName);
 
         var refusal = Assert.ThrowsExactly<PostgresException>(database.Migrate<IndexModels.ActiveConcurrentlyNotUnique, IndexModels.WithActiveConcurrently>);
 
         Assert.AreEqual(PostgresErrorCodes.UniqueViolation, refusal.SqlState);
-        CollectionAssert.AreEqual(new[] { "ux_role_grant_active invalid" }, Validity(database));
-        StringAssert.Contains(database.Indexes().Single(), "UNIQUE", "What is left is the leftover of the new index, not the old one.");
+        CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid", "ux_role_grant_active_ccnew invalid" }, Validity(database));
+        Assert.AreEqual(oid, database.IndexOid(IndexModels.ActiveName), "The index that was there is the one that is there.");
+        CollectionAssert.Contains(database.Indexes(), before.Single());
 
-        // The leftover has the index's name, so the same migration drops it and builds again:
-        // once the rows are mended, applying it again is all there is to do.
+        // The leftover holds the name the build needs, so the migration fails on it until it is
+        // dropped, as PostgreSQL's documentation says of an index a REINDEX CONCURRENTLY left.
         database.Execute("""DELETE FROM role_grants WHERE "Id" = (SELECT max("Id") FROM role_grants)""");
+        var again = Assert.ThrowsExactly<PostgresException>(database.Migrate<IndexModels.ActiveConcurrentlyNotUnique, IndexModels.WithActiveConcurrently>);
+        Assert.AreEqual(PostgresErrorCodes.DuplicateTable, again.SqlState);
+
+        database.Execute("DROP INDEX ux_role_grant_active_ccnew");
         database.Migrate<IndexModels.ActiveConcurrentlyNotUnique, IndexModels.WithActiveConcurrently>();
 
         CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(database));
         CollectionAssert.AreEqual(new[] { Active }, database.Indexes());
+    }
+
+    /// <summary>
+    /// What the rebuild leaves is what <c>EnsureCreated()</c> builds, under the model's name: with
+    /// the name kept, with another name, and with a name that had to be cut for the build.
+    /// </summary>
+    [TestMethod]
+    public void A_concurrent_rebuild_leaves_the_index_the_model_declares()
+    {
+        AssertMigratesTo<IndexModels.ActiveConcurrentlyNotUnique, IndexModels.WithActiveConcurrently>((migrated, _) =>
+            CollectionAssert.AreEqual(new[] { "ux_role_grant_active valid" }, Validity(migrated)));
+        AssertMigratesTo<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyRenamedAndNotUnique>((migrated, _) =>
+            CollectionAssert.AreEqual(new[] { "ux_renamed valid" }, Validity(migrated)));
+        AssertMigratesTo<IndexModels.LongNamedConcurrently, IndexModels.LongNamedConcurrentlyOnTheGrantee>((migrated, _) =>
+            CollectionAssert.AreEqual(new[] { IndexModels.LongName + " valid" }, Validity(migrated)));
+    }
+
+    /// <summary>
+    /// While the new index is built the old one holds: a unique index that is changed refuses a
+    /// duplicate at every moment, since the two are swapped in one transaction. Held by what a
+    /// failed build leaves, which is the state the build runs in.
+    /// </summary>
+    [TestMethod]
+    public void A_unique_index_holds_while_its_replacement_is_built()
+    {
+        using var database = new LiveDatabase();
+        database.Create<IndexModels.WithActiveConcurrently>();
+        Save<IndexModels.WithActiveConcurrently>(database, Grant(1, 1));
+
+        // The replacement is the same index without its included column; build it by hand as the
+        // migration's first statement does, and stop there.
+        var statements = Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyWithoutTheNote>().Shape();
+        Assert.HasCount(3, statements);
+        database.Execute(statements[0]);
+
+        var refused = Assert.ThrowsExactly<DbUpdateException>(() => Save<IndexModels.WithActiveConcurrently>(database, Grant(1, 1)));
+        Assert.AreEqual(PostgresErrorCodes.UniqueViolation, ((PostgresException)refused.InnerException!).SqlState);
+
+        database.Execute(statements[1] + statements[2]);
+        CollectionAssert.AreEqual(new[] { Active.Replace(""" INCLUDE ("Note")""", "") }, database.Indexes());
     }
 
     // ── The other access methods ──

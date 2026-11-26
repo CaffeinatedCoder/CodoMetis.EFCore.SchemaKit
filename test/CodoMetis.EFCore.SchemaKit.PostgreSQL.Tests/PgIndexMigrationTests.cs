@@ -81,14 +81,53 @@ public sealed class PgIndexMigrationTests
             new[] { "ALTER INDEX ux_role_grant_active RENAME TO ux_renamed; | inside | -" },
             WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyRenamed>()));
 
-        // A rebuild drops in the transaction and creates outside it.
+    }
+
+    /// <summary>
+    /// A changed index that is built concurrently is built beside the one that is there, under
+    /// the name PostgreSQL itself gives such an index, and takes its place in one transaction
+    /// (issue 213). A drop ahead of the build is committed before the build begins.
+    /// </summary>
+    [TestMethod]
+    public void A_changed_index_built_concurrently_is_built_beside_the_old_one()
+    {
+        var changed = CreateActiveConcurrently.Replace("UNIQUE ", "").Replace(" NULLS NOT DISTINCT", "");
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                $"{changed.Replace("ux_role_grant_active ON", "ux_role_grant_active_ccnew ON")} | outside | Pg.Index 'ux_role_grant_active' on RoleGrant",
+                $"{DropActive} | inside | -",
+                "ALTER INDEX ux_role_grant_active_ccnew RENAME TO ux_role_grant_active; | inside | -",
+            },
+            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyNotUnique>()));
+
+        // Under another name as well it is no change of one index: one index goes and another
+        // comes, in that order, and the table is without either while the second is built.
         CollectionAssert.AreEqual(
             new[]
             {
                 $"{DropActive} | inside | -",
-                $"{CreateActiveConcurrently.Replace("UNIQUE ", "").Replace(" NULLS NOT DISTINCT", "")} | outside | Pg.Index 'ux_role_grant_active' on RoleGrant",
+                $"{changed.Replace("ux_role_grant_active ON", "ux_renamed ON")} | outside | Pg.Index 'ux_renamed' on RoleGrant",
             },
-            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyNotUnique>()));
+            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyRenamedAndNotUnique>()));
+
+        // It is the index as it is going to be that says how it is built: one that was built
+        // concurrently and no longer is, is dropped and created in the transaction.
+        CollectionAssert.AreEqual(
+            new[] { $"{DropActive} | inside | -", $"{changed.Replace("CONCURRENTLY ", "")} | inside | -" },
+            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveNotUnique>()));
+    }
+
+    /// <summary>A name that cannot take the suffix is cut at a character, to the 63 bytes PostgreSQL keeps.</summary>
+    [TestMethod]
+    public void The_name_beside_a_long_name_is_cut_to_what_PostgreSQL_keeps()
+    {
+        var beside = Contexts.Diff<IndexModels.LongNamedConcurrently, IndexModels.LongNamedConcurrentlyOnTheGrantee>().Shape();
+
+        Assert.HasCount(3, beside);
+        StringAssert.StartsWith(beside[0], "CREATE INDEX CONCURRENTLY ix_role_grant_0123456789_0123456789_0123456789_012345678_ccnew ON");
+        Assert.AreEqual($"""ALTER INDEX ix_role_grant_0123456789_0123456789_0123456789_012345678_ccnew RENAME TO {IndexModels.LongName};""", beside[2]);
     }
 
     /// <summary>Every access method takes it, in the same place.</summary>

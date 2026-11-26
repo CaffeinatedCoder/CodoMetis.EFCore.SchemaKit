@@ -40,7 +40,7 @@ with the options PostgreSQL has for it.
 
 A key or a condition can read a member of a JSON document, `pg.BTree(x => x.Prefs.Rank)` for a
 complex property mapped with `ToJson()`. It is written as Npgsql writes the member in a query, so
-PostgreSQL uses the index for that query.
+PostgreSQL can use the index for that query.
 
 Where no lambda says what you need, write the SQL into the lambda:
 `pg.BTree(x => Sql.Raw<string>("upper({Note})"))`, `where: x => Sql.Raw<bool>("{RoleId} % 2 = 0")`.
