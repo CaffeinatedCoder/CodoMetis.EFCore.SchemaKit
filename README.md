@@ -91,8 +91,43 @@ CREATE INDEX ix_role_grant_note ON role_grants ((lower("Note")), "RevokedOn" DES
 An expression is spelled as Npgsql spells the same lambda in a query, so PostgreSQL uses the
 index for `Where(x => x.Note!.ToLower() == "a")`. A test asks the server's planner for that.
 
+The other access methods have a method each, with the options PostgreSQL has for them:
+
+```csharp
+modelBuilder.Entity<Document>().ToTable("documents").DeclarePostgres(pg =>
+[
+    pg.Gin(x => x.Tags, name: "ix_doc_tags"),
+    pg.Gist([pg.Key(x => x.Rank), pg.Key(x => x.Period)], include: [x => x.Title], name: "ix_doc_rank_period"),
+    pg.Hash(x => x.Title, fillFactor: 80, name: "ix_doc_title_hash"),
+    pg.Brin(x => x.Rank, pagesPerRange: 16, name: "ix_doc_rank_brin"),
+    pg.BTree([pg.Key(x => x.Title).Collate("C").Ops(BTreeOpClass.TextPatternOps)], name: "ix_doc_title"),
+]);
+```
+
+```sql
+CREATE INDEX ix_doc_tags ON documents USING gin ("Tags");
+CREATE INDEX ix_doc_rank_period ON documents USING gist ("Rank", "Period") INCLUDE ("Title");
+CREATE INDEX ix_doc_title_hash ON documents USING hash ("Title") WITH (fillfactor = 80);
+CREATE INDEX ix_doc_rank_brin ON documents USING brin ("Rank") WITH (pages_per_range = 16);
+CREATE INDEX ix_doc_title ON documents ("Title" COLLATE "C" text_pattern_ops);
+```
+
+What PostgreSQL has no statement for does not compile. `pg.Gin(…)` has no `include:`, a key with
+`Desc()` does not go into `pg.Gist([…])`, and a GIN operator class such as
+`GinOpClass.JsonbPathOps` does not go onto a B-tree key. `Collate` exists on a key of text only.
+
 Good to know:
 
+- **A storage parameter out of PostgreSQL's range throws where you write it**
+  (`ArgumentOutOfRangeException`): `fillFactor:` is 10 to 100, `pagesPerRange:` 1 to 131072,
+  `pendingListLimit:` 64 or more.
+- **A changed storage parameter is a drop and a create.** PostgreSQL can set one in place, which
+  leaves the pages that exist as they were.
+- **One of PostgreSQL's own operator classes on a column whose type does not take it fails in
+  `migrations add`,** such as `GinOpClass.JsonbPathOps` on a `text[]` column. A class an extension
+  brings, `new GinOpClass("gin_trgm_ops")`, is written as you give it.
+- **A GiST key on a scalar column needs `btree_gist`,** and the migration installs it, as for an
+  exclusion constraint.
 - **`nullsDistinct:` is a parameter of `pg.Unique` only.** PostgreSQL has `NULLS NOT DISTINCT` for
   a unique index and for no other.
 - **`include:` takes properties.** An expression there throws in `OnModelCreating`
@@ -109,9 +144,11 @@ Good to know:
   (`WithUncheckedOperator`, checked by the database when the migration is applied); a condition;
   a deferral; a name, or a default one. An element may be a property, a path through a complex
   type, or an expression the translator renders, such as `x.Code.ToLower()`.
-- **B-tree and unique indexes on PostgreSQL,** declared with `DeclarePostgres`: keys that are
-  properties or expressions, each ascending or descending with its nulls first or last; a
-  condition; included columns; `NULLS NOT DISTINCT` for a unique index; a name, or a default one.
+- **Indexes on PostgreSQL,** declared with `DeclarePostgres`: B-tree and unique ones, hash, GiST,
+  SP-GiST, GIN and BRIN. Keys are properties or expressions, with an operator class and, for
+  text, a collation; a B-tree key is ascending or descending with its nulls first or last. A
+  condition; included columns where the method has them; `NULLS NOT DISTINCT` for a unique index;
+  each method's storage parameters; a name, or a default one.
   A renamed index is renamed, and anything else about it is a drop and a create. A table or column
   EF Core renames is followed, and a change of a column's type leaves the index in place.
   PostgreSQL drops an index with any column it reads, so the migration writes no drop for it and
@@ -143,7 +180,7 @@ Good to know:
 
 | | Issue |
 |---|---|
-| Indexes: the other access methods (hash, GiST, SP-GiST, GIN, BRIN), operator classes, collations, storage parameters, `CONCURRENTLY`, and a member of a JSON document as a key | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
+| Indexes: `CONCURRENTLY`, and a member of a JSON document as a key | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor yet. A create on a table the same migration rebuilds is refused until it is placed after the rebuild | [#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145), [#115](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/115) |

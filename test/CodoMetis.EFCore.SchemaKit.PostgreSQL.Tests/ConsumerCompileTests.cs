@@ -132,7 +132,7 @@ public sealed class ConsumerCompileTests
         }
         """;
 
-    private static List<Diagnostic> Compile(params string[] sources)
+    internal static List<Diagnostic> Compile(params string[] sources)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Concat(AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic && a.Location.Length > 0).Select(a => a.Location))

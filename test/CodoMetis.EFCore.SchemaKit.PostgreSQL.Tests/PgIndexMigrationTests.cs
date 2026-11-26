@@ -258,4 +258,150 @@ public sealed class PgIndexMigrationTests
             },
             Contexts.Diff<Models.ReservationsInThreeTables, IndexModels.OneReservationPerRoomWithoutAName>().Shape());
     }
+
+    // ── The other access methods ──
+
+    private const string Hash = """CREATE INDEX ix_doc_title_hash ON documents USING hash ("Title") WITH (fillfactor = 80);""";
+
+    private const string GinOnTheDocument = """CREATE INDEX ix_doc_payload ON documents USING gin ("Payload" jsonb_path_ops) WITH (fastupdate = off, gin_pending_list_limit = 128);""";
+
+    private const string GinOnTheTags = """CREATE INDEX ix_doc_tags ON documents USING gin ("Tags");""";
+
+    private const string Gist = """CREATE INDEX ix_doc_rank_period ON documents USING gist ("Rank", "Period") INCLUDE ("Title") WITH (fillfactor = 90, buffering = off);""";
+
+    private const string SpGist = """CREATE INDEX ix_doc_title_sp ON documents USING spgist ("Title" text_ops) INCLUDE ("Rank") WITH (fillfactor = 70);""";
+
+    private const string Brin = """CREATE INDEX ix_doc_rank_brin ON documents USING brin ("Rank") WITH (pages_per_range = 16, autosummarize = on) WHERE "Rank" > 0;""";
+
+    /// <summary>A key's parts in PostgreSQL's order: the expression, its collation, its operator class, its direction.</summary>
+    private const string BTree = """CREATE INDEX ix_doc_title ON documents ((lower("Title")) COLLATE "C" text_pattern_ops DESC) WITH (fillfactor = 70, deduplicate_items = off);""";
+
+    /// <summary>
+    /// One statement for each index, with the method named for every one but B-tree, and ahead of
+    /// them the extension an integer needs under GiST, as for an exclusion constraint.
+    /// </summary>
+    [TestMethod]
+    public void Each_method_is_one_statement_with_its_options()
+    {
+        var statements = Contexts.Diff<IndexModels.DocumentsBare, IndexModels.EveryMethod>().Shape();
+
+        Assert.AreEqual("CREATE EXTENSION IF NOT EXISTS btree_gist;", statements[0]);
+        CollectionAssert.AreEquivalent(new[] { Hash, GinOnTheDocument, GinOnTheTags, Gist, SpGist, Brin, BTree }, statements.Skip(1).ToList());
+    }
+
+    /// <summary>A class and a collation on a key of every method, and no extension for a GiST key that names its class.</summary>
+    [TestMethod]
+    public void A_key_of_any_method_takes_a_class_and_a_collation()
+        => CollectionAssert.AreEquivalent(
+            new[]
+            {
+                """CREATE INDEX ix_doc_title_hash ON documents USING hash ("Title" COLLATE "C" text_ops);""",
+                """CREATE INDEX ix_doc_rank_brin ON documents USING brin ("Rank" int4_minmax_multi_ops, "Title" COLLATE "C");""",
+                """CREATE INDEX ix_doc_period ON documents USING gist ("Period" range_ops);""",
+                """CREATE INDEX ix_doc_tags ON documents USING gin ("Tags" array_ops);""",
+            },
+            Contexts.Diff<IndexModels.DocumentsBare, IndexModels.KeysWithClasses>().Shape());
+
+    /// <summary>The statements the README shows for its sample, to the character.</summary>
+    [TestMethod]
+    public void The_READMEs_sample_scaffolds_what_the_README_shows()
+        => CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "CREATE EXTENSION IF NOT EXISTS btree_gist;",
+                """CREATE INDEX ix_doc_tags ON documents USING gin ("Tags");""",
+                """CREATE INDEX ix_doc_rank_period ON documents USING gist ("Rank", "Period") INCLUDE ("Title");""",
+                """CREATE INDEX ix_doc_title_hash ON documents USING hash ("Title") WITH (fillfactor = 80);""",
+                """CREATE INDEX ix_doc_rank_brin ON documents USING brin ("Rank") WITH (pages_per_range = 16);""",
+                """CREATE INDEX ix_doc_title ON documents ("Title" COLLATE "C" text_pattern_ops);""",
+            },
+            Contexts.Diff<IndexModels.DocumentsBare, IndexModels.AsInTheReadme>().Shape());
+
+    [TestMethod]
+    public void A_range_under_GiST_needs_no_extension()
+        => CollectionAssert.AreEqual(
+            new[] { """CREATE INDEX ix_doc_period ON documents USING gist ("Period");""" },
+            Contexts.Diff<IndexModels.DocumentsBare, IndexModels.GistOnTheRangeAlone>().Shape());
+
+    /// <summary>
+    /// A storage parameter, an operator class, a collation and the access method are each what the
+    /// index is: another one under the same name is a drop and a create, as decided with issue 27.
+    /// </summary>
+    [TestMethod]
+    public void Another_parameter_class_collation_or_method_is_a_rebuild()
+    {
+        var statements = Contexts.Diff<IndexModels.EveryMethod, IndexModels.EveryMethodChanged>().Shape();
+
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                // The GiST index is created again, and what it needs is ensured again: it costs nothing where it is there.
+                "CREATE EXTENSION IF NOT EXISTS btree_gist;",
+                "DROP INDEX ix_doc_title_hash;", "DROP INDEX ix_doc_payload;", "DROP INDEX ix_doc_tags;", "DROP INDEX ix_doc_rank_period;",
+                "DROP INDEX ix_doc_title_sp;", "DROP INDEX ix_doc_rank_brin;", "DROP INDEX ix_doc_title;",
+                Hash.Replace("fillfactor = 80", "fillfactor = 60"),
+                GinOnTheDocument.Replace("jsonb_path_ops", "jsonb_ops"),
+                """CREATE INDEX ix_doc_tags ON documents ("Tags");""",
+                Gist.Replace("buffering = off", "buffering = on"),
+                SpGist.Replace(" text_ops", ""),
+                Brin.Replace("autosummarize = on", "autosummarize = off"),
+                BTree.Replace("\"C\"", "\"POSIX\""),
+            },
+            statements);
+    }
+
+    [TestMethod]
+    public void Every_method_against_itself_is_no_operation()
+        => Assert.AreEqual(0, Contexts.Diff<IndexModels.EveryMethod, IndexModels.EveryMethod>().Count);
+
+    /// <summary>
+    /// PostgreSQL refuses <c>jsonb_path_ops</c> on an array when the migration is applied. Both
+    /// are PostgreSQL's own and known here, so it is refused where the migration is scaffolded,
+    /// with the index, the class and the column's type named.
+    /// </summary>
+    [TestMethod]
+    public void An_operator_class_the_columns_type_does_not_take_is_refused_at_the_diff()
+    {
+        using var context = Contexts.Of<IndexModels.ADocumentsClassOnAnArray>();
+
+        var refusal = Assert.ThrowsExactly<InvalidOperationException>(() => context.Database.GenerateCreateScript());
+
+        StringAssert.Contains(refusal.Message, "'ix_doc_tags'");
+        StringAssert.Contains(refusal.Message, "'jsonb_path_ops'");
+        StringAssert.Contains(refusal.Message, "'text[]'");
+    }
+
+    /// <summary>A class an extension brings is not on the list, and is written as it is given.</summary>
+    [TestMethod]
+    public void An_operator_class_this_package_does_not_know_is_the_servers_to_judge()
+        => CollectionAssert.AreEqual(
+            new[] { """CREATE INDEX ix_doc_title_trgm ON documents USING gin ("Title" gin_trgm_ops);""" },
+            Contexts.Diff<IndexModels.DocumentsBare, IndexModels.AClassOfAnExtension>().Shape());
+
+    /// <summary>The table's own answers, for the store types as a model spells them.</summary>
+    [TestMethod]
+    [DataRow("gin", "jsonb_path_ops", "jsonb", false)]
+    [DataRow("gin", "jsonb_path_ops", "JSONB", false)]
+    [DataRow("gin", "jsonb_path_ops", "TEXT", true)]
+    [DataRow("gin", "jsonb_path_ops", "text", true)]
+    [DataRow("gin", "jsonb_path_ops", "integer[]", true)]
+    [DataRow("gin", "array_ops", "integer[]", false)]
+    [DataRow("gin", "array_ops", "character varying(40)[]", false)]
+    [DataRow("gin", "array_ops", "jsonb", true)]
+    [DataRow("btree", "text_pattern_ops", "character varying(40)", false)]
+    [DataRow("btree", "text_pattern_ops", "numeric(18,2)", true)]
+    [DataRow("btree", "text_pattern_ops", "timestamp(3) with time zone", true)]
+    [DataRow("btree", "bpchar_pattern_ops", "character(3)", false)]
+    [DataRow("btree", "bpchar_pattern_ops", "text", false)]
+    [DataRow("btree", "bpchar_pattern_ops", "integer", true)]
+    [DataRow("btree", "text_pattern_ops", "character(3)", true)]
+    [DataRow("gist", "range_ops", "daterange", false)]
+    [DataRow("gist", "range_ops", "datemultirange", true)]
+    // Neither known: a class of an extension, a type of the model's own, a class of another method.
+    [DataRow("gin", "gin_trgm_ops", "integer", false)]
+    [DataRow("gin", "jsonb_path_ops", "document_domain", false)]
+    [DataRow("gist", "range_ops", "floatrange", false)]
+    [DataRow("btree", "jsonb_path_ops", "integer", false)]
+    public void The_table_of_operator_classes_answers_only_what_it_knows(string method, string opClass, string storeType, bool refused)
+        => Assert.AreEqual(refused, CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal.PgOperatorClasses.Refuses(method, opClass, storeType));
 }

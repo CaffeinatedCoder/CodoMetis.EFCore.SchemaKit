@@ -229,14 +229,183 @@ public sealed class PgIndexDeclarationTests
     [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"nulls":"middle"}],"include":[]}""", "'middle'")]
     [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"desc":false}],"include":[]}""", "exactly one")]
     [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","sql":[{"col":"Note"}],"desc":false}],"include":[]}""", "exactly one")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"ops":"text_pattern_ops"}],"include":[]}""", "ops")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"tablespace":"fast"}],"include":[]}""", "tablespace")]
     [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"unique":{},"include":[]}""", "nullsDistinct")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"fillFactor":70}""", "fillFactor")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"fillFactor":7}""", "from 10 to 100")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"pagesPerRange":8}""", "pagesPerRange")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"keys":[{"column":"Period"}],"include":[],"buffering":"maybe"}""", "'maybe'")]
+    [DataRow("""{"$kind":"gin","v":3,"r":1,"keys":[{"column":"Note","desc":false}]}""", "desc")]
+    [DataRow("""{"$kind":"hash","v":3,"r":1,"keys":[{"column":"Note"}]}""", "key")]
     [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[],"include":[]}""", "at least one key")]
     public void A_stored_form_this_version_does_not_know_is_refused(string value, string expected)
     {
         var refusal = Assert.Throws<Exception>(() => ReadBack(value));
         StringAssert.Contains(refusal.Message, expected);
+    }
+
+    // ── The other access methods ──
+
+    private static readonly PgSchema<Document> Docs = PgSchema.For<Document>();
+
+    /// <summary>A key is the key of the method it is given to, and what it was given comes along.</summary>
+    [TestMethod]
+    public void A_key_becomes_the_key_of_its_method()
+    {
+        var title = new KeyTarget.Column("Title");
+
+        Assert.AreEqual(new HashKey(title), Docs.Hash(x => x.Title).Key);
+        Assert.AreEqual(new HashKey(title) { Collation = "C", OpClass = new HashOpClass("text_ops") }, Docs.Hash(Docs.Key(x => x.Title).Collate("C").Ops(new HashOpClass("text_ops"))).Key);
+        Assert.AreEqual(new GinKey(new KeyTarget.Column("Payload")) { OpClass = GinOpClass.JsonbPathOps }, Docs.Gin(x => x.Payload, GinOpClass.JsonbPathOps).Keys[0]);
+        Assert.AreEqual(new GinKey(new KeyTarget.Column("Tags")), Docs.Gin(x => x.Tags).Keys[0]);
+        Assert.AreEqual(new GistKey(new KeyTarget.Column("Period")) { OpClass = GistOpClass.RangeOps }, Docs.Gist([Docs.Key(x => x.Period).Ops(GistOpClass.RangeOps)]).Keys[0]);
+        Assert.AreEqual(new SpGistKey(title) { Collation = "C", OpClass = SpGistOpClass.TextOps }, Docs.SpGist(Docs.Key(x => x.Title).Collate("C").Ops(SpGistOpClass.TextOps)).Key);
+        Assert.AreEqual(new BrinKey(new KeyTarget.Column("Rank")) { OpClass = new BrinOpClass("int4_bloom_ops") }, Docs.Brin([Docs.Key(x => x.Rank).Ops(new BrinOpClass("int4_bloom_ops"))]).Keys[0]);
+        Assert.AreEqual(
+            new BTreeKey(title) { Collation = "C", OpClass = BTreeOpClass.TextPatternOps, Descending = true },
+            Docs.BTree([Docs.Key(x => x.Title).Collate("C").Ops(BTreeOpClass.TextPatternOps).Desc()]).Keys[0]);
+        Assert.AreEqual(new BTreeKey(title) { Collation = "C", Nulls = NullOrder.Last }, Docs.BTree([Docs.Key(x => x.Title).Collate("C").NullsLast()]).Keys[0]);
+        Assert.AreEqual(new GistKey(title) { Collation = "C" }, Docs.Gist([Docs.Key(x => x.Title).Collate("C")]).Keys[0]);
+        Assert.AreEqual(new GinKey(title) { Collation = "C" }, Docs.Gin([Docs.Key(x => x.Title).Collate("C")]).Keys[0]);
+        Assert.AreEqual(new BrinKey(title) { Collation = "C" }, Docs.Brin([Docs.Key(x => x.Title).Collate("C")]).Keys[0]);
+        Assert.AreEqual(new SpGistKey(title) { Collation = "C" }, Docs.SpGist(Docs.Key(x => x.Title).Collate("C")).Key);
+    }
+
+    [TestMethod]
+    public void Each_method_has_its_kind_and_its_options()
+    {
+        Assert.AreEqual("hash", Docs.Hash(x => x.Title).Kind);
+        Assert.AreEqual("gist", Docs.Gist(x => x.Period).Kind);
+        Assert.AreEqual("spgist", Docs.SpGist(x => x.Title).Kind);
+        Assert.AreEqual("gin", Docs.Gin(x => x.Tags).Kind);
+        Assert.AreEqual("brin", Docs.Brin(x => x.Rank).Kind);
+
+        Assert.AreEqual(80, Docs.Hash(x => x.Title, fillFactor: 80).FillFactor);
+        Assert.AreEqual((90, GistBuffering.Off), (Docs.Gist(x => x.Period, fillFactor: 90, buffering: GistBuffering.Off) is var gist ? (gist.FillFactor, gist.Buffering) : default));
+        Assert.AreEqual(70, Docs.SpGist(x => x.Title, fillFactor: 70).FillFactor);
+        Assert.AreEqual((false, 128), (Docs.Gin(x => x.Tags, fastUpdate: false, pendingListLimit: 128) is var gin ? (gin.FastUpdate, gin.PendingListLimit) : default));
+        Assert.AreEqual((16, true), (Docs.Brin(x => x.Rank, pagesPerRange: 16, autosummarize: true) is var brin ? (brin.PagesPerRange, brin.Autosummarize) : default));
+        Assert.AreEqual((70, false), (Docs.BTree(x => x.Title, fillFactor: 70, deduplicateItems: false) is var btree ? (btree.FillFactor, btree.DeduplicateItems) : default));
+        Assert.AreEqual(60, Docs.Unique(x => x.Title, fillFactor: 60).FillFactor);
+
+        CollectionAssert.AreEqual(new[] { "Title" }, Docs.Gist(x => x.Period, include: [x => x.Title]).Include.ToList());
+        CollectionAssert.AreEqual(new[] { "Rank" }, Docs.SpGist(x => x.Title, include: [x => x.Rank]).Include.ToList());
+        Assert.AreEqual("{Rank} > 0", Rebound(Docs.Hash(x => x.Title, where: x => x.Rank > 0, name: "ix_bound")).Where!.Template.ToString());
+    }
+
+    private sealed class OneIndex : ITestModel
+    {
+        public static PgIndex? Index;
+
+        public static void Build(ModelBuilder modelBuilder) => modelBuilder.Entity<Document>().DeclarePostgres(_ => [Index!]);
+    }
+
+    private static PgIndex Rebound(PgIndex index)
+    {
+        OneIndex.Index = index;
+        using var context = Contexts.Of<OneIndex>();
+        return context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(Document))!.GetDeclarations<PgIndex>().Single();
+    }
+
+    /// <summary>
+    /// The bounds are PostgreSQL's, and a value outside them fails where it is written, through
+    /// the factory and around it. <c>PgIndexLiveTests</c> holds each bound against the server.
+    /// </summary>
+    [TestMethod]
+    public void A_storage_parameter_outside_PostgreSQLs_bounds_is_refused()
+    {
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.BTree(x => x.Title, fillFactor: 9));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.BTree(x => x.Title, fillFactor: 101));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Unique(x => x.Title, fillFactor: 9));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Hash(x => x.Title, fillFactor: 9));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Hash(x => x.Title, fillFactor: 101));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Gist(x => x.Period, fillFactor: 9));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Gist(x => x.Period, fillFactor: 101));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.SpGist(x => x.Title, fillFactor: 9));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.SpGist(x => x.Title, fillFactor: 101));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Gin(x => x.Tags, pendingListLimit: 63));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Brin(x => x.Rank, pagesPerRange: 0));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Brin(x => x.Rank, pagesPerRange: 131073));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Docs.Hash(x => x.Title) with { FillFactor = 9 });
+
+        Assert.AreEqual(10, Docs.BTree(x => x.Title, fillFactor: 10).FillFactor);
+        Assert.AreEqual(10, Docs.Hash(x => x.Title, fillFactor: 10).FillFactor);
+        Assert.AreEqual(64, Docs.Gin(x => x.Tags, pendingListLimit: 64).PendingListLimit);
+        Assert.AreEqual(131072, Docs.Brin(x => x.Rank, pagesPerRange: 131072).PagesPerRange);
+    }
+
+    [TestMethod]
+    public void No_way_around_the_factory_builds_a_key_without_what_it_needs()
+    {
+        var title = new KeyTarget.Column("Title");
+
+        Assert.ThrowsExactly<ArgumentNullException>(() => new PgIndex.Hash(null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new PgIndex.SpGist(null!));
+        Assert.ThrowsExactly<ArgumentException>(() => new PgIndex.Gist([]));
+        Assert.ThrowsExactly<ArgumentException>(() => new PgIndex.Gin([]));
+        Assert.ThrowsExactly<ArgumentException>(() => new PgIndex.Brin([]));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new HashKey(null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new GistKey(null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new SpGistKey(null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new GinKey(null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new BrinKey(null!));
+        Assert.ThrowsExactly<ArgumentException>(() => new GinKey(title) { Collation = " " });
+        Assert.ThrowsExactly<ArgumentException>(() => new BTreeKey(title) { Collation = "" });
+        Assert.ThrowsExactly<ArgumentException>(() => Docs.Key(x => x.Title).Collate(" "));
+        Assert.ThrowsExactly<ArgumentException>(() => new GinOpClass(" "));
+        Assert.ThrowsExactly<ArgumentException>(() => GinOpClass.JsonbOps with { Name = "" });
+        Assert.ThrowsExactly<ArgumentException>(() => new BTreeOpClass(""));
+        Assert.ThrowsExactly<ArgumentException>(() => new HashOpClass(""));
+        Assert.ThrowsExactly<ArgumentException>(() => new GistOpClass(""));
+        Assert.ThrowsExactly<ArgumentException>(() => new SpGistOpClass(""));
+        Assert.ThrowsExactly<ArgumentException>(() => new BrinOpClass(""));
+        Assert.ThrowsExactly<ArgumentNullException>(() => Docs.Key(x => x.Title).Ops((GinOpClass)null!));
+    }
+
+    private static string StoredValue(string name)
+    {
+        using var context = Contexts.Of<IndexModels.EveryMethod>();
+        var entity = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(Document))!;
+        return (string)entity.GetAnnotations()
+            .Single(a => a.Name.StartsWith("CodoMetis:Pg.Index:", StringComparison.Ordinal) && ((string)a.Value!).Contains($"\"name\":\"{name}\"", StringComparison.Ordinal))
+            .Value!;
+    }
+
+    /// <summary>Each method's stored form, to the character: what a snapshot holds of it.</summary>
+    [TestMethod]
+    [DataRow("ix_doc_title_hash", """{"$kind":"hash","v":3,"r":1,"name":"ix_doc_title_hash","key":{"column":"Title"},"fillFactor":80}""")]
+    [DataRow("ix_doc_payload", """{"$kind":"gin","v":3,"r":1,"name":"ix_doc_payload","keys":[{"column":"Payload","ops":"jsonb_path_ops"}],"fastUpdate":false,"pendingListLimit":128}""")]
+    [DataRow("ix_doc_tags", """{"$kind":"gin","v":3,"r":1,"name":"ix_doc_tags","keys":[{"column":"Tags"}]}""")]
+    [DataRow("ix_doc_rank_period", """{"$kind":"gist","v":3,"r":1,"name":"ix_doc_rank_period","keys":[{"column":"Rank"},{"column":"Period"}],"include":["Title"],"fillFactor":90,"buffering":"off"}""")]
+    [DataRow("ix_doc_title_sp", """{"$kind":"spgist","v":3,"r":1,"name":"ix_doc_title_sp","key":{"column":"Title","ops":"text_ops"},"include":["Rank"],"fillFactor":70}""")]
+    [DataRow("ix_doc_rank_brin", """{"$kind":"brin","v":3,"r":1,"name":"ix_doc_rank_brin","keys":[{"column":"Rank"}],"pagesPerRange":16,"autosummarize":true,"where":[{"col":"Rank"}," > 0"]}""")]
+    [DataRow("ix_doc_title", """{"$kind":"btree","v":3,"r":1,"name":"ix_doc_title","keys":[{"sql":["lower(",{"col":"Title"},")"],"desc":true,"collation":"C","ops":"text_pattern_ops"}],"include":[],"fillFactor":70,"deduplicateItems":false}""")]
+    public void Each_method_is_stored_as_this(string name, string expected) => Assert.AreEqual(expected, StoredValue(name));
+
+    /// <summary>Every case and every option of it comes back from the read model as the value that was declared.</summary>
+    [TestMethod]
+    public void The_read_model_returns_every_method_as_it_was_declared()
+    {
+        using var context = Contexts.Of<IndexModels.EveryMethod>();
+        var read = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(Document))!.GetDeclarations<PgIndex>();
+
+        foreach (var declared in IndexModels.EveryMethod.Declared)
+        {
+            var found = read.Single(index => index.Name == declared.Name);
+            Assert.AreEqual(declared.Kind, found.Kind);
+
+            // What was a lambda is SQL by now; everything else is the value as it was.
+            if (declared.Name is "ix_doc_rank_brin" or "ix_doc_title") continue;
+            Assert.AreEqual(declared, found, declared.Name);
+        }
+
+        var brin = (PgIndex.Brin)read.Single(index => index.Name == "ix_doc_rank_brin");
+        Assert.AreEqual((PgIndex.Brin)IndexModels.EveryMethod.Declared.Single(index => index.Name == "ix_doc_rank_brin") with { Where = new Predicate(SqlTemplate.FromPlaceholders("{Rank} > 0")) }, brin);
+
+        var btree = (PgIndex.BTree)read.Single(index => index.Name == "ix_doc_title");
+        Assert.AreEqual(
+            new BTreeKey(new KeyTarget.Template(SqlTemplate.FromPlaceholders("lower({Title})"))) { Descending = true, Collation = "C", OpClass = BTreeOpClass.TextPatternOps },
+            btree.Keys.Single());
+        Assert.AreEqual((70, false), (btree.FillFactor, btree.DeduplicateItems));
     }
 
     private sealed class Twice : ITestModel

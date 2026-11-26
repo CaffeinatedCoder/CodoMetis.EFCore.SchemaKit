@@ -33,6 +33,12 @@ public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbConte
                 changed
                     ? pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), name: "ex_bookings_room_period")
                     : pg.Exclusion(pg.Equal(x => x.RoomId).Overlaps(x => x.Period), where: x => x.CancelledOn == null, name: "ex_bookings_room_period"),
+
+                // The cancelled bookings of a room, the latest first: an index with an order and a condition.
+                pg.BTree(
+                    [pg.Key(x => x.RoomId), pg.Key(x => x.CancelledOn).Desc().NullsLast()],
+                    where: x => x.CancelledOn != null,
+                    name: "ix_bookings_cancelled"),
             ]);
         });
 }

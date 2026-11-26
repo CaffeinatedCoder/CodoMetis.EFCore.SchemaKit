@@ -328,14 +328,14 @@ public sealed class PgIndexLiveTests
     }
 
     /// <summary>What the server does when a column is dropped by hand, with the index in place.</summary>
-    private static string DroppingByHand<TModel>(string column) where TModel : ITestModel
+    private static string DroppingByHand<TModel>(string column, string table = "role_grants") where TModel : ITestModel
     {
         using var database = new LiveDatabase();
         database.Create<TModel>();
 
         try
         {
-            database.Execute($"ALTER TABLE role_grants DROP COLUMN \"{column}\";");
+            database.Execute($"ALTER TABLE {table} DROP COLUMN \"{column}\";");
         }
         catch (PostgresException refused)
         {
@@ -427,5 +427,173 @@ public sealed class PgIndexLiveTests
         AssertMigratesTo<Models.ReservationsInThreeTables, IndexModels.OneReservationPerRoom>((migrated, _) => Assert.AreEqual(3, migrated.Indexes().Count));
         AssertMigratesTo<Models.ReservationsInThreeTables, IndexModels.OneReservationPerRoomWithoutAName>((migrated, _) => Assert.AreEqual(3, migrated.Indexes().Count));
         AssertMigratesTo<IndexModels.OneReservationPerRoom, Models.ReservationsInThreeTables>((migrated, _) => Assert.AreEqual(0, migrated.Indexes().Count));
+    }
+
+    // ── The other access methods ──
+
+    [TestMethod]
+    public void Every_method_reaches_the_catalog_with_its_options()
+    {
+        using var database = new LiveDatabase();
+
+        database.Create<IndexModels.EveryMethod>();
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                """public.documents | CREATE INDEX ix_doc_payload ON public.documents USING gin ("Payload" jsonb_path_ops) WITH (fastupdate=off, gin_pending_list_limit='128')""",
+                """public.documents | CREATE INDEX ix_doc_rank_brin ON public.documents USING brin ("Rank") WITH (pages_per_range='16', autosummarize='on') WHERE ("Rank" > 0)""",
+                """public.documents | CREATE INDEX ix_doc_rank_period ON public.documents USING gist ("Rank", "Period") INCLUDE ("Title") WITH (fillfactor='90', buffering=off)""",
+                """public.documents | CREATE INDEX ix_doc_tags ON public.documents USING gin ("Tags")""",
+                """public.documents | CREATE INDEX ix_doc_title ON public.documents USING btree (lower("Title") COLLATE "C" text_pattern_ops DESC) WITH (fillfactor='70', deduplicate_items=off)""",
+                """public.documents | CREATE INDEX ix_doc_title_hash ON public.documents USING hash ("Title") WITH (fillfactor='80')""",
+                // The catalog does not say an operator class that is the default of the key's type: text_ops was stated.
+                """public.documents | CREATE INDEX ix_doc_title_sp ON public.documents USING spgist ("Title") INCLUDE ("Rank") WITH (fillfactor='70')""",
+            },
+            database.Indexes());
+    }
+
+    /// <summary>The server takes each class and collation where the statement puts it. A default class is one the catalog does not say.</summary>
+    [TestMethod]
+    public void A_key_of_any_method_reaches_the_catalog_with_its_class_and_collation()
+        => AssertMigratesTo<IndexModels.DocumentsBare, IndexModels.KeysWithClasses>((migrated, _) =>
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    """public.documents | CREATE INDEX ix_doc_period ON public.documents USING gist ("Period")""",
+                    """public.documents | CREATE INDEX ix_doc_rank_brin ON public.documents USING brin ("Rank" int4_minmax_multi_ops, "Title" COLLATE "C")""",
+                    """public.documents | CREATE INDEX ix_doc_tags ON public.documents USING gin ("Tags")""",
+                    """public.documents | CREATE INDEX ix_doc_title_hash ON public.documents USING hash ("Title" COLLATE "C")""",
+                },
+                migrated.Indexes()));
+
+    [TestMethod]
+    public void The_READMEs_sample_applies()
+        => AssertMigratesTo<IndexModels.DocumentsBare, IndexModels.AsInTheReadme>((migrated, _) => Assert.AreEqual(5, migrated.Indexes().Count));
+
+    [TestMethod]
+    public void A_migration_leaves_every_method_as_EnsureCreated_builds_it()
+        => AssertMigratesTo<IndexModels.DocumentsBare, IndexModels.EveryMethod>((migrated, _) => Assert.AreEqual(7, migrated.Indexes().Count));
+
+    /// <summary>Each index rebuilt for one thing that changed: a parameter, a class, a collation, the method.</summary>
+    [TestMethod]
+    public void Changing_one_thing_about_each_method()
+    {
+        AssertMigratesTo<IndexModels.EveryMethod, IndexModels.EveryMethodChanged>((migrated, _) => Assert.AreEqual(7, migrated.Indexes().Count));
+        AssertMigratesTo<IndexModels.EveryMethodChanged, IndexModels.EveryMethod>((migrated, _) => Assert.AreEqual(7, migrated.Indexes().Count));
+    }
+
+    private static List<string> Extensions(LiveDatabase database)
+    {
+        using var connection = database.Open();
+        return connection.Column("SELECT extname::text FROM pg_extension WHERE extname <> 'plpgsql' ORDER BY 1");
+    }
+
+    /// <summary>An integer under GiST needs <c>btree_gist</c>, and the migration that creates the index brings it; a range needs nothing.</summary>
+    [TestMethod]
+    public void A_GiST_index_on_a_scalar_gets_the_extension_and_one_on_a_range_installs_nothing()
+    {
+        using (var scalar = new LiveDatabase())
+        {
+            scalar.Create<IndexModels.EveryMethod>();
+            CollectionAssert.AreEqual(new[] { "btree_gist" }, Extensions(scalar));
+        }
+
+        using var range = new LiveDatabase();
+        range.Create<IndexModels.GistOnTheRangeAlone>();
+        Assert.AreEqual(0, Extensions(range).Count);
+    }
+
+    /// <summary>The rows of the impact table are not B-tree's alone: an index of any method goes with a column it reads.</summary>
+    [TestMethod]
+    public void The_server_drops_an_index_of_any_method_with_a_column_it_reads()
+    {
+        // Seven indexes; each column is read by the ones named.
+        Assert.AreEqual("dropped, 6 left", DroppingByHand<IndexModels.EveryMethod>("Payload", "documents"), "a GIN key");
+        Assert.AreEqual("dropped, 6 left", DroppingByHand<IndexModels.EveryMethod>("Tags", "documents"), "a GIN key on an array");
+        Assert.AreEqual("dropped, 6 left", DroppingByHand<IndexModels.EveryMethod>("Period", "documents"), "a GiST key");
+        Assert.AreEqual("dropped, 4 left", DroppingByHand<IndexModels.EveryMethod>("Rank", "documents"), "a GiST key, a BRIN key and its condition, a column SP-GiST carries");
+        Assert.AreEqual("dropped, 3 left", DroppingByHand<IndexModels.EveryMethod>("Title", "documents"), "a hash key, an SP-GiST key, a column GiST carries, a B-tree expression's");
+    }
+
+    /// <summary>
+    /// The table of operator classes against the server: for every class it knows and every type
+    /// it knows, and an array of two of them, the server creates the index exactly where the
+    /// table does not refuse it. A wrong row here would refuse an index PostgreSQL has.
+    /// </summary>
+    [TestMethod]
+    public void The_table_of_operator_classes_agrees_with_the_server()
+    {
+        using var database = new LiveDatabase();
+        var types = Internal.PgOperatorClasses.KnownTypes.Where(type => type is not ("varchar" or "bpchar")).Concat(["integer[]", "text[]", "daterange[]"]).ToList();
+        database.Execute($"CREATE TABLE probe ({string.Join(", ", types.Select((type, index) => $"c{index} {type}"))})");
+
+        var disagreements = new List<string>();
+        foreach (var (method, opClass) in Internal.PgOperatorClasses.Known)
+        {
+            for (var index = 0; index < types.Count; index++)
+            {
+                var accepted = true;
+                try
+                {
+                    database.Execute($"CREATE INDEX ON probe USING {method} (c{index} {opClass})");
+                }
+                catch (PostgresException)
+                {
+                    accepted = false;
+                }
+
+                if (accepted == Internal.PgOperatorClasses.Refuses(method, opClass, types[index]))
+                    disagreements.Add($"{method} {opClass} on {types[index]}: the server {(accepted ? "takes" : "refuses")} it");
+            }
+        }
+
+        Assert.AreEqual(0, disagreements.Count, string.Join("\n", disagreements));
+    }
+
+    /// <summary>
+    /// The bounds the declaration checks are the server's: each is taken at its end and refused
+    /// one beyond it (22023).
+    /// </summary>
+    [TestMethod]
+    [DataRow("btree", "c", "fillfactor", 10, 100)]
+    [DataRow("hash", "c", "fillfactor", 10, 100)]
+    [DataRow("gist", "r", "fillfactor", 10, 100)]
+    [DataRow("spgist", "r", "fillfactor", 10, 100)]
+    [DataRow("brin", "c", "pages_per_range", 1, 131072)]
+    [DataRow("gin", "a", "gin_pending_list_limit", 64, int.MaxValue)]
+    public void A_storage_parameters_bounds_are_the_servers(string method, string column, string parameter, int low, int high)
+    {
+        using var database = new LiveDatabase();
+        database.Execute("CREATE TABLE probe (c integer, r daterange, a integer[])");
+
+        string Try(long value)
+        {
+            try
+            {
+                database.Execute($"CREATE INDEX ON probe USING {method} ({column}) WITH ({parameter} = {value})");
+                return "taken";
+            }
+            catch (PostgresException refused)
+            {
+                return refused.SqlState;
+            }
+        }
+
+        Assert.AreEqual("taken", Try(low));
+        Assert.AreEqual("taken", Try(high));
+        Assert.AreEqual(PostgresErrorCodes.InvalidParameterValue, Try(low - 1L));
+        Assert.AreEqual(PostgresErrorCodes.InvalidParameterValue, Try(high + 1L));
+    }
+
+    /// <summary>The GIN index on the array is one PostgreSQL uses for containment, which is what it is for.</summary>
+    [TestMethod]
+    public void The_GIN_index_serves_a_containment_query()
+    {
+        using var database = new LiveDatabase();
+        database.Create<IndexModels.EveryMethod>();
+
+        StringAssert.Contains(Plan(database, """SELECT * FROM documents WHERE "Tags" @> ARRAY['a']"""), "ix_doc_tags");
+        StringAssert.Contains(Plan(database, """SELECT * FROM documents WHERE "Payload" @> '{"a":1}'"""), "ix_doc_payload");
     }
 }
