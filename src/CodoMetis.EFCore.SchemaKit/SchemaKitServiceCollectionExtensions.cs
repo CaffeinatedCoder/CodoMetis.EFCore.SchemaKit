@@ -27,13 +27,18 @@ public static class SchemaKitServiceCollectionExtensions
     /// Call it after the provider's <c>AddEntityFramework…()</c> and after any other package that
     /// registers <see cref="IMigrationsModelDiffer" /> or <see cref="IMigrationsSqlGenerator" />: it
     /// wraps the registration that is last at this point. One added after it is refused when the
-    /// model is built.
+    /// model is built. A second call changes nothing.
     /// </remarks>
     /// <param name="services">The collection the internal service provider is built from.</param>
     /// <returns>The same collection.</returns>
     public static IServiceCollection AddEntityFrameworkSchemaKit(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // A second capture would take SchemaKit's own decorators for the inner services, and the
+        // differ would build itself until the stack ran out (#234).
+        if (services.Any(d => d.ServiceType == typeof(IMigrationsModelDiffer) && d.ImplementationType == typeof(SchemaKitModelDiffer)))
+            return services;
 
         var inner = new InnerServices();
         inner.Capture<IMigrationsModelDiffer>(services);

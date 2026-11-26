@@ -44,6 +44,12 @@ internal static class PgStrings
            "as a key nor in a condition (42P17). Read as text it would be built and serve no query. Keep the value in a column " +
            "of its own, or write the expression as SQL by hand.";
 
+    public static string JsonPathNameReadAsNull(string path, string name)
+        => $"The member of a JSON document at '{path}' has the JSON name '{name}'. Npgsql's queries write its path as an " +
+           "array literal, where PostgreSQL reads such a name as a NULL element (or, empty, as an error), so the member " +
+           "reads as NULL: an index on it would hold nothing and a unique one would enforce nothing. Give the member " +
+           "another name with HasJsonPropertyName, or write the expression as SQL by hand.";
+
     public static string TheIndex(string name) => $"The index '{name}'";
 
     public static string TheConstraint(string name) => $"The exclusion constraint '{name}'";

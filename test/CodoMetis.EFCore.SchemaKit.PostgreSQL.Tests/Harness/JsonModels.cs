@@ -273,6 +273,37 @@ public static class JsonModels
             => People(modelBuilder).DeclarePostgres(pg => [pg.BTree(x => x.Name, include: [x => x.Prefs.Rank], name: "ix_incl")]);
     }
 
+    /// <summary>A member whose JSON name PostgreSQL reads as NULL in a path's array literal, in the given case.</summary>
+    public static EntityTypeBuilder<Person> NamedNull(ModelBuilder modelBuilder, string name)
+    {
+        var people = People(modelBuilder);
+        people.ComplexProperty(x => x.Prefs, prefs => prefs.ComplexProperty(x => x.Address, address => address.Property(x => x.City).HasJsonPropertyName(name)));
+        return people;
+    }
+
+    public sealed class AKeyNamedNull : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => NamedNull(modelBuilder, "null").DeclarePostgres(pg => [pg.Unique(x => x.Prefs.Address.City, name: "ix_city")]);
+    }
+
+    public sealed class AConditionNamedNull : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => NamedNull(modelBuilder, "NULL").DeclarePostgres(pg => [pg.BTree(x => x.Name, where: x => x.Prefs.Address.City == "Berlin", name: "ix_berlin")]);
+    }
+
+    /// <summary>One step is a string literal, where null is a name like any other.</summary>
+    public sealed class AMemberNamedNullAtTheTop : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var people = People(modelBuilder);
+            people.ComplexProperty(x => x.Prefs, prefs => prefs.Property(x => x.Nick).HasJsonPropertyName("null"));
+            people.DeclarePostgres(pg => [pg.Unique(x => x.Prefs.Nick, name: "ix_nick")]);
+        }
+    }
+
     public sealed class ThroughACollection : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)

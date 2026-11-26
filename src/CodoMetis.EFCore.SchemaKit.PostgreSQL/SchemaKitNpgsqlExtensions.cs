@@ -53,8 +53,9 @@ public static class SchemaKitNpgsqlServiceCollectionExtensions
     /// <summary>
     /// Adds SchemaKit's services and its PostgreSQL ones to the collection of a provider passed to
     /// <see cref="DbContextOptionsBuilder.UseInternalServiceProvider" />. Only that case needs it.
-    /// Call it after <c>AddEntityFrameworkNpgsql()</c>, and in place of
-    /// <see cref="SchemaKitServiceCollectionExtensions.AddEntityFrameworkSchemaKit" />, not beside it.
+    /// Call it after <c>AddEntityFrameworkNpgsql()</c>, in place of
+    /// <see cref="SchemaKitServiceCollectionExtensions.AddEntityFrameworkSchemaKit" />, which it calls.
+    /// A second call, of either, changes nothing.
     /// </summary>
     /// <param name="services">The collection the internal service provider is built from.</param>
     /// <returns>The same collection.</returns>

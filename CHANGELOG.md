@@ -34,6 +34,8 @@ One section per version, newest first, in the form
 
 ### Changed
 
+- `AddEntityFrameworkSchemaKit()` or `AddEntityFrameworkSchemaKitNpgsql()` called a second time on a caller-owned provider changes nothing. It ended the process with a stack overflow when the differ was resolved ([#234](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/234)).
+- A member of a JSON document whose JSON name is `null`, in any case, or empty, below another name, is refused when the migration is scaffolded. PostgreSQL reads that name in the path Npgsql writes as NULL, so the member read as NULL and a unique index on it enforced nothing ([#235](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/235)).
 - On SQLite, a migration that would create a declared object on a table it also rebuilds is refused when it is scaffolded, with the declaration and the table named. It applied and left the database without the object, or failed when it was applied. Neither package creates objects on SQLite; this is for a contributor written against the contract ([#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145)).
 - On SQLite, an object on a table that one migration renames and rebuilds is seen by the rebuild: it was passed over when the operation that makes the rebuild named the table as it was before the rename, and the migration applied without the object ([#193](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/193)).
 - Both packages are built against EF Core 11.0.0 and `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0, and depend on `[11.0.0, 12.0.0)` of them ([#174](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/174)).
