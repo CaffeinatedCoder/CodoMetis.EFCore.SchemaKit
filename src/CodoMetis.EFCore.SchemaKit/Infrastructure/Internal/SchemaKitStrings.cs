@@ -262,6 +262,11 @@ internal static class SchemaKitStrings
 
     public static string TheExtension(string name) => $"the extension '{name}'";
 
+    public const string NotKnownToCarry =
+        "No SchemaKit package for this provider says that an idempotent script carries a statement outside a transaction, and on " +
+        "a provider that does not, the script loses the statement and records the migration. Write the script without " +
+        "--idempotent, or apply the migration with a bundle or with 'dotnet ef database update'.";
+
     public static string NotCarriedOutsideATransaction(string subject, string statement, string why)
         => $"The statement for {subject} runs outside a transaction, and the migration cannot be written this way with it: " +
            $"{statement} {why}";

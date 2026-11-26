@@ -288,6 +288,11 @@ scaffolded`. It then takes the annotation out of the migration and measures the 
 the statement as a consumer writes one by hand, which SchemaKit does not judge: they are what the
 refusal is there for, and they stay measured on every run.
 
+The kernel's own dialect, which SQL Server has until its package exists, refuses the idempotent
+script as well, since it does not know that SQL Server carries the statement (#214). The spike's
+two SQL Server consumers with a suppressed statement hold that refusal and are then measured the
+same way: their cells are what a dialect for SQL Server will be able to say.
+
 What follows is the spike's finding as it was written, before the refusal existed.
 
 The issue's rule is that a combination the provider cannot wrap is refused at scaffold, with the

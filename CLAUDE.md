@@ -169,9 +169,11 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   statement written with `suppressTransaction: true`, with what the planner says the statement
   is for; `migrations add` writes it into the migration, so its name is permanent from 11.0.0.
   Its value is text for a person, and nothing parses it. The generator asks
-  `ISchemaDialect.WhyNotOutsideTransaction` for such an operation alone: the kernel's dialect
-  says every way carries it (SQL Server does, spike D), PostgreSQL's says an idempotent script
-  does not. A consumer's own `migrationBuilder.Sql(…)` carries no annotation and is not judged.
+  `ISchemaDialect.WhyNotOutsideTransaction` for such an operation alone. PostgreSQL's dialect
+  says an idempotent script does not carry it. The kernel's own dialect says the same of a
+  provider without a package (#214): what nobody measured is not written, as an operation
+  nobody describes is refused. SQL Server carries the statement (spike D), and its dialect
+  will say so (#29). A consumer's own `migrationBuilder.Sql(…)` carries no annotation and is not judged.
   A statement in a transaction carries none either: what every statement says of itself is
   #115's to decide. `OutsideTransactionTests` holds it on the three providers.
 

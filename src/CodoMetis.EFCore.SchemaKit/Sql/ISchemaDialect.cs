@@ -257,10 +257,17 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
 
     /// <inheritdoc />
     /// <remarks>
-    /// Null here: a provider without a package is taken to carry the statement wherever it writes
-    /// the migration. SQL Server does, in an idempotent script too (spike D).
+    /// An idempotent script is refused here: whether a provider carries such a statement in one
+    /// is a fact about its generator and its database, and nobody has said it of a provider
+    /// without a package. PostgreSQL does not (the statement is lost, and the migration recorded,
+    /// spike D), SQL Server does. A provider's dialect that knows says so; until then what is not
+    /// known is not written. A plain script and the migrator's commands run the statement by
+    /// itself, outside a transaction, which is what it asked for.
     /// </remarks>
-    public virtual string? WhyNotOutsideTransaction(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions options) => null;
+    public virtual string? WhyNotOutsideTransaction(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions options)
+        => options.HasFlag(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions.Idempotent)
+            ? SchemaKitStrings.NotKnownToCarry
+            : null;
 
     /// <inheritdoc />
     /// <remarks>
