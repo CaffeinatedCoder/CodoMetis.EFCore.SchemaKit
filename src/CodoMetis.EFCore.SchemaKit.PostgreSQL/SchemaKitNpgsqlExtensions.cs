@@ -13,7 +13,8 @@ public static class SchemaKitNpgsqlDbContextOptionsBuilderExtensions
     /// <summary>
     /// Puts SchemaKit and its PostgreSQL objects into every path that turns this context's model
     /// into DDL: <c>options.UseNpgsql(connectionString, o => o.UseSchemaKit())</c>. It is the whole
-    /// registration: the kernel's, PostgreSQL's dialect, and what renders an exclusion constraint.
+    /// registration: the kernel's, PostgreSQL's dialect, and what renders an index and an exclusion
+    /// constraint.
     /// </summary>
     /// <remarks>
     /// A model that declares a PostgreSQL object without this call fails where the declaration is

@@ -13,9 +13,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodoMetis.EFCore.SchemaKit.Tests.Harness;
 
 /// <summary>
-/// A stand-in for the planning layer that does not exist yet: a declaration API that asks for the
-/// stamp as the real ones will, a planner that turns each declaration into a real index, and a
-/// rewriter for one made-up legacy operation. The host is what is under test, not these.
+/// What the host's own tests use in place of the planner and a provider's package: a declaration
+/// API that asks for the stamp as the real ones do, a planner that turns each declaration into a
+/// real index, and a rewriter for one made-up legacy operation. The host is what is under test,
+/// not these; the planner has tests of its own.
 /// </summary>
 public static class TestKit
 {

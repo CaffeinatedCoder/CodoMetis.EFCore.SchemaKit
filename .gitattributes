@@ -1,0 +1,3 @@
+# A shell script checked out with CRLF fails in bash ("$'\r': command not found"), which is what
+# a Windows clone with core.autocrlf=true does to it.
+*.sh text eol=lf

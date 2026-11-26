@@ -1,9 +1,11 @@
 # Contributing
 
-SchemaKit is at its beginning: the repository holds the design, a prototype with its compile probes,
-and the kernel's host. Until `11.0.0-preview.1` the most useful contribution is a review of
+SchemaKit is in preview: `11.0.0-preview.1` is published, and the PostgreSQL package has indexes
+and exclusion constraints. The most useful contributions are a bug report with the model you
+declared and the migration you got, and a review of
 [design/schemakit-api.md](design/schemakit-api.md) and
-[design/schemakit-core-plan.md](design/schemakit-core-plan.md), as an issue.
+[design/schemakit-core-plan.md](design/schemakit-core-plan.md) before the contract freezes at
+`rc.1`, each as an issue.
 
 ## Build and test
 

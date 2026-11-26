@@ -503,7 +503,7 @@ Measured in the review of 2026-11-14 and checked again since.
   `ToTable("role_grants", "public")`, and the move is written
   (`Moving_the_table_back_with_the_default_schema_named`). This is also the Down of every move
   into a schema. It is Npgsql's to fix; #105 tracks the report upstream.
-- **`11.0.0-preview.1` restores Npgsql's rc.3.** It was built against
+- **On `11.0.0-preview.1`, Npgsql's rc.3 is restored.** That preview was built against
   `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`, which depends on EF Core
   `11.0.0-rc.3.26522.148` exactly. Reference `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0 in the
   project as well: it then restores EF Core 11.0.0 and Npgsql 11.0.0 without a warning. The

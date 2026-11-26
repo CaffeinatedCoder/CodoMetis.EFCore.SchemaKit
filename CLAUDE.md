@@ -1015,6 +1015,9 @@ here yet are listed in #152, each with what has to exist first.
 - **No job says `continue-on-error`,** every action is used at a commit with its version in a
   comment, and no workflow but `release.yml` writes anything but the nightly's issue
   (`WorkflowGateConventionTests`, `CiInputConventionTests`, `ReleaseWiringConventionTests`).
+- **Every test project directly under `test/` has a NuGet entry in `dependabot.yml`**
+  (`DependabotConventionTests`, #236). What is deeper, the smoke test's consumers and the 5.x
+  fixture, pins what it measures and has none.
 - **A test that reads the repository reads what git tracks** (`RepositoryLayout.Files`), not
   the folder: a file that was never added and another worktree's copy are on the disk and in no
   commit. Add a new file before a test is asked about it.
