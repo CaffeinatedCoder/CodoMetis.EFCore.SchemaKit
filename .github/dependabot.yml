@@ -14,8 +14,13 @@ updates:
       - dependency-name: "*"
         update-types: [ "version-update:semver-major" ]
 
+  # Every test project directly under test/ has an entry (DependabotConventionTests). What is
+  # deeper, the smoke test's consumers and the 5.x fixture, is a measurement of what it pins.
   - package-ecosystem: nuget
-    directory: /test/CodoMetis.EFCore.SchemaKit.Tests
+    directories:
+      - /test/CodoMetis.EFCore.SchemaKit.Tests
+      - /test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests
+      - /test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests
     schedule:
       interval: monthly
     groups:

@@ -6,7 +6,7 @@
         <RootNamespace>CodoMetis.EFCore.SchemaKit.PostgreSQL</RootNamespace>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageId>CodoMetis.EFCore.SchemaKit.PostgreSQL</PackageId>
-        <Description>Schema objects of PostgreSQL that EF Core 11 and Npgsql 11 have no API for, declared in the model and carried by migrations: exclusion constraints, typed by what PostgreSQL accepts.</Description>
+        <Description>Schema objects of PostgreSQL that EF Core 11 and Npgsql 11 have no API for, declared in the model and carried by migrations: indexes of every access method, on expressions and members of JSON documents, and exclusion constraints, typed by what PostgreSQL accepts.</Description>
         <!-- CS1591 polices the public surface: the .xml in the package is what a consumer sees. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <!-- SK9001 marks the kernel's contributor contract as experimental. This package is written
