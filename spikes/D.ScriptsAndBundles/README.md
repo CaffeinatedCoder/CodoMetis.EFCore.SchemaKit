@@ -280,6 +280,16 @@ Three things follow for #115:
 
 ## Where a refusal could stand
 
+**Built since (#155, #206).** The kernel puts the annotation `CodoMetis:SchemaKit:Object` on a
+statement written with `suppressTransaction: true`, and the generator decorator refuses such a
+statement where the dialect says the way a migration is applied does not carry it: on Npgsql, an
+idempotent script. The spike holds that as its own row, `migrations script --idempotent, as
+scaffolded`. It then takes the annotation out of the migration and measures the cells above on
+the statement as a consumer writes one by hand, which SchemaKit does not judge: they are what the
+refusal is there for, and they stay measured on every run.
+
+What follows is the spike's finding as it was written, before the refusal existed.
+
 The issue's rule is that a combination the provider cannot wrap is refused at scaffold, with the
 declaration named. The spike builds no refusal. It measured two things that bear on where one can
 stand:
