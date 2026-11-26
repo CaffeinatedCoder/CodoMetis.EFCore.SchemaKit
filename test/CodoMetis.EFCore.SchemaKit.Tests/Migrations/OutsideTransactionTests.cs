@@ -185,18 +185,44 @@ public sealed class OutsideTransactionTests
     }
 
     /// <summary>
-    /// The kernel's own dialect, which a provider without a package has, carries the statement
-    /// every way. SQL Server does, in an idempotent script too (spike D).
+    /// The kernel's own dialect, which a provider without a package has, does not know whether
+    /// that provider carries the statement in an idempotent script: PostgreSQL does not, SQL
+    /// Server does. What is not known is not written (#214). Every other way runs the statement
+    /// by itself, outside a transaction.
     /// </summary>
-    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer)]
-    public void A_provider_without_a_package_carries_it_every_way(Provider provider)
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_provider_without_a_package_is_not_taken_to_carry_it_in_an_idempotent_script(Provider provider)
     {
         var operations = Diff<PlanModels.Bare, PlanModels.Domain>(provider);
         using var context = SchemaOperationPlannerTests.Context<PlanModels.Bare>(provider);
 
-        var command = Generate(context, operations, MigrationsSqlGenerationOptions.Script | MigrationsSqlGenerationOptions.Idempotent).Single();
+        foreach (var carried in new[] { MigrationsSqlGenerationOptions.Default, MigrationsSqlGenerationOptions.Script })
+            Assert.IsTrue(Generate(context, operations, carried).Single().TransactionSuppressed, carried.ToString());
 
-        Assert.IsTrue(command.TransactionSuppressed);
+        var error = Assert.ThrowsExactly<InvalidOperationException>(
+            () => Generate(context, operations, MigrationsSqlGenerationOptions.Script | MigrationsSqlGenerationOptions.Idempotent));
+        StringAssert.Contains(error.Message, "Test.Domain 'dom' on Thing");
+        StringAssert.Contains(error.Message, "No SchemaKit package for this provider says");
+        StringAssert.Contains(error.Message, "without --idempotent");
+    }
+
+    /// <summary>A dialect as SQL Server's package will bring it: measured to carry the statement every way.</summary>
+    private sealed class CarriesItEveryWay(SchemaDialectDependencies dependencies) : SchemaDialect(dependencies)
+    {
+        public override string? WhyNotOutsideTransaction(MigrationsSqlGenerationOptions options) => null;
+    }
+
+    private static void Carrying(IServiceCollection services)
+        => services.AddScoped<ISchemaDialect>(provider => new CarriesItEveryWay(Dependencies(provider)));
+
+    /// <summary>And a provider's dialect that knows says so, which is all it takes.</summary>
+    [TestMethod]
+    public void A_dialect_that_says_it_carries_the_statement_is_believed()
+    {
+        var operations = Diff<PlanModels.Bare, PlanModels.Domain>(Provider.SqlServer);
+        using var context = SchemaOperationPlannerTests.Context<PlanModels.Bare>(Provider.SqlServer, Carrying);
+
+        Assert.IsTrue(Generate(context, operations, MigrationsSqlGenerationOptions.Script | MigrationsSqlGenerationOptions.Idempotent).Single().TransactionSuppressed);
     }
 
     /// <summary>

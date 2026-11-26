@@ -193,7 +193,8 @@ scaffold() { # what the migration must hold
   build || { row "$name" "the scaffolded migration compiles" 1 "see $log"; return 1; }
 
   # A statement outside a transaction says which object it is for, and with that SchemaKit refuses
-  # the idempotent script on Npgsql (#155, #206). What the refusal is there for is measured below
+  # the idempotent script: on Npgsql (#155, #206), and on a provider whose dialect is the kernel's
+  # own, which does not know whether the provider carries the statement (#214). What the refusal is there for is measured below
   # on the statement as a consumer writes one by hand, which says nothing of itself: the
   # annotation is taken out of the migration.
   if [[ -n ${stamped:-} ]]; then
@@ -684,18 +685,25 @@ fi
 # suppression never arrived. The two after it are the ones that say whether it does.
 if wanted sqlserver-online && consumer sqlserver-online SQLSERVER ONLINE_INDEX; then
   thing=index; thing_ok="the index is in the catalog"
+  # On the kernel's own dialect, which does not know that SQL Server carries the statement in an
+  # idempotent script, the script is refused as scaffolded (#214). What is measured below, on the
+  # statement without its annotation, is what a dialect for SQL Server will say.
+  stamped="'ix_things_name'"
   if scaffold 'WITH (ONLINE = ON)' 'suppressTransaction: true'; then
     measure mssql "$mssql" "\`CREATE INDEX … WITH (ONLINE = ON)\`, transaction suppressed" "$mssql_container"
   fi
+  stamped=
 fi
 
 # A statement SQL Server refuses inside a transaction (Msg 226), with the transaction suppressed,
 # and then the same without: the control, which has to fail on every path.
 if wanted sqlserver-suppressed && consumer sqlserver-suppressed SQLSERVER DATABASE_OPTION; then
   thing="database option"; thing_ok="the option is on"
+  stamped="'allow_snapshot_isolation'"
   if scaffold 'ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON' 'suppressTransaction: true'; then
     measure mssql "$mssql" "\`ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON\`, transaction suppressed" "$mssql_container"
   fi
+  stamped=
 fi
 
 if wanted sqlserver-unsuppressed && consumer sqlserver-unsuppressed SQLSERVER DATABASE_OPTION_IN_TRANSACTION; then
