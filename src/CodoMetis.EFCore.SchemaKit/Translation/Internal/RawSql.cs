@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using CodoMetis.EFCore.SchemaKit.Infrastructure.Internal;
 
 namespace CodoMetis.EFCore.SchemaKit.Translation.Internal;
@@ -15,8 +16,11 @@ namespace CodoMetis.EFCore.SchemaKit.Translation.Internal;
 /// characters (U+FDD0 and U+FDD1, which Unicode keeps out of text for good). They are looked for
 /// outside single-quoted literals only: a value that holds one is inside a literal.
 /// </remarks>
-internal static class RawSql
+internal static partial class RawSql
 {
+    [GeneratedRegex(@"\$([A-Za-z_][A-Za-z0-9_]*)?\$")]
+    private static partial Regex DollarQuote();
+
     private const char Open = '﷐';
     private const char Close = '﷑';
 
@@ -46,6 +50,15 @@ internal static class RawSql
             throw new NotSupportedException(SchemaKitStrings.RawWithoutSql(marker));
         if (sql.AsSpan().ContainsAny(Open, Close))
             throw new NotSupportedException(SchemaKitStrings.RawHoldsAMark(marker));
+
+        // A placeholder is looked for outside single-quoted literals, and a quote ends a literal.
+        // Two spellings of a literal break that: a backslash before a quote, which in an escape
+        // string does not end it, and a dollar quote, which is no quote at all. A property's
+        // name in braces inside one was replaced by its column, and after the first the scan was
+        // turned round for the rest of the text (issue 224). Which of them a database has is its
+        // own grammar, so text that has braces and either is not read at all.
+        if (sql.Contains('{', StringComparison.Ordinal) && (sql.Contains(@"\'", StringComparison.Ordinal) || DollarQuote().IsMatch(sql)))
+            throw new NotSupportedException(SchemaKitStrings.RawWithALiteralNotRead(marker));
 
         return Open + sql + Close;
     }

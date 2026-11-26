@@ -324,6 +324,12 @@ internal static class SchemaKitStrings
     public static string RawWithoutSql(System.Linq.Expressions.Expression marker)
         => $"'{marker}' holds no SQL.";
 
+    public static string RawWithALiteralNotRead(System.Linq.Expressions.Expression marker)
+        => $"The SQL of '{marker}' holds braces and a literal that is not read: a backslash before a quote, or a dollar quote. " +
+           "A {Property} is told from text in a literal by single quotes alone, so it could be replaced inside such a literal, " +
+           "or left as it is outside one. Write the literal with plain quotes, a quote in it doubled, or write the columns' " +
+           "names into the SQL yourself, without braces.";
+
     public static string RawHoldsAMark(System.Linq.Expressions.Expression marker)
         => $"The SQL of '{marker}' holds U+FDD0 or U+FDD1, which are no characters and which SchemaKit keeps for itself.";
 

@@ -600,6 +600,11 @@ what is still missing: `[SchemaFunction]`).
   the rest text, a `{Path}` of either a column. A mark is looked for outside single-quoted
   literals only, and SQL that holds one is refused. `KeyTarget.Of` asks the same function, so a
   placeholder alone is the column.
+- **SQL with braces and a literal the scan does not read is refused at the call** (#224): a
+  backslash before a quote, which in PostgreSQL's escape string does not end the literal, and a
+  dollar quote. The kernel's grammar for a placeholder is single quotes, one for every
+  provider; it does not learn a provider's literals, it refuses text it would misread. Only
+  `Sql.Raw` refuses: a 5.x snapshot's filter is read as 5.x read it.
 - **A path in SQL written by hand is asked of the model when it is finalized,** by the
   resolver's own walk (`ModelFacts.Require`): it is the one path of a lambda no compiler saw. So
   the application's own model is refused too, not only `migrations add`.
@@ -829,6 +834,14 @@ what is still missing).
   compares the catalog with what `EnsureCreated()` builds. Offline alone proves little: both
   sides go through one resolver, so a default name that drifted from 5.x's would still diff to
   nothing. The live test and the drop statements of `NothingDeclared` are what hold the names.
+- **A 5.x exclusion constraint that reads a member of a JSON document is read only where 5.x
+  and a path here agree** (#225, from 5.6.0's source). 5.x pinned a filter to its first
+  rendering, the member's text, unless the current rendering casts the member, which it then
+  took: a string and a number are the same on both sides. Binary data (`decode` here) and a
+  collection (`->` here) are not, and are refused by name. An element followed the snapshot's
+  version: before 5.4.0 a member is refused, as for an index. Both sides of a handover go
+  through one resolver, so nothing but the reader can tell. Held against models written in the
+  test, not against a snapshot 5.x scaffolded: the fixture has no such constraint.
 - **What `PgExclusion` cannot say is refused by name, with the way off it:** a constraint of
   equality elements only, an access method other than GiST and one-element SP-GiST, a property
   5.x never wrote, and a constraint on a TPC type with derived types in a snapshot from before
