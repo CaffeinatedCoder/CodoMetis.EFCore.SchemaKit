@@ -253,10 +253,11 @@ Good to know:
   fail when it is built (`InvalidOperationException`), not only in `migrations add`. The one
   exception is SQL that is a placeholder and nothing else, `Sql.Raw<int>("{Rank}")` as a key: that
   is the column, and a wrong name fails in `migrations add`.
-- **Keep a `{…}` out of an `E'…'` or dollar-quoted literal.** A placeholder is left alone inside
-  a plain `'…'` literal. SchemaKit does not know PostgreSQL's other two kinds, so a property's
-  name in braces inside one is replaced by the column
-  ([#224](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/224)).
+- **Braces do not go together with an escape string or a dollar-quoted literal.** A `{…}`
+  inside a plain `'…'` literal is left alone. SchemaKit does not read PostgreSQL's other two
+  kinds of literal, so SQL that has braces and a backslash before a quote, or a dollar quote,
+  throws in `OnModelCreating` (`NotSupportedException`). Write the literal with plain quotes, or
+  the column names without braces.
 - **A renamed column or table rebuilds the object.** SchemaKit cannot see which columns your SQL
   reads outside the placeholders, so the migration drops the index or constraint before the
   rename and creates it again after it.

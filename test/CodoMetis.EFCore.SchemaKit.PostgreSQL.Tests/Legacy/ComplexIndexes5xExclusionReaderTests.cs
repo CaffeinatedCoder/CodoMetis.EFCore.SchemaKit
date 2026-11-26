@@ -187,4 +187,78 @@ public sealed class ComplexIndexes5xExclusionReaderTests
             Assert.IsFalse(operations.Any(sql => sql.Contains("CONSTRAINT", StringComparison.Ordinal)), string.Join("\n", operations));
         }
     }
+
+    // ── A member of a JSON document that 5.x wrote otherwise than a path resolves to here (#225) ──
+
+    public sealed class Parcel
+    {
+        public int Id { get; set; }
+        public NpgsqlTypes.NpgsqlRange<DateOnly> During { get; set; }
+        public ParcelDetails Details { get; set; } = new();
+    }
+
+    public sealed class ParcelDetails
+    {
+        public string Label { get; set; } = "";
+        public int Weight { get; set; }
+        public byte[] Seal { get; set; } = [];
+        public int[] Sizes { get; set; } = [];
+    }
+
+    private static void Parcels(ModelBuilder modelBuilder)
+        => modelBuilder.Entity<Parcel>().ToTable("parcels").ComplexProperty(x => x.Details, details => details.ToJson("details"));
+
+    private sealed class ParcelsAlone : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Parcels(modelBuilder);
+    }
+
+    private static List<string> OfParcels(string json, int? version = 3)
+        => LegacyFixture.DiffFrom<ParcelsAlone>(source =>
+        {
+            Parcels(source);
+            source.Entity<Parcel>().HasAnnotation(Annotation, json);
+            if (version is { } rendering) source.HasAnnotation("CustomIndex:RenderingVersion", rendering);
+        }).Shape();
+
+    private static string Filtered(string filter)
+        => $$"""[{"parts":[{"path":"During","op":"&&"}],"filter":"{{filter}}","name":"ex_parcel"}]""";
+
+    /// <summary>
+    /// 5.x compared a member's text in a filter, unless the member is one its current rendering
+    /// casts. A string is text here too, and a number is the cast on both sides: those are read,
+    /// and the snapshot's constraint is seen and dropped by a model that declares nothing. Binary
+    /// data and a collection are another expression here, and read as they stand the handover
+    /// would be empty over a constraint that says something else.
+    /// </summary>
+    [TestMethod]
+    public void A_filter_over_a_member_5x_wrote_as_text_and_this_package_does_not_is_refused()
+    {
+        Assert.HasCount(1, OfParcels(Filtered("{Details.Label} <> ''")), "A string is its text on both sides.");
+        Assert.HasCount(1, OfParcels(Filtered("{Details.Weight} > 0")), "A number is the cast on both sides.");
+        Assert.HasCount(1, OfParcels(Filtered("{Id} > 0")), "A column is no member.");
+
+        var binary = Assert.ThrowsExactly<InvalidOperationException>(() => OfParcels(Filtered("{Details.Seal} = 'AA=='")));
+        StringAssert.Contains(binary.Message, "exclusion constraint of Parcel (ex_parcel)");
+        StringAssert.Contains(binary.Message, "whose filter reads 'Details.Seal', binary data in a JSON document");
+
+        var collection = Assert.ThrowsExactly<InvalidOperationException>(() => OfParcels(Filtered("{Details.Sizes} IS NOT NULL")));
+        StringAssert.Contains(collection.Message, "whose filter reads 'Details.Sizes', a collection in a JSON document");
+    }
+
+    /// <summary>An element followed the snapshot's version, as an index's key did: before 5.4.0 a member was its text.</summary>
+    [TestMethod]
+    public void An_element_over_a_member_in_a_snapshot_from_before_5_4_is_refused()
+    {
+        const string OverAMember = """[{"parts":[{"path":"Details.Weight","op":"="},{"path":"During","op":"&&"}],"name":"ex_parcel"}]""";
+
+        Assert.HasCount(1, OfParcels(OverAMember, version: 2));
+        Assert.HasCount(1, OfParcels(OverAMember, version: 3));
+
+        foreach (var version in new int?[] { null, 1 })
+        {
+            var refused = Assert.ThrowsExactly<InvalidOperationException>(() => OfParcels(OverAMember, version));
+            StringAssert.Contains(refused.Message, "reads 'Details.Weight', a member of a JSON document, and was scaffolded before 5.4.0");
+        }
+    }
 }

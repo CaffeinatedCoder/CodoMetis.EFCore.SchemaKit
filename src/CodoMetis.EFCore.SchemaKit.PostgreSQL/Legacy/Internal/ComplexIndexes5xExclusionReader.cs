@@ -85,8 +85,68 @@ internal sealed class ComplexIndexes5xExclusionReader : LegacyDeclarationReader<
                 && RenderingVersion(entityType.Model) < CopiesOnEveryTable)
                 throw new InvalidOperationException(PgStrings.LegacyExclusionOnTpcRootBeforeCopies(entity));
 
-            return [.. document.RootElement.EnumerateArray().Select(constraint => ReadConstraint(entity, constraint))];
+            return [.. document.RootElement.EnumerateArray().Select(constraint => SameMembers(entityType, ReadConstraint(entity, constraint)))];
         }
+    }
+
+    // The second rendering version (5.4.0) wrote a member of a JSON document as Npgsql's queries do.
+    private const int AsTheQueriesWrite = 2;
+
+    /// <summary>
+    /// Refuses a constraint that reads a member of a JSON document which 5.x wrote otherwise than
+    /// a path resolves to here (issue 225). Both sides of the handover go through one resolver,
+    /// so the diff would be empty while the constraint in the database says something else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 5.x pinned a filter to its first rendering whatever the snapshot's version: a member is
+    /// its text, unless the current rendering casts it (a number, a boolean, a uuid, an enum),
+    /// which it then took. A string is text on both sides. What is left differs: a
+    /// <c>bytea</c> member is decoded here and was base64 text there, and a collection is JSON
+    /// here and was text there. A date or a time was text there and is refused here by the
+    /// constraint itself, when it is resolved.
+    /// </para>
+    /// <para>
+    /// An element followed the snapshot's version, as an index's key did: before 5.4.0 every
+    /// member was text, step by step.
+    /// </para>
+    /// </remarks>
+    private static PgExclusion SameMembers(IReadOnlyEntityType entityType, PgExclusion constraint)
+    {
+        var entity = entityType.ShortName();
+        var described = constraint.Name ?? "one without a name";
+
+        IEnumerable<ExclusionElement> elements = constraint switch
+        {
+            PgExclusion.Gist gist     => gist.Elements,
+            PgExclusion.SpGist spGist => [spGist.Element],
+            _                         => [],
+        };
+
+        if (RenderingVersion(entityType.Model) < AsTheQueriesWrite)
+        {
+            foreach (var path in elements.SelectMany(element => PgJsonMembers.PathsOf(element.Target)))
+            {
+                if (ComplexIndexes5xIndexes.MemberOf(entityType, path) is not null)
+                    throw new InvalidOperationException(PgStrings.LegacyExclusionMemberBeforeQueries(entity, described, path));
+            }
+        }
+
+        foreach (var path in constraint.Where is { } where ? PgJsonMembers.PathsOf(where.Template) : [])
+        {
+            if (ComplexIndexes5xIndexes.MemberOf(entityType, path) is not { } member) continue;
+
+            var type = Nullable.GetUnderlyingType(member.ClrType) ?? member.ClrType;
+            var what = member.IsPrimitiveCollection ? "a collection"
+                : type == typeof(byte[]) ? "binary data"
+                : type == typeof(JsonDocument) || type == typeof(JsonElement) ? "JSON"
+                : null;
+
+            if (what is not null)
+                throw new InvalidOperationException(PgStrings.LegacyExclusionFilterMemberAsText(entity, described, path, what));
+        }
+
+        return constraint;
     }
 
     private static PgExclusion ReadConstraint(string entity, JsonElement json)

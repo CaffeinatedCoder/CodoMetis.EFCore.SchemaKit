@@ -152,6 +152,23 @@ public sealed class SqlRawTests
         StringAssert.Contains(Refused(() => P(x => Sql.Raw<bool>(Sql.Raw<string>("a")))), "is read from the entity");
     }
 
+    /// <summary>
+    /// A quote that does not end a literal, and a literal without a quote: the scan for
+    /// placeholders reads neither, and replaced a property's name inside one (issue 224). Without
+    /// braces there is nothing to replace, and the text is taken.
+    /// </summary>
+    [TestMethod]
+    public void A_literal_the_scan_cannot_read_is_refused_beside_braces()
+    {
+        StringAssert.Contains(Refused(() => P(x => Sql.Raw<bool>(@"length(E'it\'s {Code}') = 11"))), "a literal that is not read");
+        StringAssert.Contains(Refused(() => P(x => Sql.Raw<bool>("$q${Code}$q$ = {Name}"))), "a literal that is not read");
+        StringAssert.Contains(Refused(() => P(x => Sql.Raw<bool>("$${Code}$$ = 'a'"))), "a literal that is not read");
+
+        Assert.AreEqual(@"«length(E'it\'s') = 4»", P(x => Sql.Raw<bool>(@"length(E'it\'s') = 4")));
+        Assert.AreEqual("«$q$a$q$ = 'a'»", P(x => Sql.Raw<bool>("$q$a$q$ = 'a'")));
+        Assert.AreEqual("{Rank}« > $1»", P(x => Sql.Raw<bool>("{Rank} > $1")), "One dollar sign is no quote.");
+    }
+
     /// <summary>What stands around it is still checked: a conversion that can change the value has no spelling here either.</summary>
     [TestMethod]
     public void A_conversion_of_it_is_held_to_the_same_table()

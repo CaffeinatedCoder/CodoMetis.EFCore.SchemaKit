@@ -110,6 +110,18 @@ internal static class PgStrings
            + $"'{method}'. PgExclusion declares GiST constraints, and SP-GiST constraints of one element. Before moving to "
            + "SchemaKit, remove the constraint in the 5.x project and apply that migration; afterwards keep it by hand-written SQL.";
 
+    public static string LegacyExclusionFilterMemberAsText(string entity, string constraint, string path, string what)
+        => $"The model snapshot holds an exclusion constraint of {entity} ({constraint}) from {Legacy} whose filter reads '{path}', "
+           + $"{what} in a JSON document. 5.x compared the member's text in a filter, and a declaration here reads the member as "
+           + "the provider's queries do, which is another condition: read as it stands, the migration would be empty while the "
+           + "constraint in the database says something else. Before moving to SchemaKit, remove the constraint in the 5.x "
+           + "project and apply that migration; declare it afterwards, with the condition written as SQL if the text is what is meant.";
+
+    public static string LegacyExclusionMemberBeforeQueries(string entity, string constraint, string path)
+        => $"The model snapshot holds an exclusion constraint of {entity} ({constraint}) from {Legacy} that reads '{path}', a "
+           + "member of a JSON document, and was scaffolded before 5.4.0, when 5.x wrote a member as its text. A declaration "
+           + $"here reads it as the provider's queries do, which is another expression. {MoveTo56First}";
+
     public static string LegacyExclusionOnTpcRootBeforeCopies(string entity)
         => $"The model snapshot holds exclusion constraints from {Legacy} on {entity}, a type of a TPC hierarchy with derived types, "
            + "and was scaffolded before 5.5.0: the constraints are in the table of that type alone. SchemaKit creates such a "

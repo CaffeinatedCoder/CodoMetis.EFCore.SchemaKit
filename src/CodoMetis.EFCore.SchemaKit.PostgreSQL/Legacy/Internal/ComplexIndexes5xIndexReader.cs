@@ -522,7 +522,7 @@ internal static class ComplexIndexes5xIndexes
             : [];
 
     /// <summary>The property a path names when it is inside a JSON document, or null: a path outside one, or one this walk does not follow.</summary>
-    private static IReadOnlyProperty? MemberOf(IReadOnlyEntityType entityType, string path)
+    internal static IReadOnlyProperty? MemberOf(IReadOnlyEntityType entityType, string path)
     {
         var segments = path.Split('.');
         IReadOnlyTypeBase current = entityType;
