@@ -121,6 +121,9 @@ internal sealed class ModelFacts(IReadOnlyEntityType entityType, IRelationalType
 
     public override bool IsBooleanColumn(string path) => Mapping(Find(path).Property)?.Converter is null;
 
+    /// <summary>Refuses a path that names no property of the entity type, by the resolver's own walk.</summary>
+    public void Require(string path) => PropertyPaths.Walk(entityType, path, Mapping);
+
     private CoreTypeMapping? Mapping(IReadOnlyProperty property)
         => property.FindTypeMapping() ?? mappings?.FindMapping((IProperty)property);
 

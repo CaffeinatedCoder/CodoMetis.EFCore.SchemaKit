@@ -119,4 +119,16 @@ public sealed class SpellingParityTests
 
         return sql[1..^1];
     }
+
+    /// <summary>
+    /// SQL written by hand (issue 220) is a condition as it stands, also where the database has no
+    /// boolean that is one: a flag beside it is compared with what true is, and the SQL is not.
+    /// </summary>
+    [TestMethod]
+    public void A_condition_written_by_hand_is_not_the_spellings_to_turn_into_one()
+    {
+        Assert.AreEqual("({Active} = CAST(1 AS bit) AND ([Rank] % 2 = 0))", Bound.Where<Row>(x => x.Active && Sql.Raw<bool>("[Rank] % 2 = 0")));
+        Assert.AreEqual("({Active} = CAST(1 AS bit) AND NOT ([Rank] % 2 = 0))", Bound.Where<Row>(x => x.Active && !Sql.Raw<bool>("[Rank] % 2 = 0")));
+        Assert.AreEqual("[Rank] % 2 = 0", Bound.Where<Row>(x => Sql.Raw<bool>("[Rank] % 2 = 0")));
+    }
 }

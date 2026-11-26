@@ -141,7 +141,7 @@ internal static class LambdaTranslator
         ArgumentNullException.ThrowIfNull(spelling);
         var root = Root(lambda, spelling, facts);
         new ConversionCheck(root).Visit(lambda.Body);
-        return Visit(lambda.Body, root);
+        return ByHandAlone(lambda.Body, root) ?? Visit(lambda.Body, root);
     }
 
     // The entity being configured is the one parameter. A lambda over two has no single table.
@@ -167,8 +167,17 @@ internal static class LambdaTranslator
         ArgumentNullException.ThrowIfNull(spelling);
         var root = Root(lambda, spelling, facts);
         new ConversionCheck(root).Visit(lambda.Body);
-        return VisitPredicate(lambda.Body, root, negated: false);
+        return ByHandAlone(lambda.Body, root) ?? VisitPredicate(lambda.Body, root, negated: false);
     }
+
+    // SQL written by hand stands in parentheses wherever it is a part of something, since nothing
+    // knows what it binds as. Alone it is the whole key or the whole condition, and is written as
+    // it is: that is what a 5.x filter reads as, and the two have to be one object.
+    private static string? ByHandAlone(System.Linq.Expressions.Expression body, Scope root)
+        => Unconverted(body) is MethodCallExpression marker && RawSql.Is(marker) ? ByHand(marker, root) : null;
+
+    private static string ByHand(MethodCallExpression marker, Scope root)
+        => RawSql.Mark(marker, node => DependsOnParameter(node, root));
 
     // The dispatch below takes a conversion off wherever it meets one, in the operand of a
     // comparison, in a null test, in a concatenation, and writes what is under it. That is right
@@ -255,6 +264,7 @@ internal static class LambdaTranslator
                 // A boolean value that is negated once is the spelling's to negate: a database whose
                 // boolean is a number compares it with what false is, as its queries do.
                 return ComparesNullable(not.Operand, root) || IsHasValue(not.Operand, root) || IsStoredFlag(not.Operand, root)
+                       || RawSql.Is(Unconverted(not.Operand))
                        || (!negated && IsBooleanValue(not.Operand, root))
                            ? VisitPredicate(not.Operand, root, !negated)
                            : Negate($"NOT ({VisitPredicate(not.Operand, root, negated: false)})", negated);
@@ -322,6 +332,11 @@ internal static class LambdaTranslator
 
             case MemberExpression hasValue when IsHasValue(hasValue, root):
                 return $"{Visit(hasValue.Expression!, root)} IS {(negated ? "" : "NOT ")}NULL";
+
+            // A condition written by hand is a condition on every database, whatever the
+            // provider's boolean is: it is not the spelling's to turn into one.
+            case MethodCallExpression marker when RawSql.Is(marker):
+                return negated ? $"NOT ({ByHand(marker, root)})" : $"({ByHand(marker, root)})";
 
             // A boolean column, or a bool? column's Value, stands on its own.
             // A boolean stored as something else (a 'Y', a 1) is no condition by itself: it is
@@ -631,6 +646,16 @@ internal static class LambdaTranslator
             return string.Join(".", segments);
         }
 
+        // SQL written by hand is not looked into: its type is all that says whether it can be null.
+        protected override System.Linq.Expressions.Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (!RawSql.Is(node))
+                return base.VisitMethodCall(node);
+
+            if (RawSql.CanBeNull(node)) Found = true;
+            return node;
+        }
+
         protected override System.Linq.Expressions.Expression VisitBinary(BinaryExpression node)
         {
             // A concatenation is never null: its nullable operands are coalesced.
@@ -662,6 +687,9 @@ internal static class LambdaTranslator
 
             case MemberExpression member when TryGetPath(member, root, out var path):
                 return "{" + path + "}";
+
+            case MethodCallExpression marker when RawSql.Is(marker):
+                return $"({ByHand(marker, root)})";
 
             case MethodCallExpression call when DependsOnParameter(call, root):
                 return VisitCall(call, root);
@@ -767,6 +795,8 @@ internal static class LambdaTranslator
     private static object? Evaluate(System.Linq.Expressions.Expression node)
         => System.Linq.Expressions.Expression.Lambda(node).Compile().DynamicInvoke();
 
+    // Whether a node reads the entity. SQL written by hand does, whatever it names: it is no
+    // value, and must never be evaluated as one.
     private static bool DependsOnParameter(System.Linq.Expressions.Expression node, Scope root)
     {
         var finder = new ParameterFinder(root.Parameter);
@@ -776,7 +806,8 @@ internal static class LambdaTranslator
 
     private static NotSupportedException NotSupported(System.Linq.Expressions.Expression node) => new(SchemaKitStrings.ExpressionNotTranslated(node));
 
-    // Finds the given parameter, or with none given, any parameter.
+    // Finds the given parameter, or with none given, any parameter; and SQL written by hand,
+    // which reads the entity's table like one.
     private sealed class ParameterFinder(ParameterExpression? parameter) : ExpressionVisitor
     {
         public bool Found { get; private set; }
@@ -792,6 +823,13 @@ internal static class LambdaTranslator
             if (parameter is null || ReferenceEquals(node, parameter))
                 Found = true;
             return base.VisitParameter(node);
+        }
+
+        protected override System.Linq.Expressions.Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (RawSql.Is(node))
+                Found = true;
+            return base.VisitMethodCall(node);
         }
     }
 }

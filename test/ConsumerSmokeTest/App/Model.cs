@@ -1,3 +1,4 @@
+using CodoMetis.EFCore.SchemaKit;
 using CodoMetis.EFCore.SchemaKit.PostgreSQL;
 using Microsoft.EntityFrameworkCore;
 using NpgsqlTypes;
@@ -58,6 +59,10 @@ public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbConte
                 // A member of the JSON document as a key: written as the query reads it, and the
                 // same in the model and in the snapshot `dotnet ef` compiles.
                 pg.BTree(x => x.Details!.Seats, name: "ix_bookings_seats"),
+
+                // SQL of the consumer's own, with a column by its property: the kernel's marker,
+                // read from the lambda by `dotnet ef` and by the application alike.
+                pg.BTree(x => Sql.Raw<int>("abs({RoomId})"), name: "ix_bookings_room_abs"),
             ]);
         });
 }

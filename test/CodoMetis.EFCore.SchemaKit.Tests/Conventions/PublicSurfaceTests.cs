@@ -114,6 +114,8 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.KeyTarget+Column",
         "CodoMetis.EFCore.SchemaKit.KeyTarget+Template",
         "CodoMetis.EFCore.SchemaKit.Predicate",
+        // The marker a consumer writes into a lambda for SQL of their own (#220).
+        "CodoMetis.EFCore.SchemaKit.Sql",
         "CodoMetis.EFCore.SchemaKit.SqlTemplate",
         "CodoMetis.EFCore.SchemaKit.ValueList",
         "CodoMetis.EFCore.SchemaKit.ValueList`1",

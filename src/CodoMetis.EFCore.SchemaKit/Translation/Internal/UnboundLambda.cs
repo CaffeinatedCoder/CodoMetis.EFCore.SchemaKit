@@ -95,6 +95,14 @@ internal sealed class UnboundLambda : IEquatable<UnboundLambda>
                 _found = true;
                 return node;
             }
+
+            // SQL written by hand is no value: evaluated, the marker throws. What it is handed is
+            // one, and is read like every other.
+            protected override Expression VisitMethodCall(MethodCallExpression node)
+            {
+                if (RawSql.Is(node)) _found = true;
+                return base.VisitMethodCall(node);
+            }
         }
     }
 }

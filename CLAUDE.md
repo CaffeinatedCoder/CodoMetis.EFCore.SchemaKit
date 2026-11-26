@@ -18,7 +18,7 @@ scaffolded by 5.x with exclusion constraints and indexes moves to the same model
 with no operations. Nothing of
 `preview.2` is published** (what is left of
 the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
-`Sql.Raw<T>` in an element, a factory for SP-GiST, the compile probes). The repository holds:
+a factory for SP-GiST, the compile probes). The repository holds:
 
 | Path | What |
 |---|---|
@@ -586,6 +586,26 @@ what is still missing: `[SchemaFunction]`).
   helper (`Converted`, `Unconverted`): match a conversion through it, never by its node type.
   The sweep compiles its rows a second time with overflow checks and holds each template, and
   each refusal, to the unchecked one (`A_checked_context_changes_no_row`).
+- **`Sql.Raw<T>("…")` in a lambda is SQL written by hand** (#220): a marker in the kernel, unmarked,
+  that throws when called. Alone in a lambda it is the SQL as written, which is what a 5.x
+  filter is read into, so the two are one object; as a part it stands in parentheses. The
+  translator never looks inside: `T` is all that says whether it can be null, a value type not,
+  its `Nullable<T>` and a reference type yes. To the translator it reads the entity like a
+  parameter (`DependsOnParameter`), so nothing evaluates it as a value, and `UnboundLambda`'s
+  visitor of captured values passes over the call and reads its argument. `SqlRawTests` holds
+  each rule.
+- **Its SQL travels through the translator's one string between two noncharacters** (`RawSql`,
+  U+FDD0 and U+FDD1), since the spelling composes text. `RawSql.Template` is the one place that
+  makes segments of a translated lambda: what stands between the marks becomes `raw` segments,
+  the rest text, a `{Path}` of either a column. A mark is looked for outside single-quoted
+  literals only, and SQL that holds one is refused. `KeyTarget.Of` asks the same function, so a
+  placeholder alone is the column.
+- **A path in SQL written by hand is asked of the model when it is finalized,** by the
+  resolver's own walk (`ModelFacts.Require`): it is the one path of a lambda no compiler saw. So
+  the application's own model is refused too, not only `migrations add`.
+- **The class is named `Sql`, and a namespace `Sql` nearer to the caller hides it.** The kernel's
+  tests have one, which is why `SqlRawTests` has an alias inside its namespace. Decided as
+  drafted (plan, Q1); a rename is the maintainer's.
 - **Refused where the lambda is written:** a comparison of two enum properties, a `DateTime` or
   `Guid` anywhere but in a comparison with a property, a member of a scalar, a method outside
   the tables.
@@ -830,10 +850,11 @@ what is still missing).
   nor a column; from a snapshot before 5.4.0, a member of a JSON document and an expression
   without a name (decided with #27); from one before 5.5.0, an index on a TPC type with
   derived types. `ComplexIndexes5xIndexReaderTests` has a row for each.
-- **SQL that 5.x took as written has no unmarked form here yet** (#26): `SqlTemplate.Raw` is the
-  contract's. A consumer declares such a filter or key as the lambda that becomes the same
-  SQL, which is the same index since fragments compare by their text
-  (`SQL_of_5x_declared_as_the_lambda_that_becomes_it_is_no_operations`); the guide says so.
+- **SQL that 5.x took as written is `Sql.Raw<T>` in the model** (#220), and the fixture's model
+  is declared that way (`MovedIndexes.Declared`): what the reader makes of 5.x's text with
+  `SqlTemplate.Raw` and what the binder makes of the marker are one template. A lambda that
+  becomes the same SQL is the same index too, since fragments compare by their text
+  (`SQL_of_5x_declared_as_the_lambda_that_becomes_it_is_no_operations`).
 - **The live tests take a database each** (`LiveDatabase`) and compare what a migration leaves with
   what `EnsureCreated()` builds for the target model, by the catalog's own text.
 

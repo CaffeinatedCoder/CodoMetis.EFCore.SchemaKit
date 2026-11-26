@@ -66,6 +66,13 @@ public sealed class ConsumerCompileTests
                 [
                     Grants.NoOverlap,
                     pg.Exclusion(pg.Overlaps(x => x.Period).WithUncheckedOperator(x => x.GranteeId, "<>"), where: x => x.RevokedOn == null),
+
+                    // SQL of the consumer's own, in a key, an element and a condition (#220).
+                    pg.Exclusion(
+                        pg.Overlaps(x => x.Period).WithUncheckedOperator(x => Sql.Raw<int>("abs({GranteeId})"), "="),
+                        where: x => x.GranteeId > 0 && Sql.Raw<bool>("{RevokedOn} IS NULL"),
+                        name: "ex_by_hand"),
+                    pg.BTree(x => Sql.Raw<string>("lower(note)"), where: x => Sql.Raw<bool>("{RevokedOn} IS NULL")),
                 ]);
 
                 var notRevoked = PgSchema.Where<IWithdrawable>(x => x.RevokedOn == null);
