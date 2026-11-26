@@ -88,7 +88,16 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
             return asText ? sql.Fragment($"{member.Container} ->> {name}") : sql.Fragment($"{member.Container} -> {name}");
         }
 
-        var path = member.Path.All(name => name.All(char.IsAsciiLetterOrDigit))
+        var asArrayLiteral = member.Path.All(name => name.All(char.IsAsciiLetterOrDigit));
+
+        // In the array literal an unquoted null, in any case, is a NULL element and #>> answers
+        // NULL for it, and an empty name is a syntax error. Npgsql's queries write the same text,
+        // so another form would be an index no query uses: a unique index on the member took two
+        // equal rows, since every key was NULL (#235).
+        if (asArrayLiteral && member.Path.FirstOrDefault(name => name.Length == 0 || name.Equals("null", StringComparison.OrdinalIgnoreCase)) is { } unreadable)
+            throw new InvalidOperationException(PgStrings.JsonPathNameReadAsNull(string.Join(".", member.Path), unreadable));
+
+        var path = asArrayLiteral
             ? Literal("{" + string.Join(",", member.Path) + "}")
             : sql.Fragment($"ARRAY[{sql.List(member.Path.Select(Literal))}]::text[]");
 

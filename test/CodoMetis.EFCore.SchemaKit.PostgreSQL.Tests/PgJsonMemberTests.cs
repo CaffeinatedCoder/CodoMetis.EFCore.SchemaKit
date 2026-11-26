@@ -253,6 +253,28 @@ public sealed class PgJsonMemberTests
     public void A_member_cannot_be_included()
         => StringAssert.Contains(Refused<JsonModels.AMemberIncluded>(), "The index 'ix_incl' includes 'Prefs.Rank', which is a member of a JSON document and no column");
 
+    /// <summary>
+    /// Npgsql writes a path of more than one name as an array literal, where PostgreSQL reads an
+    /// unquoted null as a NULL element: the member reads as NULL, and a unique index on it took
+    /// two equal rows (#235). Another form would serve no query, so it is refused.
+    /// </summary>
+    [TestMethod]
+    public void A_name_the_path_literal_reads_as_null_is_refused()
+    {
+        StringAssert.Contains(Refused<JsonModels.AKeyNamedNull>(), "at 'addr.null' has the JSON name 'null'");
+        StringAssert.Contains(Refused<JsonModels.AConditionNamedNull>(), "at 'addr.NULL' has the JSON name 'NULL'");
+    }
+
+    /// <summary>The twin: one step is a string literal, which is the query's too.</summary>
+    [TestMethod]
+    public void A_member_named_null_at_the_top_is_the_querys_expression()
+    {
+        using var context = Contexts.Of<JsonModels.AMemberNamedNullAtTheTop>();
+        var query = context.Set<Person>().OrderBy(x => x.Prefs.Nick).Select(x => x.Id).ToQueryString();
+        StringAssert.Contains(query, "p.prefs ->> 'null'");
+        CollectionAssert.Contains(Created<JsonModels.AMemberNamedNullAtTheTop>(), "CREATE UNIQUE INDEX ix_nick ON people ((prefs ->> 'null'));");
+    }
+
     [TestMethod]
     public void A_path_through_a_collection_is_refused()
         => StringAssert.Contains(Refused<JsonModels.ThroughACollection>(), "goes through 'Items', which is a collection");

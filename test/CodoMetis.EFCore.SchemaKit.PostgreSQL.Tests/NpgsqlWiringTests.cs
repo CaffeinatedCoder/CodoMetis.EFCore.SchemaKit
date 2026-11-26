@@ -216,4 +216,30 @@ public sealed class NpgsqlWiringTests
         Assert.AreEqual("NpgsqlSchemaDialect", context.GetService<ISchemaDialect>().GetType().Name);
         StringAssert.Contains(Script(context), $"ADD CONSTRAINT {Models.Name} EXCLUDE");
     }
+
+    /// <summary>
+    /// The kernel's call beside the package's, in either order, or the package's twice: the second
+    /// captured SchemaKit's own decorators as the inner services, and the process ended with a
+    /// stack overflow (#234).
+    /// </summary>
+    [TestMethod, DataRow("kernel, then package"), DataRow("package, then kernel"), DataRow("package twice")]
+    public void A_second_registration_on_a_caller_owned_provider_changes_nothing(string calls)
+    {
+        var services = new ServiceCollection().AddEntityFrameworkNpgsql();
+        _ = calls switch
+        {
+            "kernel, then package" => services.AddEntityFrameworkSchemaKit().AddEntityFrameworkSchemaKitNpgsql(),
+            "package, then kernel" => services.AddEntityFrameworkSchemaKitNpgsql().AddEntityFrameworkSchemaKit(),
+            _                      => services.AddEntityFrameworkSchemaKitNpgsql().AddEntityFrameworkSchemaKitNpgsql(),
+        };
+        using var provider = services.BuildServiceProvider();
+        using var context = new Db<Models.Scheduling>(new DbContextOptionsBuilder<Db<Models.Scheduling>>()
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .UseInternalServiceProvider(provider)
+            .UseNpgsql(Contexts.Offline, o => o.UseSchemaKit())
+            .Options);
+
+        Assert.AreEqual("NpgsqlSchemaDialect", context.GetService<ISchemaDialect>().GetType().Name);
+        StringAssert.Contains(Script(context), $"ADD CONSTRAINT {Models.Name} EXCLUDE");
+    }
 }

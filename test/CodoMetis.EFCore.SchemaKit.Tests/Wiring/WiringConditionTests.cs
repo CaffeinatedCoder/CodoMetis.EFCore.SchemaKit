@@ -24,7 +24,7 @@ public sealed class WiringConditionTests
     private sealed class T09; private sealed class T10; private sealed class T11; private sealed class T12;
     private sealed class T13; private sealed class T14; private sealed class T15; private sealed class T16;
     private sealed class T17; private sealed class T18; private sealed class T19; private sealed class T20;
-    private sealed class T21;
+    private sealed class T21; private sealed class T22;
 
     // ---- the plain case, both call orders -------------------------------------------------------
 
@@ -219,6 +219,22 @@ public sealed class WiringConditionTests
         var builder = Setup.Options<T14>().Use(provider);
         builder.UseInternalServiceProvider(internalProvider);
         using var context = new Ctx<T14>(builder.UseSchemaKit().Options);
+
+        Setup.AssertOwned(Setup.Observe(context), provider);
+    }
+
+    /// <summary>
+    /// A second call captured SchemaKit's own decorators as the inner services, and the differ
+    /// built itself until the process ended with a stack overflow (#234).
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void C22_internal_service_provider_with_schemakit_added_twice(Provider provider)
+    {
+        using var internalProvider = new ServiceCollection().AddProvider(provider).AddTestKit()
+            .AddEntityFrameworkSchemaKit().AddEntityFrameworkSchemaKit().BuildServiceProvider();
+        var builder = Setup.Options<T22>().Use(provider);
+        builder.UseInternalServiceProvider(internalProvider);
+        using var context = new Ctx<T22>(builder.UseSchemaKit().Options);
 
         Setup.AssertOwned(Setup.Observe(context), provider);
     }

@@ -147,6 +147,11 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   compiles it. It compares informational versions without the commit; the assembly version is
   `11.0.0.0` for every preview. Its signature never changes: a version that changed it would fail
   as the `MissingMethodException` it is there to replace.
+- **A second `AddEntityFrameworkSchemaKit()` changes nothing** (#234): it would capture
+  SchemaKit's own decorators as the inner services, and the differ built itself until the
+  process ended with a stack overflow. The guard is the decorator's registration, so a differ
+  another package adds after the first call is still refused at model build
+  (`C22_internal_service_provider_with_schemakit_added_twice`).
 - **`SchemaKitModelDiffer`** asks an internal `ISchemaOperationPlanner` for operations before and
   after the inner differ's and splices them; `HasDifferences` runs the same plan. The host knows
   nothing of declarations or contributors: they arrive behind that planner.
@@ -782,6 +787,12 @@ what is still missing).
   `PgJsonMemberTests` holds each kind against `ToQueryString()` on the model and on its
   snapshot, and `The_planner_takes_a_members_index_for_the_query_EF_Core_writes` asks the
   server. A new kind of member gets its row in both.
+- **A name the array literal reads as NULL is refused by the dialect** (#235): `null` in any
+  case, or an empty name, in a path of more than one name written `'{a,b}'`. PostgreSQL reads
+  it as a NULL element and the member as NULL, so a unique index on it took two equal rows
+  (measured on 18). Npgsql's queries write the same text, so another form would serve no
+  query; the expression is wrong for every reader, which is why the dialect refuses and not a
+  contributor (`A_name_the_path_literal_reads_as_null_is_refused`).
 - **A member whose cast is not immutable is refused by the index and by the exclusion
   constraint, not by the dialect** (`PgJsonMembers`, decided with #208). A date, a time, an
   interval or money out of a document is a cast PostgreSQL takes neither as a key nor in a
