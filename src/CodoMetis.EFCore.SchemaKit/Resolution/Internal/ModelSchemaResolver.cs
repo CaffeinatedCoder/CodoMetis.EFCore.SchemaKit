@@ -188,7 +188,12 @@ internal sealed class ModelSchemaResolver : SchemaResolver
             return (new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column, role)], own, isColumn: true), own);
         }
 
-        var ownContainer = walked.Document.ComplexType.GetContainerColumnName()
+        // The document is in the tables it is mapped to and no other. Asked only of its container
+        // column, a member had a column in every table of a split entity, and an index that also
+        // read the second table's column landed there, where the document is not (#243).
+        var ownContainer = (walked.Document.GetMappedStoreObjects(StoreObjectType.Table).Contains(_storeObject)
+                               ? walked.Document.ComplexType.GetContainerColumnName()
+                               : null)
                            ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
         var container = Forwarded(ownContainer);
 

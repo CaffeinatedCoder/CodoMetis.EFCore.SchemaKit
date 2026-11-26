@@ -71,6 +71,15 @@ public sealed class Person
     public List<Item> Items { get; set; } = [];
 }
 
+/// <summary>An entity split over two tables, with its document in the first (#243).</summary>
+public sealed class Subscriber
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public Prefs Prefs { get; set; } = new();
+    public int Marker { get; set; }
+}
+
 /// <summary>The models of the tests of members of a JSON document.</summary>
 public static class JsonModels
 {
@@ -302,6 +311,37 @@ public static class JsonModels
             people.ComplexProperty(x => x.Prefs, prefs => prefs.Property(x => x.Nick).HasJsonPropertyName("null"));
             people.DeclarePostgres(pg => [pg.Unique(x => x.Prefs.Nick, name: "ix_nick")]);
         }
+    }
+
+    public static EntityTypeBuilder<Subscriber> Subscribers(ModelBuilder modelBuilder)
+    {
+        var subscribers = modelBuilder.Entity<Subscriber>().ToTable("subscribers").SplitToTable("subscriber_details", details => details.Property(x => x.Marker));
+        subscribers.ComplexProperty(x => x.Prefs, prefs =>
+        {
+            prefs.ToJson("prefs");
+            prefs.Property(x => x.Mail).HasConversion(mail => mail.Value, value => new Mail(value));
+        });
+        return subscribers;
+    }
+
+    public sealed class SubscribersBare : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Subscribers(modelBuilder);
+    }
+
+    public sealed class AMemberOfTheFirstTable : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Subscribers(modelBuilder).DeclarePostgres(pg => [pg.Unique(x => x.Prefs.Nick, name: "ux_nick")]);
+    }
+
+    public sealed class AMemberIncludingAColumnOfTheSecond : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Subscribers(modelBuilder).DeclarePostgres(pg => [pg.Unique(x => x.Prefs.Nick, include: [x => x.Marker], name: "ux_nick")]);
+    }
+
+    public sealed class AMemberUnderAConditionOnTheSecond : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Subscribers(modelBuilder).DeclarePostgres(pg => [pg.Unique(x => x.Prefs.Nick, where: x => x.Marker > 0, name: "ux_nick")]);
     }
 
     public sealed class ThroughACollection : ITestModel
