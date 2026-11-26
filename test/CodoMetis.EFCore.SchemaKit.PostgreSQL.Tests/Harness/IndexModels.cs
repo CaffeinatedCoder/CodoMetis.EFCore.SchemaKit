@@ -93,6 +93,35 @@ public static class IndexModels
             => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Concurrently = true, Unique = null }]);
     }
 
+    /// <summary><see cref="WithActiveConcurrently" /> without its included column: still unique, and another index.</summary>
+    public sealed class ActiveConcurrentlyWithoutTheNote : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Concurrently = true, Include = [] }]);
+    }
+
+    /// <summary>Another index under another name, built concurrently.</summary>
+    public sealed class ActiveConcurrentlyRenamedAndNotUnique : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(_ => [Active with { Concurrently = true, Unique = null, Name = "ux_renamed" }]);
+    }
+
+    /// <summary>A name of 63 bytes, PostgreSQL's limit, with a character of two bytes where it is cut.</summary>
+    public const string LongName = "ix_role_grant_0123456789_0123456789_0123456789_012345678é_fina";
+
+    public sealed class LongNamedConcurrently : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(pg => [pg.BTree(x => x.RoleId, concurrently: true, name: LongName)]);
+    }
+
+    public sealed class LongNamedConcurrentlyOnTheGrantee : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => Grants(modelBuilder).DeclarePostgres(pg => [pg.BTree(x => x.GranteeId, concurrently: true, name: LongName)]);
+    }
+
     /// <summary>An index built in the migration's transaction, and one built outside it.</summary>
     public sealed class ByNoteAndActiveConcurrently : ITestModel
     {

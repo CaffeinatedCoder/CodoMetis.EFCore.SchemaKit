@@ -9,6 +9,9 @@ namespace CodoMetis.EFCore.SchemaKit.Tests.Resolution;
 
 public sealed record EmailAddress(string Value)
 {
+    /// <summary>A second member of the stored type, which the converter does not store.</summary>
+    public string Domain => Value[(Value.IndexOf('@') + 1)..];
+
     /// <summary>A member the converter does not store: it has another type than the column.</summary>
     public int Length => Value.Length;
 }
@@ -200,6 +203,8 @@ public sealed class SchemaResolverTests
     [DataRow("Name.Length", "goes past the property 'Name' to 'Length'")]
     [DataRow("Email.Missing", "goes past the property 'Email' to 'Missing'")]
     [DataRow("Email.Length", "goes past the property 'Email' to 'Length'")]
+    // A string like Email.Value, and not what the converter stores: taken by its type alone it was the whole address (#222).
+    [DataRow("Email.Domain", "goes past the property 'Email' to 'Domain'")]
     [DataRow("Email.Value.Length", "goes past the property 'Email' to 'Value'")]
     public void A_member_of_a_scalar_property_is_refused_unless_a_converter_stores_it(string path, string message)
     {

@@ -18,9 +18,14 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 /// is not there.
 /// </remarks>
 internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies, int maxIdentifierLength)
-    : SchemaDialect(dependencies, maxIdentifierLength > 0 ? maxIdentifierLength : DefaultMaxIdentifierLength)
+    : SchemaDialect(dependencies, maxIdentifierLength > 0 ? Math.Min(maxIdentifierLength, DefaultMaxIdentifierLength) : DefaultMaxIdentifierLength)
 {
-    /// <summary>NAMEDATALEN - 1 of a stock server, for a model that states no limit.</summary>
+    /// <summary>
+    /// NAMEDATALEN - 1 of a stock server: the limit for a model that states none, and the most a
+    /// model can state. A model that says more is not believed: the server would shorten the
+    /// name without an error, and the model and its snapshot would go on agreeing on a name the
+    /// database does not have (issue 223).
+    /// </summary>
     public const int DefaultMaxIdentifierLength = 63;
 
     /// <summary>

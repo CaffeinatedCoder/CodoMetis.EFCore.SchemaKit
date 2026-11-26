@@ -1,3 +1,4 @@
+using System.Text;
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
 
 /// <summary>An index as the database holds it.</summary>
@@ -213,11 +214,51 @@ internal sealed class PgIndexContributor(SchemaContributorDependencies dependenc
     // would not be the one a new database gets.
     protected override SchemaChange Plan(PgIndexDescriptor from, PgIndexDescriptor to, SchemaSql sql)
     {
-        if (!from.WithName(to.Name).Equals(to)) return new SchemaChange.Rebuild();
+        if (from.WithName(to.Name).Equals(to))
+        {
+            // The new name without a schema: a rename leaves the index in the schema it is in.
+            sql.Statement($"ALTER INDEX {from.Name} RENAME TO {to.Name.Name}");
+            return new SchemaChange.InPlace();
+        }
 
-        // The new name without a schema: a rename leaves the index in the schema it is in.
-        sql.Statement($"ALTER INDEX {from.Name} RENAME TO {to.Name.Name}");
+        if (!to.Concurrently.Value) return new SchemaChange.Rebuild();
+
+        // Built concurrently, a rebuild is no drop and create (issue 213). The build runs outside
+        // the migration's transaction, so a drop written ahead of it is committed before it
+        // begins: until it ends the table has no such index, a unique one checks nothing, and
+        // when the build fails the index that was there is gone. So the new index is built
+        // beside the old one, and the old one goes only once the new one is there. The drop and
+        // the rename that follow are in one transaction: no moment has neither index, and none
+        // has the new one under another name than the model's.
+        //
+        // The two have one name here: an index that changes its name and what it is at once is
+        // no pair to the planner but one index dropped and another created, in that order.
+        var beside = to with { Name = to.Name with { Name = Beside(to.Name.Name, sql.Dialect) } };
+        Create(beside, sql);
+        Drop(from, sql);
+        sql.Statement($"ALTER INDEX {beside.Name} RENAME TO {to.Name.Name}");
+
         return new SchemaChange.InPlace();
+    }
+
+    /// <summary>What PostgreSQL itself puts behind the name of an index it builds beside another, in <c>REINDEX CONCURRENTLY</c>.</summary>
+    internal const string BesideSuffix = "_ccnew";
+
+    // The name the new index has while the old one is still there. PostgreSQL's own suffix for
+    // the same thing: a build that failed leaves an invalid index of that name, which is what
+    // its documentation tells an operator to look for and drop. A name too long to take the
+    // suffix is cut, at a character, to the bytes PostgreSQL keeps; two indexes whose names then
+    // come out alike fail at the second build (42P07) and replace nothing, and so does a name
+    // something else holds. A model that states a shorter limit of its own is refused by the
+    // dialect here, with the name.
+    private static Identifier Beside(Identifier name, ISchemaDialect dialect)
+    {
+        var limit = NpgsqlSchemaDialect.DefaultMaxIdentifierLength - BesideSuffix.Length;
+        var kept = name.Name;
+        while (Encoding.UTF8.GetByteCount(kept) > limit)
+            kept = kept[..^(char.IsLowSurrogate(kept[^1]) ? 2 : 1)];
+
+        return dialect.Identifier(kept + BesideSuffix);
     }
 
     // What PostgreSQL does is the package's one table's to say, not this contributor's.

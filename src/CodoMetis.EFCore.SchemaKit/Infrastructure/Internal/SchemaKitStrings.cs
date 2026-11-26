@@ -216,8 +216,9 @@ internal static class SchemaKitStrings
 
     public static string PathPastScalar(string entity, string path, string property, string member)
         => $"The path '{path}' on {entity} goes past the property '{property}' to '{member}'. That resolves to the property's " +
-           $"column only when '{property}' has a value converter that stores the type of '{member}': otherwise the object " +
-           "would be built on the whole column while the declaration names a part of it.";
+           $"column only when '{property}' has a value converter that stores exactly that member, as " +
+           $"HasConversion(x => x.{member}, …) does: otherwise the object would be built on the whole column while the " +
+           "declaration names a part of it.";
 
     public static string NoJsonMembers(string container, string member)
         => $"'{member}' is a member of the JSON document in the column '{container}'. What a member is in SQL is the provider's to " +

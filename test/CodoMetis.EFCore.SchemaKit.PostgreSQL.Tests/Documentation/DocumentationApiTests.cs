@@ -46,7 +46,7 @@ public sealed partial class DocumentationApiTests
         // SQL Server
         "IsClustered", "IsCreatedOnline", "SortInTempDb", "UseDataCompression",
         // The BCL
-        "ToLower",
+        "ToLower", "Trim",
     };
 
     /// <summary>

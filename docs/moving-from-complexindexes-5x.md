@@ -214,7 +214,7 @@ to move one.
 [README](../README.md#sql-you-write-yourself) has the details.
 
 **Write a lambda.** SchemaKit writes the expression as Npgsql's queries spell it, so PostgreSQL
-uses the constraint's index for the same expression in a query. It is the same constraint as
+can use the constraint's index for the same expression in a query. It is the same constraint as
 5.x's, but the diff compares what is stored, so the two diff to nothing only when the text is the
 same:
 
@@ -324,7 +324,7 @@ fixture, in both directions. `LegacyIndexHandoverLiveTests` builds a database wi
   SQL is: the sample above is written that way. A `{Property}` in a 5.x filter stays as it is. The
   [README](../README.md#sql-you-write-yourself) says what `T` is for.
 - **You can write a lambda instead.** `where: x => x.DeletedOn == null` and
-  `pg.BTree(x => x.Email.ToLower())` are the same two indexes, and PostgreSQL uses an index on a
+  `pg.BTree(x => x.Email.ToLower())` are the same two indexes, and PostgreSQL can use an index on a
   lambda for the same expression in a query. When the lambda becomes the SQL you wrote, the
   migration stays empty (`SQL_of_5x_declared_as_the_lambda_that_becomes_it_is_no_operations`).
   When it becomes other SQL for the same thing, the next migration rebuilds that index once.
@@ -493,12 +493,14 @@ All of it comes with SQL Server support, [#29](https://github.com/CaffeinatedCod
 
 Measured in the review of 2026-11-14 and checked again since.
 
-- **A table moved back to the default schema stays where it was on Npgsql**
+- **A table moved back to the default schema is rejected when it has a declaration**
   ([#105](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/105)).
-  `ToTable("role_grants", "grants")` becoming `ToTable("role_grants")` applies, and the table stays
-  in `grants` with its constraints: Npgsql writes `SET SCHEMA` only when the new schema is not
-  null. A constraint rebuilt in the same migration fails with `42P01`. This is the Down of every
-  move into a schema. It is Npgsql's to fix; #105 tracks the report upstream.
+  Npgsql writes `SET SCHEMA` only when the new schema is not null, so for
+  `ToTable("role_grants", "grants")` becoming `ToTable("role_grants")` it writes nothing and the
+  table would stay in `grants`. `migrations add` fails and says so. Name the schema,
+  `ToTable("role_grants", "public")`, and the move is written
+  (`Moving_the_table_back_with_the_default_schema_named`). This is also the Down of every move
+  into a schema. It is Npgsql's to fix; #105 tracks the report upstream.
 - **`11.0.0-preview.1` restores Npgsql's rc.3.** It was built against
   `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`, which depends on EF Core
   `11.0.0-rc.3.26522.148` exactly. Reference `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0 in the
