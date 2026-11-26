@@ -192,6 +192,24 @@ scaffold() { # what the migration must hold
   fi
   build || { row "$name" "the scaffolded migration compiles" 1 "see $log"; return 1; }
 
+  # A statement outside a transaction says which object it is for, and with that SchemaKit refuses
+  # the idempotent script on Npgsql (#155, #206). What the refusal is there for is measured below
+  # on the statement as a consumer writes one by hand, which says nothing of itself: the
+  # annotation is taken out of the migration.
+  if [[ -n ${stamped:-} ]]; then
+    ef migrations script --idempotent -o "$dir/refused.sql"
+    if [[ $code != 0 && ! -e $dir/refused.sql ]] && all_in "$log" "$stamped" 'without --idempotent'; then
+      row "$name" "migrations script --idempotent, as scaffolded" 0 "refused by SchemaKit, with the object named; no script is written"
+    else
+      row "$name" "migrations script --idempotent, as scaffolded" 1 "not refused with '$stamped' (exit $code): $log"; return 1
+    fi
+    perl -0pi -e 's/\)\s*\n\s*\.Annotation\("CodoMetis:SchemaKit:Object", "[^"]*"\);/);/g' "$file"
+    if grep -qF 'CodoMetis:SchemaKit:Object' "$file"; then
+      row "$name" "the annotation, taken out of the migration" 1 "it is still there: $file"; return 1
+    fi
+    build || { row "$name" "the migration without the annotation compiles" 1 "see $log"; return 1; }
+  fi
+
   ef migrations script -o "$dir/script.sql"
   [[ $code == 0 && -s $dir/script.sql ]] || { row "$name" "migrations script" 1 "exit $code: $log"; return 1; }
 
@@ -633,10 +651,12 @@ wanted() { [[ -z ${SPIKE_ONLY:-} || " $SPIKE_ONLY " == *" $1 "* ]]; }
 
 if wanted npgsql-concurrent && consumer npgsql-concurrent NPGSQL CONCURRENT_INDEX; then
   thing=index; thing_ok="the index is in the catalog and valid"
-  if scaffold 'CREATE INDEX CONCURRENTLY' 'suppressTransaction: true'; then
+  stamped="'ix_things_name'"
+  if scaffold 'CREATE INDEX CONCURRENTLY' 'suppressTransaction: true' '.Annotation("CodoMetis:SchemaKit:Object"'; then
     measure pg16 "$pg16" "\`CREATE INDEX CONCURRENTLY\`, transaction suppressed" "$pg16_container"
     measure pg18 "$pg18" "\`CREATE INDEX CONCURRENTLY\`, transaction suppressed" "$pg18_container"
   fi
+  stamped=
 fi
 
 if wanted npgsql-trigger && consumer npgsql-trigger NPGSQL TRIGGER; then

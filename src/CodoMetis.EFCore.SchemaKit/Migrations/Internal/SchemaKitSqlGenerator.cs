@@ -45,6 +45,10 @@ internal sealed class SchemaKitSqlGenerator(
     // Resolved on first use, for the reason SchemaKitModelDiffer gives for its planner.
     private IEnumerable<IMigrationOperationRewriter> Rewriters => field ??= services.GetServices<IMigrationOperationRewriter>();
 
+    // Resolved when a statement asks for it and not before: the dialect reads the design-time
+    // model, and this generator is resolved while a model is being built.
+    private ISchemaDialect Dialect => field ??= services.GetRequiredService<ISchemaDialect>();
+
     /// <summary>The generator this one wraps.</summary>
     public IMigrationsSqlGenerator Inner { get; } =
         inner.Create<IMigrationsSqlGenerator>(services, options, options.FindExtension<SchemaKitOptionsExtension>()?.InnerGenerator);
@@ -60,6 +64,7 @@ internal sealed class SchemaKitSqlGenerator(
         // After the rewriters, never before: what one of them handled no longer carries its
         // annotation. What still does would be written by the provider as another object (#110).
         LegacyFormats.RequireRewritten(operations);
+        StatementStamp.RequireCarried(operations, options, () => Dialect);
 
         return Inner.Generate(operations, model, options);
     }

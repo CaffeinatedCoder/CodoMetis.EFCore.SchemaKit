@@ -36,6 +36,15 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
     // and its ToTable("x") are then two tables, where the model says one schema (#100).
     public override Identifier? DefaultSchema => field ??= Identifier("public");
 
+    // Npgsql writes every statement of an idempotent script into a DO block, and PostgreSQL runs
+    // nothing there that cannot run in a transaction (25001). psql goes on after the error and
+    // the next block records the migration, so the database counts it as applied without the
+    // object (#155, spike D). A plain script and the migrator's commands carry the statement.
+    public override string? WhyNotOutsideTransaction(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions options)
+        => options.HasFlag(Microsoft.EntityFrameworkCore.Migrations.MigrationsSqlGenerationOptions.Idempotent)
+            ? PgStrings.NotInAnIdempotentScript
+            : null;
+
     public override void EnsureExtension(SqlName extension, IReadOnlyModel model, SchemaSql sql)
     {
         ArgumentNullException.ThrowIfNull(extension);

@@ -9,6 +9,8 @@ using Npgsql;
 //   create <db> | drop <db>       an empty database, or none
 //   drop-prefix <prefix>          every database whose name starts with it (the script's clean-up)
 //   apply <db> <file> <times>     a generated script, run as a DBA runs it, into a new database
+//   apply-each <db> <file>        the same, one statement at a time as psql sends them: what a
+//                                 script with a statement outside a transaction needs
 //   check <db> shop|legacy        what the database holds, and what it refuses
 var server = Environment.GetEnvironmentVariable("SCHEMAKIT_TEST_PG")
     ?? throw new InvalidOperationException("SCHEMAKIT_TEST_PG is not set.");
@@ -99,6 +101,36 @@ switch (args[0])
         return 0;
     }
 
+    // A script whose statements are sent one by one, on one session: EF Core separates them by
+    // an empty line. Sent as one command, the whole script is one implicit transaction, in which
+    // PostgreSQL refuses CREATE INDEX CONCURRENTLY whatever the script says around it.
+    case "apply-each":
+    {
+        Create(args[1]);
+        using var connection = new NpgsqlConnection(Of(args[1]));
+        connection.Open();
+        var statements = System.Text.RegularExpressions.Regex.Split(File.ReadAllText(args[2]), @"\r?\n\s*\r?\n")
+            .Select(statement => statement.Trim().TrimStart('\uFEFF'))
+            .Where(statement => statement.Length > 0)
+            .ToList();
+        foreach (var statement in statements)
+        {
+            using var command = new NpgsqlCommand(statement, connection);
+            try
+            {
+                command.ExecuteNonQuery();
+            }
+            catch (PostgresException e)
+            {
+                Console.WriteLine($"APPLY-FAILED: {e.SqlState}: {e.MessageText}: {statement}");
+                return 1;
+            }
+        }
+
+        Console.WriteLine($"APPLIED: {statements.Count} statement(s)");
+        return 0;
+    }
+
     case "check":
     {
         using var connection = new NpgsqlConnection(Of(args[1]));
@@ -141,10 +173,11 @@ static void Constraints(NpgsqlConnection connection)
         if (!any) Console.WriteLine("CONSTRAINTS: none");
     }
 
-    // Every index that is neither a primary key nor a constraint's own, as the catalog states it.
+    // Every index that is neither a primary key nor a constraint's own, as the catalog states it,
+    // and INVALID behind one a concurrent build left unfinished.
     using (var command = new NpgsqlCommand(
         """
-        SELECT n.nspname || '.' || t.relname, c.relname, pg_get_indexdef(i.indexrelid)
+        SELECT n.nspname || '.' || t.relname, c.relname, pg_get_indexdef(i.indexrelid) || CASE WHEN i.indisvalid THEN '' ELSE ' INVALID' END
         FROM pg_index i
         JOIN pg_class c ON c.oid = i.indexrelid
         JOIN pg_class t ON t.oid = i.indrelid

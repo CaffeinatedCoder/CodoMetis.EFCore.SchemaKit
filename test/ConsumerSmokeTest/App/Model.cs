@@ -28,6 +28,11 @@ public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbConte
             // No two bookings of a room overlap, among those not cancelled. SMOKE_MODEL=changed drops
             // the condition: a change only SchemaKit's differ can see.
             var changed = Environment.GetEnvironmentVariable("SMOKE_MODEL") == "changed";
+
+            // SMOKE_MODEL=concurrent adds an index built outside the migration's transaction, which
+            // not every way of applying a migration carries.
+            var concurrent = Environment.GetEnvironmentVariable("SMOKE_MODEL") == "concurrent";
+            booking.DeclarePostgres(pg => (PgIndex[])(concurrent ? [pg.BTree(x => x.RoomId, concurrently: true, name: "ix_bookings_room")] : []));
             booking.DeclarePostgres(pg =>
             [
                 changed

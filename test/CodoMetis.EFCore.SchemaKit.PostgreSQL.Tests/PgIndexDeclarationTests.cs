@@ -154,7 +154,7 @@ public sealed class PgIndexDeclarationTests
 
         Assert.AreEqual("CodoMetis:Pg.Index:58046382c460ad72", annotation.Name);
         Assert.AreEqual(
-            """{"$kind":"btree","v":3,"r":1,"name":"ux_role_grant_active","keys":[{"column":"GranteeId","desc":false},{"column":"RoleId","desc":false}],"unique":{"nullsDistinct":false},"include":["Note"],"where":[{"col":"RevokedOn"}," IS NULL"]}""",
+            """{"$kind":"btree","v":3,"r":1,"name":"ux_role_grant_active","keys":[{"column":"GranteeId","desc":false},{"column":"RoleId","desc":false}],"unique":{"nullsDistinct":false},"include":["Note"],"where":[{"col":"RevokedOn"}," IS NULL"],"concurrently":false}""",
             annotation.Value);
     }
 
@@ -165,7 +165,7 @@ public sealed class PgIndexDeclarationTests
 
         Assert.AreEqual("CodoMetis:Pg.Index:cfda91df53b86f5e", annotation.Name);
         Assert.AreEqual(
-            """{"$kind":"btree","v":3,"r":1,"keys":[{"column":"GranteeId","desc":false},{"sql":["lower(",{"col":"Note"},")"],"desc":false}],"include":[]}""",
+            """{"$kind":"btree","v":3,"r":1,"keys":[{"column":"GranteeId","desc":false},{"sql":["lower(",{"col":"Note"},")"],"desc":false}],"include":[],"concurrently":false}""",
             annotation.Value);
     }
 
@@ -173,8 +173,73 @@ public sealed class PgIndexDeclarationTests
     [TestMethod]
     public void An_order_is_stored_as_this()
         => Assert.AreEqual(
-            """{"$kind":"btree","v":3,"r":1,"name":"ix_role_grant_note","keys":[{"sql":["lower(",{"col":"Note"},")"],"desc":false},{"column":"RevokedOn","desc":true,"nulls":"last"}],"include":[]}""",
+            """{"$kind":"btree","v":3,"r":1,"name":"ix_role_grant_note","keys":[{"sql":["lower(",{"col":"Note"},")"],"desc":false},{"column":"RevokedOn","desc":true,"nulls":"last"}],"include":[],"concurrently":false}""",
             Stored(Entity<IndexModels.WithByNote>()).Single().Value);
+
+    /// <summary>
+    /// How an index is built is stored and is no part of what the index is: the value says it,
+    /// the key is the one of the same index built in the migration's transaction.
+    /// </summary>
+    [TestMethod]
+    public void Concurrently_is_stored_and_is_not_in_the_key()
+    {
+        var annotation = Stored(Entity<IndexModels.WithActiveConcurrently>()).Single();
+
+        Assert.AreEqual(Stored(Entity<IndexModels.WithActive>()).Single().Name, annotation.Name);
+        Assert.AreEqual(
+            """{"$kind":"btree","v":3,"r":1,"name":"ux_role_grant_active","keys":[{"column":"GranteeId","desc":false},{"column":"RoleId","desc":false}],"unique":{"nullsDistinct":false},"include":["Note"],"where":[{"col":"RevokedOn"}," IS NULL"],"concurrently":true}""",
+            annotation.Value);
+        Assert.IsTrue(Entity<IndexModels.WithActiveConcurrently>().GetDeclarations<PgIndex>().Single().Concurrently);
+        Assert.IsFalse(Entity<IndexModels.WithActive>().GetDeclarations<PgIndex>().Single().Concurrently);
+    }
+
+    /// <summary>Without a name the key is over what the index is, and how it is built is still not in it.</summary>
+    [TestMethod]
+    public void Concurrently_is_not_in_the_key_of_an_index_without_a_name()
+    {
+        var plain = Stored(Entity<IndexModels.Unnamed>()).Single();
+        var concurrently = Stored(Entity<IndexModels.UnnamedConcurrently>()).Single();
+
+        Assert.AreEqual(plain.Name, concurrently.Name);
+        Assert.AreEqual(((string)plain.Value!).Replace("\"concurrently\":false", "\"concurrently\":true"), concurrently.Value);
+        Assert.IsTrue(ReadBack((string)concurrently.Value!).Concurrently);
+        Assert.AreEqual(ReadBack((string)plain.Value!) with { Concurrently = true }, ReadBack((string)concurrently.Value!));
+    }
+
+    /// <summary>Every factory method takes it, and none sets it unasked.</summary>
+    [TestMethod]
+    public void Every_factory_method_takes_concurrently()
+    {
+        var docs = PgSchema.For<Document>();
+        PgIndex[] asked =
+        [
+            docs.BTree(x => x.Title, concurrently: true),
+            docs.BTree([docs.Key(x => x.Title)], concurrently: true),
+            docs.Unique(x => x.Title, concurrently: true),
+            docs.Unique([docs.Key(x => x.Title)], concurrently: true),
+            docs.Hash(x => x.Title, concurrently: true),
+            docs.Hash(docs.Key(x => x.Title), concurrently: true),
+            docs.Gist(x => x.Period, concurrently: true),
+            docs.Gist([docs.Key(x => x.Period)], concurrently: true),
+            docs.SpGist(x => x.Title, concurrently: true),
+            docs.SpGist(docs.Key(x => x.Title), concurrently: true),
+            docs.Gin(x => x.Tags, concurrently: true),
+            docs.Gin([docs.Key(x => x.Tags)], concurrently: true),
+            docs.Brin(x => x.Rank, concurrently: true),
+            docs.Brin([docs.Key(x => x.Rank)], concurrently: true),
+        ];
+        PgIndex[] unasked =
+        [
+            docs.BTree(x => x.Title), docs.BTree([docs.Key(x => x.Title)]), docs.Unique(x => x.Title), docs.Unique([docs.Key(x => x.Title)]),
+            docs.Hash(x => x.Title), docs.Hash(docs.Key(x => x.Title)), docs.Gist(x => x.Period), docs.Gist([docs.Key(x => x.Period)]),
+            docs.SpGist(x => x.Title), docs.SpGist(docs.Key(x => x.Title)), docs.Gin(x => x.Tags), docs.Gin([docs.Key(x => x.Tags)]),
+            docs.Brin(x => x.Rank), docs.Brin([docs.Key(x => x.Rank)]),
+        ];
+
+        Assert.IsTrue(asked.All(index => index.Concurrently), string.Join(", ", asked.Where(index => !index.Concurrently).Select(index => index.Kind)));
+        Assert.IsFalse(unasked.Any(index => index.Concurrently));
+        CollectionAssert.AreEqual(unasked, asked.Select(index => index with { Concurrently = false }).ToArray());
+    }
 
     private sealed class EveryCase : ITestModel
     {
@@ -223,20 +288,21 @@ public sealed class PgIndexDeclarationTests
     /// else: a declaration that comes out of a snapshot as another one is a migration nobody asked for.
     /// </summary>
     [TestMethod]
-    [DataRow("""{"$kind":"bloom","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[]}""", "kind 'bloom'")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note"}],"include":[]}""", "desc")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}]}""", "include")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"nulls":"middle"}],"include":[]}""", "'middle'")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"desc":false}],"include":[]}""", "exactly one")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","sql":[{"col":"Note"}],"desc":false}],"include":[]}""", "exactly one")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"tablespace":"fast"}],"include":[]}""", "tablespace")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"unique":{},"include":[]}""", "nullsDistinct")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"fillFactor":7}""", "from 10 to 100")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"pagesPerRange":8}""", "pagesPerRange")]
-    [DataRow("""{"$kind":"gist","v":3,"r":1,"keys":[{"column":"Period"}],"include":[],"buffering":"maybe"}""", "'maybe'")]
-    [DataRow("""{"$kind":"gin","v":3,"r":1,"keys":[{"column":"Note","desc":false}]}""", "desc")]
-    [DataRow("""{"$kind":"hash","v":3,"r":1,"keys":[{"column":"Note"}]}""", "key")]
-    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[],"include":[]}""", "at least one key")]
+    [DataRow("""{"$kind":"bloom","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"concurrently":false}""", "kind 'bloom'")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note"}],"include":[],"concurrently":false}""", "desc")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"concurrently":false}""", "include")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"nulls":"middle"}],"include":[],"concurrently":false}""", "'middle'")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"desc":false}],"include":[],"concurrently":false}""", "exactly one")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","sql":[{"col":"Note"}],"desc":false}],"include":[],"concurrently":false}""", "exactly one")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false,"tablespace":"fast"}],"include":[],"concurrently":false}""", "tablespace")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"unique":{},"include":[],"concurrently":false}""", "nullsDistinct")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"fillFactor":7,"concurrently":false}""", "from 10 to 100")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[],"pagesPerRange":8,"concurrently":false}""", "pagesPerRange")]
+    [DataRow("""{"$kind":"gist","v":3,"r":1,"keys":[{"column":"Period"}],"include":[],"buffering":"maybe","concurrently":false}""", "'maybe'")]
+    [DataRow("""{"$kind":"gin","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"concurrently":false}""", "desc")]
+    [DataRow("""{"$kind":"hash","v":3,"r":1,"keys":[{"column":"Note"}],"concurrently":false}""", "key")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[],"include":[],"concurrently":false}""", "at least one key")]
+    [DataRow("""{"$kind":"btree","v":3,"r":1,"keys":[{"column":"Note","desc":false}],"include":[]}""", "concurrently")]
     public void A_stored_form_this_version_does_not_know_is_refused(string value, string expected)
     {
         var refusal = Assert.Throws<Exception>(() => ReadBack(value));
@@ -372,13 +438,13 @@ public sealed class PgIndexDeclarationTests
 
     /// <summary>Each method's stored form, to the character: what a snapshot holds of it.</summary>
     [TestMethod]
-    [DataRow("ix_doc_title_hash", """{"$kind":"hash","v":3,"r":1,"name":"ix_doc_title_hash","key":{"column":"Title"},"fillFactor":80}""")]
-    [DataRow("ix_doc_payload", """{"$kind":"gin","v":3,"r":1,"name":"ix_doc_payload","keys":[{"column":"Payload","ops":"jsonb_path_ops"}],"fastUpdate":false,"pendingListLimit":128}""")]
-    [DataRow("ix_doc_tags", """{"$kind":"gin","v":3,"r":1,"name":"ix_doc_tags","keys":[{"column":"Tags"}]}""")]
-    [DataRow("ix_doc_rank_period", """{"$kind":"gist","v":3,"r":1,"name":"ix_doc_rank_period","keys":[{"column":"Rank"},{"column":"Period"}],"include":["Title"],"fillFactor":90,"buffering":"off"}""")]
-    [DataRow("ix_doc_title_sp", """{"$kind":"spgist","v":3,"r":1,"name":"ix_doc_title_sp","key":{"column":"Title","ops":"text_ops"},"include":["Rank"],"fillFactor":70}""")]
-    [DataRow("ix_doc_rank_brin", """{"$kind":"brin","v":3,"r":1,"name":"ix_doc_rank_brin","keys":[{"column":"Rank"}],"pagesPerRange":16,"autosummarize":true,"where":[{"col":"Rank"}," > 0"]}""")]
-    [DataRow("ix_doc_title", """{"$kind":"btree","v":3,"r":1,"name":"ix_doc_title","keys":[{"sql":["lower(",{"col":"Title"},")"],"desc":true,"collation":"C","ops":"text_pattern_ops"}],"include":[],"fillFactor":70,"deduplicateItems":false}""")]
+    [DataRow("ix_doc_title_hash", """{"$kind":"hash","v":3,"r":1,"name":"ix_doc_title_hash","key":{"column":"Title"},"fillFactor":80,"concurrently":false}""")]
+    [DataRow("ix_doc_payload", """{"$kind":"gin","v":3,"r":1,"name":"ix_doc_payload","keys":[{"column":"Payload","ops":"jsonb_path_ops"}],"fastUpdate":false,"pendingListLimit":128,"concurrently":false}""")]
+    [DataRow("ix_doc_tags", """{"$kind":"gin","v":3,"r":1,"name":"ix_doc_tags","keys":[{"column":"Tags"}],"concurrently":false}""")]
+    [DataRow("ix_doc_rank_period", """{"$kind":"gist","v":3,"r":1,"name":"ix_doc_rank_period","keys":[{"column":"Rank"},{"column":"Period"}],"include":["Title"],"fillFactor":90,"buffering":"off","concurrently":false}""")]
+    [DataRow("ix_doc_title_sp", """{"$kind":"spgist","v":3,"r":1,"name":"ix_doc_title_sp","key":{"column":"Title","ops":"text_ops"},"include":["Rank"],"fillFactor":70,"concurrently":false}""")]
+    [DataRow("ix_doc_rank_brin", """{"$kind":"brin","v":3,"r":1,"name":"ix_doc_rank_brin","keys":[{"column":"Rank"}],"pagesPerRange":16,"autosummarize":true,"where":[{"col":"Rank"}," > 0"],"concurrently":false}""")]
+    [DataRow("ix_doc_title", """{"$kind":"btree","v":3,"r":1,"name":"ix_doc_title","keys":[{"sql":["lower(",{"col":"Title"},")"],"desc":true,"collation":"C","ops":"text_pattern_ops"}],"include":[],"fillFactor":70,"deduplicateItems":false,"concurrently":false}""")]
     public void Each_method_is_stored_as_this(string name, string expected) => Assert.AreEqual(expected, StoredValue(name));
 
     /// <summary>Every case and every option of it comes back from the read model as the value that was declared.</summary>

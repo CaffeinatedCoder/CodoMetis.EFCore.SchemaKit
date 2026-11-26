@@ -34,6 +34,18 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
     /// <summary>The rows the index covers, or null for all of them.</summary>
     public Predicate? Where { get; init; }
 
+    /// <summary>
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>). It says how the index is created and nothing about
+    /// the index: two declarations that differ only here are one object, and a change of it is
+    /// no migration. A drop and a rename are written as for any index.
+    /// </summary>
+    /// <remarks>
+    /// PostgreSQL runs the statement outside a transaction, so the migration that holds it is
+    /// not applied as one: what stands before the statement is committed when it begins.
+    /// </remarks>
+    public bool Concurrently { get; init; }
+
     /// <inheritdoc />
     public string Kind => this switch
     {
@@ -116,6 +128,9 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
         }
 
         writer.OptionalTemplate("where", Where?.Template);
+
+        // How the index is built, not what it is: stored, and left out of the identity.
+        writer.Operational.Boolean("concurrently", Concurrently);
     }
 
     /// <inheritdoc />
@@ -198,6 +213,7 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
             Name = header.Name,
             Epoch = header.Epoch,
             Where = reader.OptionalTemplate("where") is { } where ? new Predicate(where) : null,
+            Concurrently = reader.Boolean("concurrently"),
         };
     }
 

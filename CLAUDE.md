@@ -12,8 +12,9 @@ stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch
 resolver, the planner and the lambda translator, and the PostgreSQL package has the first real
 contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
 every path, on PostgreSQL 16 and 18, and a snapshot scaffolded by 5.x with exclusion constraints
-moves to the same model declared here with no operations. A B-tree index is the second object,
-the first slice of `PgIndex` (#27 has the five slices and what was decided for them). Nothing of
+moves to the same model declared here with no operations. An index is the second object: three
+of the five slices of `PgIndex` are in (#27 has the slices and what was decided for them), every
+access method and `concurrently:`. Nothing of
 `preview.2` is published** (what is left of
 the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
 `Sql.Raw<T>` in an element, a factory for SP-GiST, the compile probes). The repository holds:
@@ -159,6 +160,20 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   `CustomIndex:AfterTableRebuild` on a `CreateIndex`. It is the generator's side of the snapshot's
   guard (#93) and the same on every provider. A rewriter leaves it by taking the annotation off the
   operation or replacing the operation (#28); the check reads the operations alone, never the model.
+
+- **A statement of SchemaKit's that runs outside a transaction is refused where the way the
+  migration is applied does not carry one** (`StatementStamp.RequireCarried`, #155, #206). The
+  generator is the one place that is told the way (`MigrationsSqlGenerationOptions`): the same
+  migration is applied by a bundle and written into a script, so nothing can be refused at
+  scaffold. `SchemaSql` puts the annotation `CodoMetis:SchemaKit:Object` on the operation of a
+  statement written with `suppressTransaction: true`, with what the planner says the statement
+  is for; `migrations add` writes it into the migration, so its name is permanent from 11.0.0.
+  Its value is text for a person, and nothing parses it. The generator asks
+  `ISchemaDialect.WhyNotOutsideTransaction` for such an operation alone: the kernel's dialect
+  says every way carries it (SQL Server does, spike D), PostgreSQL's says an idempotent script
+  does not. A consumer's own `migrationBuilder.Sql(…)` carries no annotation and is not judged.
+  A statement in a transaction carries none either: what every statement says of itself is
+  #115's to decide. `OutsideTransactionTests` holds it on the three providers.
 
 A test suite that varies the wiring creates many internal service providers; EF Core raises the
 twenty-first as an error, which `Harness/Setup.cs` switches off.
@@ -680,6 +695,18 @@ what is still missing).
   read has no row. Since the four answers are one, nothing yet tells an included column's role
   from a key's in a test: `As(ColumnRole.Included)` and `As(ColumnRole.Condition)` in the
   contributor say what is true and are held by no test until a row differs by them.
+- **`concurrently:` is how an index is built, not what it is** (#206, slice C of #27). It is
+  stored through `writer.Operational` and sits in the descriptor as an `Operational<bool>`, so
+  a declaration that differs only in it has the same key and diffs to nothing, both ways. The
+  create is `CREATE INDEX CONCURRENTLY` with the transaction suppressed; a drop and a rename
+  are written as for any index (decided with #27). `NpgsqlSchemaDialect` says an idempotent
+  script does not carry the statement: Npgsql puts each statement of such a script into a `DO`
+  block, where PostgreSQL refuses it (25001) and psql goes on to record the migration.
+- **A concurrent build that fails is PostgreSQL's and EF Core's to leave as they do,** and a
+  test holds what that is
+  (`A_concurrent_build_that_fails_leaves_an_invalid_index_and_what_stood_before_it`): what
+  stood before the statement is committed, the index is there and invalid, and the statement
+  then fails on its own name (42P07) until the index is dropped by hand.
 - **The planner's word that an index is used is a test** (`PgIndexLiveTests`): `EXPLAIN` of the
   query EF Core writes for the key's lambda names the index, and of another expression does not.
 - **`=` on a scalar column needs `btree_gist`, and the migration brings it.** The descriptor lists

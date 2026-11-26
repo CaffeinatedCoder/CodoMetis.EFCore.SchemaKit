@@ -1,5 +1,9 @@
 using CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Harness;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests;
 
@@ -44,6 +48,128 @@ public sealed class PgIndexMigrationTests
     [TestMethod]
     public void An_index_no_longer_declared_is_dropped_by_name()
         => CollectionAssert.AreEqual(new[] { DropActive }, Contexts.Diff<IndexModels.WithBoth, IndexModels.WithByNote>().Shape());
+
+    // ── CONCURRENTLY ──
+
+    /// <summary>The annotation's name, written down a second time: it is in consumers' migrations.</summary>
+    private const string Stamp = "CodoMetis:SchemaKit:Object";
+
+    private static readonly string CreateActiveConcurrently = CreateActive.Replace("INDEX ux_", "INDEX CONCURRENTLY ux_");
+
+    private static List<string> WithItsTransaction(IEnumerable<MigrationOperation> operations)
+        => [.. operations.Select(o => o is SqlOperation sql
+            ? $"{sql.Sql} | {(sql.SuppressTransaction ? "outside" : "inside")} | {sql.FindAnnotation(Stamp)?.Value ?? "-"}"
+            : o.GetType().Name)];
+
+    /// <summary>
+    /// <c>CONCURRENTLY</c> stands behind <c>INDEX</c>, the statement runs outside the migration's
+    /// transaction, and it says which index it is for. The index's other statements, and the
+    /// statement of an index that is built in the transaction, say nothing.
+    /// </summary>
+    [TestMethod]
+    public void An_index_built_concurrently_is_created_outside_the_transaction()
+    {
+        CollectionAssert.AreEqual(
+            new[] { $"{CreateActiveConcurrently} | outside | Pg.Index 'ux_role_grant_active' on RoleGrant", $"{CreateByNote} | inside | -" },
+            WithItsTransaction(Contexts.Diff<Models.Bare, IndexModels.ByNoteAndActiveConcurrently>()));
+
+        // For the create alone: a drop and a rename are written as for any index.
+        CollectionAssert.AreEqual(
+            new[] { $"{DropActive} | inside | -" },
+            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, Models.Bare>()));
+        CollectionAssert.AreEqual(
+            new[] { "ALTER INDEX ux_role_grant_active RENAME TO ux_renamed; | inside | -" },
+            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyRenamed>()));
+
+        // A rebuild drops in the transaction and creates outside it.
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                $"{DropActive} | inside | -",
+                $"{CreateActiveConcurrently.Replace("UNIQUE ", "").Replace(" NULLS NOT DISTINCT", "")} | outside | Pg.Index 'ux_role_grant_active' on RoleGrant",
+            },
+            WithItsTransaction(Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.ActiveConcurrentlyNotUnique>()));
+    }
+
+    /// <summary>Every access method takes it, in the same place.</summary>
+    [TestMethod]
+    public void An_index_of_any_method_is_built_concurrently()
+    {
+        var plain = Contexts.Diff<IndexModels.DocumentsBare, IndexModels.EveryMethod>().OfType<SqlOperation>().ToList();
+        var concurrently = Contexts.Diff<IndexModels.DocumentsBare, IndexModels.EveryMethodConcurrently>().OfType<SqlOperation>().ToList();
+
+        // The extension a GiST key needs is ensured in the transaction, as before.
+        Assert.AreEqual("CREATE EXTENSION IF NOT EXISTS btree_gist;", concurrently[0].Sql);
+        Assert.IsFalse(concurrently[0].SuppressTransaction);
+
+        Assert.AreEqual(8, concurrently.Count);
+        CollectionAssert.AreEqual(
+            plain.Skip(1).Select(o => o.Sql.Replace("CREATE INDEX ", "CREATE INDEX CONCURRENTLY ")).ToList(),
+            concurrently.Skip(1).Select(o => o.Sql).ToList());
+        Assert.IsTrue(concurrently.Skip(1).All(o => o.SuppressTransaction && o.FindAnnotation(Stamp) is not null));
+        Assert.IsFalse(plain.Any(o => o.SuppressTransaction || o.GetAnnotations().Any()));
+    }
+
+    /// <summary>
+    /// How an index is built says nothing about the index: a model that only adds or takes away
+    /// <c>concurrently:</c> is no migration, either way, and no pending change.
+    /// </summary>
+    [TestMethod]
+    public void Concurrently_alone_is_no_migration()
+    {
+        Assert.AreEqual(0, Contexts.Diff<IndexModels.WithActive, IndexModels.WithActiveConcurrently>().Count);
+        Assert.AreEqual(0, Contexts.Diff<IndexModels.WithActiveConcurrently, IndexModels.WithActive>().Count);
+        Assert.AreEqual(0, Contexts.Diff<IndexModels.Unnamed, IndexModels.UnnamedConcurrently>().Count);
+        Assert.AreEqual(0, Contexts.Diff<IndexModels.UnnamedConcurrently, IndexModels.Unnamed>().Count);
+
+        using var from = Contexts.Of<IndexModels.WithActive>();
+        using var to = Contexts.Of<IndexModels.WithActiveConcurrently>();
+        Assert.IsFalse(to.GetService<IMigrationsModelDiffer>().HasDifferences(from.Relational(), to.Relational()));
+    }
+
+    /// <summary>The create script holds the statement too: <c>EnsureCreated()</c> runs it outside a transaction.</summary>
+    [TestMethod]
+    public void The_create_script_builds_it_concurrently()
+    {
+        using var context = Contexts.Of<IndexModels.WithActiveConcurrently>();
+
+        StringAssert.Contains(context.Database.GenerateCreateScript(), CreateActiveConcurrently);
+    }
+
+    /// <summary>
+    /// An idempotent script puts every statement into a <c>DO</c> block, where PostgreSQL refuses
+    /// this one (25001) while psql goes on and records the migration (#155). So the script is not
+    /// written: the refusal names the index and the ways that carry the statement. Those ways
+    /// write it as it is, outside a transaction.
+    /// </summary>
+    [TestMethod]
+    public void An_idempotent_script_is_refused_and_no_other_way()
+    {
+        var operations = Contexts.Diff<Models.Bare, IndexModels.WithActiveConcurrently>();
+        using var context = Contexts.Of<IndexModels.WithActiveConcurrently>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        foreach (var carried in new[] { MigrationsSqlGenerationOptions.Default, MigrationsSqlGenerationOptions.Script })
+        {
+            var command = generator.Generate(operations, model, carried).Single();
+            Assert.IsTrue(command.TransactionSuppressed, carried.ToString());
+            StringAssert.Contains(command.CommandText, CreateActiveConcurrently);
+        }
+
+        foreach (var refused in new[] { MigrationsSqlGenerationOptions.Idempotent, MigrationsSqlGenerationOptions.Script | MigrationsSqlGenerationOptions.Idempotent })
+        {
+            var error = Assert.ThrowsExactly<InvalidOperationException>(() => generator.Generate(operations, model, refused), refused.ToString());
+            StringAssert.Contains(error.Message, "Pg.Index 'ux_role_grant_active' on RoleGrant");
+            StringAssert.Contains(error.Message, CreateActiveConcurrently);
+            StringAssert.Contains(error.Message, "25001");
+            StringAssert.Contains(error.Message, "without --idempotent");
+        }
+
+        // The same index built in the transaction is carried by an idempotent script.
+        var plain = Contexts.Diff<Models.Bare, IndexModels.WithActive>();
+        Assert.IsFalse(generator.Generate(plain, model, MigrationsSqlGenerationOptions.Script | MigrationsSqlGenerationOptions.Idempotent).Single().TransactionSuppressed);
+    }
 
     [TestMethod]
     public void A_model_against_itself_is_no_operation()

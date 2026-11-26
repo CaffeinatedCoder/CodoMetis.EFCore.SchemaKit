@@ -38,6 +38,12 @@ modelBuilder.Entity<RoleGrant>().DeclarePostgres(pg =>
 `pg.Hash`, `pg.Gist`, `pg.SpGist`, `pg.Gin` and `pg.Brin` declare the other access methods, each
 with the options PostgreSQL has for it.
 
+`concurrently: true` on any of them builds the index with `CREATE INDEX CONCURRENTLY`, outside the
+migration's transaction. `migrations script --idempotent` fails for a migration with such an
+index and names it, since PostgreSQL rejects the statement in that script (25001). The
+[README](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#indexes)
+says what else to know.
+
 The package depends on
 [CodoMetis.EFCore.SchemaKit](https://www.nuget.org/packages/CodoMetis.EFCore.SchemaKit) at exactly
 its own version; update the two together. It is built against EF Core 11 and

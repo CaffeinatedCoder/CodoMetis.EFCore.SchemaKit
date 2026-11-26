@@ -35,6 +35,10 @@ public readonly struct PgSchema<TEntity>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
     /// <param name="deduplicateItems"><c>deduplicate_items</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.BTree BTree<TValue>(
@@ -43,8 +47,9 @@ public readonly struct PgSchema<TEntity>
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         int? fillFactor = null,
         bool? deduplicateItems = null,
+        bool concurrently = false,
         string? name = null)
-        => BTree([Key(key)], where, include, fillFactor, deduplicateItems, name);
+        => BTree([Key(key)], where, include, fillFactor, deduplicateItems, concurrently, name);
 
     /// <summary>A B-tree index on several keys, or on keys with an order.</summary>
     /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…).Desc()]</c>.</param>
@@ -52,6 +57,10 @@ public readonly struct PgSchema<TEntity>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
     /// <param name="deduplicateItems"><c>deduplicate_items</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.BTree BTree(
         ValueList<BTreeKey> keys,
@@ -59,6 +68,7 @@ public readonly struct PgSchema<TEntity>
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         int? fillFactor = null,
         bool? deduplicateItems = null,
+        bool concurrently = false,
         string? name = null)
         => new(keys)
         {
@@ -66,6 +76,7 @@ public readonly struct PgSchema<TEntity>
             Include = Indexes.Paths(include),
             FillFactor = fillFactor,
             DeduplicateItems = deduplicateItems,
+            Concurrently = concurrently,
             Name = name,
         };
 
@@ -81,6 +92,10 @@ public readonly struct PgSchema<TEntity>
     /// false the second of them is refused (<c>NULLS NOT DISTINCT</c>).
     /// </param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.BTree Unique<TValue>(
@@ -89,8 +104,9 @@ public readonly struct PgSchema<TEntity>
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         bool nullsDistinct = true,
         int? fillFactor = null,
+        bool concurrently = false,
         string? name = null)
-        => Unique([Key(key)], where, include, nullsDistinct, fillFactor, name);
+        => Unique([Key(key)], where, include, nullsDistinct, fillFactor, concurrently, name);
 
     /// <summary>A unique index on several keys: no two rows it covers agree in all of them.</summary>
     /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…)]</c>.</param>
@@ -101,6 +117,10 @@ public readonly struct PgSchema<TEntity>
     /// false the second of them is refused (<c>NULLS NOT DISTINCT</c>).
     /// </param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.BTree Unique(
         ValueList<BTreeKey> keys,
@@ -108,33 +128,44 @@ public readonly struct PgSchema<TEntity>
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         bool nullsDistinct = true,
         int? fillFactor = null,
+        bool concurrently = false,
         string? name = null)
-        => BTree(keys, where, include, fillFactor, name: name) with { Unique = new Uniqueness(nullsDistinct) };
+        => BTree(keys, where, include, fillFactor, concurrently: concurrently, name: name) with { Unique = new Uniqueness(nullsDistinct) };
 
     /// <summary>A hash index: for equality on one key, and nothing else.</summary>
     /// <param name="key">A property, or an expression over the entity.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.Hash Hash<TValue>(
         Expression<Func<TEntity, TValue>> key,
         Expression<Func<TEntity, bool>>? where = null,
         int? fillFactor = null,
+        bool concurrently = false,
         string? name = null)
-        => Hash(Key(key), where, fillFactor, name);
+        => Hash(Key(key), where, fillFactor, concurrently, name);
 
     /// <summary>A hash index on a key with an operator class or a collation.</summary>
     /// <param name="key">The key, as <c>pg.Key(…)</c> makes it.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.Hash Hash(
         HashKey key,
         Expression<Func<TEntity, bool>>? where = null,
         int? fillFactor = null,
+        bool concurrently = false,
         string? name = null)
-        => new(key) { Where = Indexes.Condition(where), FillFactor = fillFactor, Name = name };
+        => new(key) { Where = Indexes.Condition(where), FillFactor = fillFactor, Concurrently = concurrently, Name = name };
 
     /// <summary>A GiST index on one key.</summary>
     /// <param name="key">A property, or an expression over the entity.</param>
@@ -142,6 +173,10 @@ public readonly struct PgSchema<TEntity>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
     /// <param name="buffering"><c>buffering</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.Gist Gist<TValue>(
@@ -150,8 +185,9 @@ public readonly struct PgSchema<TEntity>
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         int? fillFactor = null,
         GistBuffering? buffering = null,
+        bool concurrently = false,
         string? name = null)
-        => Gist([Key(key)], where, include, fillFactor, buffering, name);
+        => Gist([Key(key)], where, include, fillFactor, buffering, concurrently, name);
 
     /// <summary>A GiST index on several keys, or on keys with an operator class.</summary>
     /// <remarks>
@@ -165,6 +201,10 @@ public readonly struct PgSchema<TEntity>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
     /// <param name="buffering"><c>buffering</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.Gist Gist(
         ValueList<GistKey> keys,
@@ -172,6 +212,7 @@ public readonly struct PgSchema<TEntity>
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         int? fillFactor = null,
         GistBuffering? buffering = null,
+        bool concurrently = false,
         string? name = null)
         => new(keys)
         {
@@ -179,6 +220,7 @@ public readonly struct PgSchema<TEntity>
             Include = Indexes.Paths(include),
             FillFactor = fillFactor,
             Buffering = buffering,
+            Concurrently = concurrently,
             Name = name,
         };
 
@@ -187,6 +229,10 @@ public readonly struct PgSchema<TEntity>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.SpGist SpGist<TValue>(
@@ -194,22 +240,28 @@ public readonly struct PgSchema<TEntity>
         Expression<Func<TEntity, bool>>? where = null,
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         int? fillFactor = null,
+        bool concurrently = false,
         string? name = null)
-        => SpGist(Key(key), where, include, fillFactor, name);
+        => SpGist(Key(key), where, include, fillFactor, concurrently, name);
 
     /// <summary>An SP-GiST index on a key with an operator class.</summary>
     /// <param name="key">The key, as <c>pg.Key(…)</c> makes it.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
     /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.SpGist SpGist(
         SpGistKey key,
         Expression<Func<TEntity, bool>>? where = null,
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         int? fillFactor = null,
+        bool concurrently = false,
         string? name = null)
-        => new(key) { Where = Indexes.Condition(where), Include = Indexes.Paths(include), FillFactor = fillFactor, Name = name };
+        => new(key) { Where = Indexes.Condition(where), Include = Indexes.Paths(include), FillFactor = fillFactor, Concurrently = concurrently, Name = name };
 
     /// <summary>A GIN index on one key: an array, a <c>jsonb</c> document, a <c>tsvector</c>.</summary>
     /// <param name="key">A property, or an expression over the entity.</param>
@@ -217,6 +269,10 @@ public readonly struct PgSchema<TEntity>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="fastUpdate"><c>fastupdate</c>; PostgreSQL's own when null.</param>
     /// <param name="pendingListLimit"><c>gin_pending_list_limit</c> in kilobytes; the server's setting when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.Gin Gin<TValue>(
@@ -225,28 +281,38 @@ public readonly struct PgSchema<TEntity>
         Expression<Func<TEntity, bool>>? where = null,
         bool? fastUpdate = null,
         int? pendingListLimit = null,
+        bool concurrently = false,
         string? name = null)
-        => Gin([ops is null ? Key(key) : Key(key).Ops(ops)], where, fastUpdate, pendingListLimit, name);
+        => Gin([ops is null ? Key(key) : Key(key).Ops(ops)], where, fastUpdate, pendingListLimit, concurrently, name);
 
     /// <summary>A GIN index on several keys.</summary>
     /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…).Ops(…)]</c>.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="fastUpdate"><c>fastupdate</c>; PostgreSQL's own when null.</param>
     /// <param name="pendingListLimit"><c>gin_pending_list_limit</c> in kilobytes; the server's setting when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.Gin Gin(
         ValueList<GinKey> keys,
         Expression<Func<TEntity, bool>>? where = null,
         bool? fastUpdate = null,
         int? pendingListLimit = null,
+        bool concurrently = false,
         string? name = null)
-        => new(keys) { Where = Indexes.Condition(where), FastUpdate = fastUpdate, PendingListLimit = pendingListLimit, Name = name };
+        => new(keys) { Where = Indexes.Condition(where), FastUpdate = fastUpdate, PendingListLimit = pendingListLimit, Concurrently = concurrently, Name = name };
 
     /// <summary>A BRIN index on one key: for a large table whose rows are stored in the key's order, more or less.</summary>
     /// <param name="key">A property, or an expression over the entity.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="pagesPerRange"><c>pages_per_range</c>; PostgreSQL's own when null.</param>
     /// <param name="autosummarize"><c>autosummarize</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.Brin Brin<TValue>(
@@ -254,22 +320,28 @@ public readonly struct PgSchema<TEntity>
         Expression<Func<TEntity, bool>>? where = null,
         int? pagesPerRange = null,
         bool? autosummarize = null,
+        bool concurrently = false,
         string? name = null)
-        => Brin([Key(key)], where, pagesPerRange, autosummarize, name);
+        => Brin([Key(key)], where, pagesPerRange, autosummarize, concurrently, name);
 
     /// <summary>A BRIN index on several keys.</summary>
     /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…)]</c>.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="pagesPerRange"><c>pages_per_range</c>; PostgreSQL's own when null.</param>
     /// <param name="autosummarize"><c>autosummarize</c>; PostgreSQL's own when null.</param>
+    /// <param name="concurrently">
+    /// True to build the index without locking the table against writes
+    /// (<c>CREATE INDEX CONCURRENTLY</c>), outside the migration's transaction.
+    /// </param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.Brin Brin(
         ValueList<BrinKey> keys,
         Expression<Func<TEntity, bool>>? where = null,
         int? pagesPerRange = null,
         bool? autosummarize = null,
+        bool concurrently = false,
         string? name = null)
-        => new(keys) { Where = Indexes.Condition(where), PagesPerRange = pagesPerRange, Autosummarize = autosummarize, Name = name };
+        => new(keys) { Where = Indexes.Condition(where), PagesPerRange = pagesPerRange, Autosummarize = autosummarize, Concurrently = concurrently, Name = name };
 
     /// <summary>
     /// Starts the elements of an exclusion constraint with one compared by <c>=</c>. What it

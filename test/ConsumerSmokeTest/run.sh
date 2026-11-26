@@ -414,6 +414,72 @@ for registration in pool factory; do
   fi
 done
 
+# ---- an index built CONCURRENTLY ---------------------------------------------------------------------------
+
+# A statement that runs outside a transaction (#155, #206). Npgsql puts every statement of an
+# idempotent script into a DO block, where PostgreSQL refuses this one (25001) while psql goes on:
+# the next block records the migration, and the database counts it as applied without its index.
+# So that script is not written, and every other path carries the statement. SMOKE_MODEL=concurrent
+# adds such an index to the model, in a migration of its own, which this section takes away again.
+echo "==> An index built CONCURRENTLY"
+export SMOKE_MODEL=concurrent
+use_db conc_design
+ef "$app_dir" migrations add Concurrent
+concurrent=$(migration "$migrations" Concurrent)
+if [[ $code == 0 && -n $concurrent ]] && has "$concurrent" 'CREATE INDEX CONCURRENTLY ix_bookings_room ON bookings' 'suppressTransaction: true' \
+    ".Annotation(\"CodoMetis:SchemaKit:Object\", \"Pg.Index 'ix_bookings_room' on Booking\")" 'DROP INDEX ix_bookings_room'; then
+  ok "concurrently: migrations add" "the statement outside a transaction, and the index it is for"
+else
+  fail "concurrently: migrations add" "the migration does not build the index concurrently, or does not say which index the statement is for"
+fi
+build "$app_dir"
+
+built_concurrently() { # path, database
+  sound "$1" "$2"
+  if has "$log" 'INDEX public.bookings ix_bookings_room: CREATE INDEX ix_bookings_room ON public.bookings USING btree ("RoomId")' && lacks "$log" INVALID; then
+    ok "$1: the index built concurrently" "in the catalog, and valid"
+  else
+    fail "$1: the index built concurrently" "the database lacks the index, or holds it as invalid"
+  fi
+}
+
+ef "$app_dir" migrations script --idempotent -o "$work/concurrent-idempotent.sql"
+if [[ $code != 0 && ! -e $work/concurrent-idempotent.sql ]] && has "$log" "Pg.Index 'ix_bookings_room' on Booking" 'without --idempotent'; then
+  ok "concurrently: migrations script --idempotent" "refused, with the index named; no script is written"
+else
+  fail "concurrently: migrations script --idempotent" "the script was written, or not refused with the index named (exit $code)"
+fi
+
+ef "$app_dir" migrations script -o "$work/concurrent.sql"
+[[ $code == 0 ]] || fail "concurrently: migrations script" "exit $code"
+judge apply-each "$(db conc_script)" "$work/concurrent.sql"
+[[ $code == 0 ]] || fail "concurrently: migrations script, applied statement by statement" "the script does not run"
+built_concurrently "concurrently: migrations script, applied statement by statement" conc_script
+
+use_db conc_update
+ef "$app_dir" database update
+[[ $code == 0 ]] || fail "concurrently: database update" "exit $code"
+built_concurrently "concurrently: database update" conc_update
+
+ef "$app_dir" migrations bundle --force -o "$work/efbundle-concurrent"
+[[ $code == 0 && -x $work/efbundle-concurrent ]] || fail "concurrently: migrations bundle" "no bundle was built"
+in_dir "$work" efbundle-concurrent ./efbundle-concurrent --connection "$(connection conc_bundle)"
+[[ $code == 0 ]] || fail "concurrently: migrations bundle, run" "exit $code"
+built_concurrently "concurrently: migrations bundle, run" conc_bundle
+
+for path in migrate ensure-created; do
+  use_db "conc_$path"
+  app "$path"
+  [[ $code == 0 ]] || fail "concurrently: $path at run time" "exit $code"
+  built_concurrently "concurrently: $path at run time" "conc_$path"
+done
+
+use_db conc_design
+ef "$app_dir" migrations remove
+[[ $code == 0 && -z $(migration "$migrations" Concurrent) ]] || fail "concurrently: migrations remove" "exit $code"
+unset SMOKE_MODEL
+build "$app_dir"
+
 # ---- the compiled model ------------------------------------------------------------------------------------
 
 echo "==> The compiled model"
