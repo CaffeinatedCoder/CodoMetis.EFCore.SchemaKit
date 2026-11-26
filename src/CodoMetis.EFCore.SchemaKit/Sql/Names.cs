@@ -106,11 +106,12 @@ public sealed record SqlFragment
     {
     }
 
-    internal SqlFragment(string text, ValueList<Dependency> dependencies, string? nameToken)
+    internal SqlFragment(string text, ValueList<Dependency> dependencies, string? nameToken, bool isColumn = false)
     {
         Text = text;
         Dependencies = dependencies;
         NameToken = nameToken;
+        IsColumn = isColumn;
     }
 
     internal string Text { get; }
@@ -129,6 +130,15 @@ public sealed record SqlFragment
     /// </summary>
     internal string? NameToken { get; }
 
+    /// <summary>
+    /// Whether this is one column by itself, as <see cref="SchemaResolver.Column" /> answers a
+    /// path that has one. False for everything else, a member of a JSON document among it, which
+    /// the same method answers with an expression. A contributor asks this, and not what the
+    /// declaration held, where the database tells a column from an expression: a key that is an
+    /// expression in parentheses of its own, a column and nothing else in a list of columns.
+    /// </summary>
+    public bool IsColumn { get; }
+
     /// <summary>Whether both are the same SQL text.</summary>
     public bool Equals(SqlFragment? other) => other is not null && string.Equals(Text, other.Text, StringComparison.Ordinal);
 
@@ -141,7 +151,7 @@ public sealed record SqlFragment
     /// </summary>
     /// <param name="role">How the object reads the fragment's columns.</param>
     public SqlFragment As(ColumnRole role)
-        => new(Text, [.. Dependencies.Select(dependency => dependency is Dependency.Column column ? column with { Role = role } : dependency).Distinct()], NameToken);
+        => new(Text, [.. Dependencies.Select(dependency => dependency is Dependency.Column column ? column with { Role = role } : dependency).Distinct()], NameToken, IsColumn);
 
     /// <summary>A fragment with no text, for an optional clause that is absent.</summary>
     public static SqlFragment Empty { get; } = new("");

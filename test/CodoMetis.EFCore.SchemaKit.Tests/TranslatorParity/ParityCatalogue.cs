@@ -28,13 +28,11 @@ internal sealed record ParityCase(ParityKind Kind, string Lambda, string Capture
 internal static class ParityCatalogue
 {
     /// <summary>
-    /// Whether members of the JSON document (<see cref="ParityRow.Doc" />) are operands. Off: the
-    /// kernel's resolver refuses a path into a JSON document until a provider package renders it
-    /// (issue 43), so every such row would be accepted at the declaration and fail at resolution.
-    /// 5.x swept them, and its waivers for them are in its repository. Turn this on with the
-    /// rendering, and the shapes in <c>Every_operand_shape_is_swept</c> with it.
+    /// Whether members of the JSON document (<see cref="ParityRow.Doc" />) are operands. On since
+    /// the PostgreSQL package's dialect writes a member (issue 208); the switch stays for a
+    /// provider whose dialect does not.
     /// </summary>
-    public static readonly bool JsonMembers = false;
+    public static readonly bool JsonMembers = true;
 
     private sealed record Operand(string Path, Type Type, bool Nullable, string Shape);
 

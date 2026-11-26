@@ -258,7 +258,6 @@ Refused where the lambda is written, each with a message that says why:
 - a `DateTime`, a `Guid` or any other value without a literal of its own anywhere but in a
   comparison with a property;
 - a member of a scalar that the model does not map, such as `x.Start.Year`;
-- a member of a JSON document ([#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43));
 - a conversion that changes the value, such as `(int)x.Amount == 2`, or `x.Count > 2.5` on an
   integer, where the compiler converts the property
   ([#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103)). Compare the

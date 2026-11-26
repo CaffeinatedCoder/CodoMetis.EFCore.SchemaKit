@@ -38,6 +38,20 @@ internal static class PgStrings
     public static string UnknownBuffering(string token)
         => $"'{token}' is no buffering of a GiST index. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
 
+    public static string JsonMemberCastNotImmutable(string what, string path, string storeType)
+        => $"{what} reads '{path}', a member of a JSON document that is a '{storeType}'. A query reads it as a cast of the " +
+           "document's text to that type, which depends on the session's settings, and PostgreSQL takes such a cast neither " +
+           "as a key nor in a condition (42P17). Read as text it would be built and serve no query. Keep the value in a column " +
+           "of its own, or write the expression as SQL by hand.";
+
+    public static string TheIndex(string name) => $"The index '{name}'";
+
+    public static string TheConstraint(string name) => $"The exclusion constraint '{name}'";
+
+    public static string IncludeNeedsAColumn(string index, string path)
+        => $"The index '{index}' includes '{path}', which is a member of a JSON document and no column: PostgreSQL carries " +
+           "columns in an index and no expression. Include the document, or make the member a key.";
+
     public static string NameTooLong(string name, int length, int limit)
         => $"The name '{name}' is {length} bytes long and PostgreSQL keeps {limit}. It shortens a longer name without an error, " +
            "and a collation or an operator class of the shortened name would be taken in its place.";

@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Migrations.Operations;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Internal;
@@ -48,6 +49,46 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
     // points elsewhere makes a database the model does not describe: its ToTable("x", "public")
     // and its ToTable("x") are then two tables, where the model says one schema (#100).
     public override Identifier? DefaultSchema => field ??= Identifier("public");
+
+    // A member of a JSON document, written as Npgsql's queries write it (its VisitJsonScalar and
+    // GenerateJsonPath), case for case and in their order: PostgreSQL uses an expression index
+    // only for a query whose expression is the index's own. A value that is JSON itself, a
+    // collection or a nested document, is taken out as jsonb; a text is the text; bytea is
+    // decoded; everything else is the text cast to the member's store type. Each row is compared
+    // with ToQueryString() in PgJsonMemberTests.
+    public override SqlFragment JsonMember(JsonMember member, SchemaSql sql)
+    {
+        ArgumentNullException.ThrowIfNull(member);
+        ArgumentNullException.ThrowIfNull(sql);
+
+        if (member.Kind != JsonMemberKind.Scalar || member.Mapping?.StoreTypeNameBase is "jsonb" or "json")
+            return Extraction(member, sql, asText: false);
+
+        var text = Extraction(member, sql, asText: true);
+        return member.Mapping switch
+        {
+            null or StringTypeMapping                  => text,
+            { StoreTypeNameBase: "bytea" }             => sql.Fragment($"decode({text}, {Literal("base64")})"),
+            _                                          => sql.Fragment($"CAST({text} AS {TypeName(member.StoreType)})"),
+        };
+    }
+
+    // One step is -> or ->>; more are #> or #>> with the path as an array literal when every
+    // name is ASCII letters and digits, and as ARRAY[...]::text[] otherwise.
+    private SqlFragment Extraction(JsonMember member, SchemaSql sql, bool asText)
+    {
+        if (member.Path.Count == 1)
+        {
+            var name = Literal(member.Path[0]);
+            return asText ? sql.Fragment($"{member.Container} ->> {name}") : sql.Fragment($"{member.Container} -> {name}");
+        }
+
+        var path = member.Path.All(name => name.All(char.IsAsciiLetterOrDigit))
+            ? Literal("{" + string.Join(",", member.Path) + "}")
+            : sql.Fragment($"ARRAY[{sql.List(member.Path.Select(Literal))}]::text[]");
+
+        return asText ? sql.Fragment($"{member.Container} #>> {path}") : sql.Fragment($"{member.Container} #> {path}");
+    }
 
     // Npgsql writes every statement of an idempotent script into a DO block, and PostgreSQL runs
     // nothing there that cannot run in a transaction (25001). psql goes on after the error and

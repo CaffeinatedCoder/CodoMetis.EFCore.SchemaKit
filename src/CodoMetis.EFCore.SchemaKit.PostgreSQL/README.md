@@ -38,6 +38,10 @@ modelBuilder.Entity<RoleGrant>().DeclarePostgres(pg =>
 `pg.Hash`, `pg.Gist`, `pg.SpGist`, `pg.Gin` and `pg.Brin` declare the other access methods, each
 with the options PostgreSQL has for it.
 
+A key or a condition can read a member of a JSON document, `pg.BTree(x => x.Prefs.Rank)` for a
+complex property mapped with `ToJson()`. It is written as Npgsql writes the member in a query, so
+PostgreSQL uses the index for that query.
+
 `concurrently: true` on any of them builds the index with `CREATE INDEX CONCURRENTLY`, outside the
 migration's transaction. `migrations script --idempotent` fails for a migration with such an
 index and names it, since PostgreSQL rejects the statement in that script (25001). The

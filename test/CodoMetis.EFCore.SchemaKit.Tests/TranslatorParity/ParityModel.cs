@@ -80,9 +80,15 @@ internal static class ParityModel
 {
     public const string Table = "parity_rows";
 
-    /// <summary>With SchemaKit wired, which is what gives the context a resolver.</summary>
+    /// <summary>
+    /// With SchemaKit wired as a consumer of the PostgreSQL package wires it, which is what gives
+    /// the context a resolver, and the dialect that writes a member of a JSON document.
+    /// </summary>
     public static DbContextOptions<ParityQueryContext> Options(string connection)
-        => new DbContextOptionsBuilder<ParityQueryContext>().UseProvider(Provider.Npgsql, connection).UseSchemaKit().Options;
+        => new DbContextOptionsBuilder<ParityQueryContext>()
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+            .UseNpgsql(connection, o => CodoMetis.EFCore.SchemaKit.PostgreSQL.SchemaKitNpgsqlDbContextOptionsBuilderExtensions.UseSchemaKit(o))
+            .Options;
 
     public static void Map(EntityTypeBuilder<ParityRow> b)
     {
