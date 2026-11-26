@@ -57,12 +57,13 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
     // this is asked here and not where the reader is added.
     private static IReadOnlyList<ILegacyDeclarationSource> OneReaderForEachAnnotation(IReadOnlyList<ILegacyDeclarationSource> readers)
     {
-        Dictionary<string, ILegacyDeclarationSource> byAnnotation = new(StringComparer.Ordinal);
+        // An annotation of an entity type and one of a property are two annotations, whatever their names.
+        Dictionary<(bool, string), ILegacyDeclarationSource> byAnnotation = [];
         foreach (var reader in readers)
         {
-            if (!byAnnotation.TryAdd(reader.Annotation, reader))
+            if (!byAnnotation.TryAdd((reader.OnProperties, reader.Annotation), reader))
                 throw new InvalidOperationException(SchemaKitStrings.TwoReadersForOneAnnotation(
-                    reader.Annotation, byAnnotation[reader.Annotation].GetType(), reader.GetType()));
+                    reader.Annotation, byAnnotation[(reader.OnProperties, reader.Annotation)].GetType(), reader.GetType()));
         }
 
         return readers;
@@ -737,7 +738,11 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
             // nothing, whichever of the two the diff starts from.
             foreach (var reader in Legacy)
             {
-                if (entityType.FindAnnotation(reader.Annotation) is not { } annotation) continue;
+                // On the entity type, or on each of its properties that carries it.
+                List<(string? Path, IReadOnlyProperty? Property, object? Value)> found = reader.OnProperties
+                    ? [.. ILegacyDeclarationSource.Marked(entityType, reader.Annotation).Select(marked => ((string?)marked.Path, (IReadOnlyProperty?)marked.Property, marked.Value))]
+                    : entityType.FindAnnotation(reader.Annotation) is { } annotation ? [(null, null, annotation.Value)] : [];
+                if (found.Count == 0) continue;
 
                 // Nothing renders the old format from a model, and nothing writes it any more.
                 if (IsOwn(model))
@@ -746,7 +751,8 @@ internal sealed class SchemaOperationPlanner(IServiceProvider services) : ISchem
                 var contributor = Registry.Find(reader.Owner)
                                   ?? throw new InvalidOperationException(SchemaKitStrings.NoContributorForOwner(entityType.ShortName(), reader.Owner));
 
-                foreach (var declaration in reader.Read(entityType, annotation.Value))
+                foreach (var (path, property, value) in found)
+                foreach (var declaration in reader.Read(entityType, path, property, value))
                     resolved.AddRange(Land(contributor, entityType, declaration));
             }
         }

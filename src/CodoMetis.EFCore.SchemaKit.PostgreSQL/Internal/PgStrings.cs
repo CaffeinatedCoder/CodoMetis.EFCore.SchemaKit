@@ -52,6 +52,20 @@ internal static class PgStrings
         => $"The index '{index}' includes '{path}', which is a member of a JSON document and no column: PostgreSQL carries " +
            "columns in an index and no expression. Include the document, or make the member a key.";
 
+    public const string MoveTo56First =
+        "Move the project to EFCore.ComplexIndexes 5.6.0 first and apply the migration it scaffolds, which brings the database " +
+        "to what a declaration here describes.";
+
+    public static string LegacyIndexUnreadable(string entity, string why)
+        => $"The model snapshot holds indexes of {entity} as EFCore.ComplexIndexes 5.x stored them ('CustomIndex:CompositeIndexes' " +
+           $"or 'CustomIndex:IsIndexed'), and what it holds is not what 5.x wrote: {why}. The indexes are in the database, so they " +
+           "are not passed over.";
+
+    public static string LegacyIndexCannotSay(string entity, string index, string what, string wayOff)
+        => $"The model snapshot holds the index '{index}' of {entity} as EFCore.ComplexIndexes 5.x stored it, and the index {what}. " +
+           "It is in the database, so it is not passed over: read as something else, the next migration would rebuild it, or " +
+           $"never would. {(wayOff.Length > 0 ? wayOff : "Remove it from the model and add a migration while the project is on 5.x; declare what replaces it here afterwards.")}";
+
     public static string NameTooLong(string name, int length, int limit)
         => $"The name '{name}' is {length} bytes long and PostgreSQL keeps {limit}. It shortens a longer name without an error, " +
            "and a collation or an operator class of the shortened name would be taken in its place.";

@@ -34,10 +34,14 @@ internal static class LegacyFormats
 
     private const string NotYet = "This version of SchemaKit cannot take over a project that has them: keep it on EFCore.ComplexIndexes 5.x until one can. ";
 
+    private const string IndexAdvice =
+        "CodoMetis.EFCore.SchemaKit.PostgreSQL reads them on PostgreSQL: call UseSchemaKit() on the options builder of UseNpgsql. " +
+        "On another provider, keep the project on EFCore.ComplexIndexes 5.x until a version of SchemaKit can take it over. " + TakeOver + "29";
+
     /// <summary>An annotation of an entity type, what it holds, and what to do about it.</summary>
     private static readonly (string Annotation, string What, string Advice)[] OnEntityTypes =
     [
-        ("CustomIndex:CompositeIndexes", "indexes", NotYet + TakeOver + "27"),
+        ("CustomIndex:CompositeIndexes", "indexes", IndexAdvice),
         ("CustomTemporal:Constraints", "temporal constraints", NotYet + TakeOver + "18"),
         ("CustomTemporal:ForeignKeys", "temporal foreign keys", NotYet + TakeOver + "18"),
         ("CustomExclusion:Constraints", "exclusion constraints",
@@ -59,7 +63,7 @@ internal static class LegacyFormats
             if (entityType.FindAnnotation(annotation) is { } found && HoldsSomething(found.Value)) return annotation;
         }
 
-        return IndexedPropertyOf(entityType, path: "") is null ? null : IndexedProperty;
+        return IndexedPropertyOf(entityType) is null ? null : IndexedProperty;
     }
 
     /// <summary>Throws when the entity type carries a declaration of 5.x that none of the readers reads.</summary>
@@ -68,14 +72,14 @@ internal static class LegacyFormats
         foreach (var (annotation, what, advice) in OnEntityTypes)
         {
             if (entityType.FindAnnotation(annotation) is not { } found || !HoldsSomething(found.Value)) continue;
-            if (readers.Any(reader => reader.Annotation == annotation)) continue;
+            if (readers.Any(reader => !reader.OnProperties && reader.Annotation == annotation)) continue;
 
             throw new InvalidOperationException(SchemaKitStrings.UnreadLegacyAnnotation(entityType.ShortName(), what, annotation, advice));
         }
 
-        if (IndexedPropertyOf(entityType, path: "") is { } property)
+        if (IndexedPropertyOf(entityType) is { } property && !readers.Any(reader => reader.OnProperties && reader.Annotation == IndexedProperty))
             throw new InvalidOperationException(SchemaKitStrings.UnreadLegacyAnnotation(
-                entityType.ShortName(), $"an index on {property}", IndexedProperty, NotYet + TakeOver + "27"));
+                entityType.ShortName(), $"an index on {property}", IndexedProperty, IndexAdvice));
     }
 
     // 5.x read an empty annotation, and an empty list, as no declaration: it left the annotation
@@ -88,20 +92,8 @@ internal static class LegacyFormats
     };
 
     /// <summary>The path of the first property marked as indexed, through complex properties, or null.</summary>
-    private static string? IndexedPropertyOf(IReadOnlyTypeBase type, string path)
-    {
-        foreach (var property in type.GetProperties())
-        {
-            if (property.FindAnnotation(IndexedProperty)?.Value is true) return path + property.Name;
-        }
-
-        foreach (var complex in type.GetComplexProperties())
-        {
-            if (IndexedPropertyOf(complex.ComplexType, $"{path}{complex.Name}.") is { } found) return found;
-        }
-
-        return null;
-    }
+    private static string? IndexedPropertyOf(IReadOnlyEntityType entityType)
+        => ILegacyDeclarationSource.Marked(entityType, IndexedProperty).Where(marked => marked.Value is true).Select(marked => marked.Path).FirstOrDefault();
 
     private const string Replay = TakeOver + "28";
 

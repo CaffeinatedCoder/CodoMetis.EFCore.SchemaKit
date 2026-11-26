@@ -83,6 +83,7 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.SchemaPlacement",
         "CodoMetis.EFCore.SchemaKit.SchemaResolver",
         "CodoMetis.EFCore.SchemaKit.LegacyDeclarationReader`1",
+        "CodoMetis.EFCore.SchemaKit.LegacyPropertyDeclarationReader`1",
         "CodoMetis.EFCore.SchemaKit.SchemaModelObject",
         "CodoMetis.EFCore.SchemaKit.SchemaScope",
         "CodoMetis.EFCore.SchemaKit.SchemaScope+Database",

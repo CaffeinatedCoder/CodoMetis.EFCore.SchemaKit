@@ -4,11 +4,11 @@ For a project on `EFCore.ComplexIndexes` 5.x and EF Core 10 that moves to EF Cor
 a new package with a new API: nothing of 5.x is kept as `[Obsolete]`, so the compiler names every
 call that has to change, and this page says what each one becomes.
 
-**This is the first cut, for `11.0.0-preview.1`.** That preview declares exclusion constraints on
-PostgreSQL and nothing else. A project can move now when its 5.x model declares exclusion
-constraints and no indexes or temporal constraints. A project with those keeps 5.x for now:
-SchemaKit refuses its snapshot ([below](#what-cannot-move-yet)). Each later preview fills in the
-entries of what it adds ([#73](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/73)).
+**This covers `11.0.0-preview.2`.** That preview declares exclusion constraints and indexes on
+PostgreSQL. A project can move when its 5.x model declares those and no temporal constraints, and
+runs on PostgreSQL. A project with temporal constraints, or on SQL Server or SQLite, keeps 5.x for
+now: SchemaKit refuses its snapshot ([below](#what-cannot-move-yet)). Each later preview fills in
+the entries of what it adds ([#73](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/73)).
 
 A preview's snapshot carries no promise yet: the stored form of a declaration may change in a later
 preview, which may then ask you to scaffold your migrations again. That does not change a database
@@ -31,7 +31,7 @@ Remove the 5.x package references and add SchemaKit's PostgreSQL package. It bri
 
 | Remove | Add |
 |---|---|
-| `EFCore.ComplexIndexes`, `EFCore.ComplexIndexes.PostgreSQL` | `CodoMetis.EFCore.SchemaKit.PostgreSQL` `11.0.0-preview.1` |
+| `EFCore.ComplexIndexes`, `EFCore.ComplexIndexes.PostgreSQL` | `CodoMetis.EFCore.SchemaKit.PostgreSQL` `11.0.0-preview.2` |
 
 5.x put a `DesignTimeServicesReference` for its own differ into your assembly through a `.targets`
 file. SchemaKit has none: EF Core hands the context's own services to design time. When the
@@ -220,6 +220,127 @@ diff compares what is stored, so they diff to nothing only when the text is the 
 A raw SQL element that keeps 5.x's text as it was comes with
 [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25).
 
+## Indexes
+
+### The model, before and after
+
+Every index 5.x declared has a declaration here that is the same index in the database. The 5.x
+calls below are taken from the fixture's model, `test/Fixtures/ComplexIndexes5x/Generator/Indexes.cs`,
+which holds 32 indexes of every kind; the published 5.6.0 scaffolded its snapshot.
+
+```csharp 5.x
+account.ComplexProperty(x => x.Contact, contact =>
+{
+    contact.Property(x => x.City).HasComplexIndex();
+    contact.Property(x => x.Phone).HasComplexIndex(isUnique: true, filter: "{DeletedOn} IS NULL", indexName: "ux_account_phone");
+});
+
+account.HasComplexIndex(x => x.Email, isUnique: true, filter: "\"DeletedOn\" IS NULL", indexName: "ux_account_email_active");
+account.HasComplexCompositeIndex(x => new { x.Kind, Rank = DbOrder.Desc(x.Rank), Score = DbOrder.NullsFirst(x.Score) });
+account.HasComplexCompositeIndex(x => new { x.Title, x.Nick }, idx => idx
+    .UseCollation("C", "")
+    .HasStorageParameter("fillfactor", 70)
+    .IncludeProperties("Rank", "Contact.City"));
+account.HasComplexIndex(x => x.Nick, idx => idx.IsUnique().AreNullsDistinct(false).HasOperators("text_pattern_ops").HasName("ux_account_nick"));
+account.HasComplexIndex(x => x.Tags, idx => idx.UseGin());
+
+account.HasExpressionIndex("lower(\"Email\")");
+account.HasExpressionIndex(x => x.Title.ToLower(), isUnique: true);
+account.HasComplexIndex(x => x.Kind, x => x.DeletedOn == null, indexName: "ix_account_kind_live");
+
+account.HasComplexIndex(x => x.Prefs.Level, isUnique: true, indexName: "ux_account_level");
+account.HasComplexIndex(x => x.Payload, idx => idx.UseGin().HasOperators("jsonb_path_ops"));
+```
+
+```csharp
+modelBuilder.Entity<Account>().DeclarePostgres(pg =>
+[
+    pg.BTree(x => x.Contact.City),
+    pg.Unique(x => x.Contact.Phone, where: x => x.DeletedOn == null, name: "ux_account_phone"),
+
+    pg.Unique(x => x.Email, where: x => x.DeletedOn == null, name: "ux_account_email_active"),
+    pg.BTree([pg.Key(x => x.Kind), pg.Key(x => x.Rank).Desc(), pg.Key(x => x.Score).NullsFirst()]),
+    pg.BTree(
+        [pg.Key(x => x.Title).Collate("C"), pg.Key(x => x.Nick)],
+        include: [x => x.Rank, x => x.Contact.City],
+        fillFactor: 70),
+    pg.Unique([pg.Key(x => x.Nick).Ops(BTreeOpClass.TextPatternOps)], nullsDistinct: false, name: "ux_account_nick"),
+    pg.Gin(x => x.Tags),
+
+    pg.BTree(x => x.Email.ToLower()),
+    pg.Unique(x => x.Title.ToLower()),
+    pg.BTree(x => x.Kind, where: x => x.DeletedOn == null, name: "ix_account_kind_live"),
+
+    pg.Unique(x => x.Prefs.Level, name: "ux_account_level"),
+    pg.Gin(x => x.Payload, GinOpClass.JsonbPathOps),
+]);
+```
+
+With the model declared this way, `migrations add` scaffolds an empty migration and the snapshot
+changes to SchemaKit's format. `LegacyIndexHandoverTests` holds that for all 32 indexes of the
+fixture, in both directions. `LegacyIndexHandoverLiveTests` builds a database with the SQL that
+5.6.0 itself wrote and compares its indexes with what `EnsureCreated()` creates for the model above.
+
+### Call by call
+
+| 5.x | SchemaKit |
+|---|---|
+| `HasComplexIndex()` on a property of a complex type | `pg.BTree(x => x.Contact.City)` on the entity type: every index is declared there |
+| `HasComplexIndex(x => x.A, isUnique: true, …)` | `pg.Unique(x => x.A, …)` |
+| `HasComplexCompositeIndex(x => new { x.A, x.B })` | `pg.BTree([pg.Key(x => x.A), pg.Key(x => x.B)])` |
+| `DbOrder.Desc(x.A)`, `DbOrder.NullsFirst(x.A)`, `DbOrder.NullsLast(x.A)` | `pg.Key(x => x.A).Desc()`, `.NullsFirst()`, `.NullsLast()` |
+| `indexName:`, `HasName(…)` | `name:` |
+| `filter:` with SQL, `HasFilter(string)` | `where:` with the condition as a lambda |
+| a filter as a lambda, `HasFilter<TEntity>(…)` | `where:` |
+| `UseGin()`, `UseGist()`, `UseBrin()`, `UseHash()`, `UseSpGist()` | `pg.Gin(…)`, `pg.Gist(…)`, `pg.Brin(…)`, `pg.Hash(…)`, `pg.SpGist(…)` |
+| `HasOperators("text_pattern_ops")` | `pg.Key(…).Ops(BTreeOpClass.TextPatternOps)`, or `new BTreeOpClass("…")` for a class of an extension |
+| `UseCollation("C", "")` | `pg.Key(…).Collate("C")` on the key it belongs to |
+| `IncludeProperties("Rank")` | `include: [x => x.Rank]` |
+| `AreNullsDistinct(false)` | `nullsDistinct: false` on `pg.Unique` |
+| `IsCreatedConcurrently()` | `concurrently: true` |
+| `HasStorageParameter("fillfactor", 70)` | the method's own parameter: `fillFactor: 70`, `deduplicateItems:`, `buffering:`, `fastUpdate:`, `pendingListLimit:`, `pagesPerRange:`, `autosummarize:` |
+| `HasExpressionIndex("lower(\"Email\")")` | the expression as a lambda: `pg.BTree(x => x.Email.ToLower())` |
+| `HasExpressionIndex(x => x.Title.ToLower())` | `pg.BTree(x => x.Title.ToLower())` |
+| `HasComplexIndex(x => x.Prefs.Level)` on a member of a JSON document | `pg.BTree(x => x.Prefs.Level)` |
+
+### Good to know
+
+- **Declare each index before you run `migrations add`.** An index the snapshot holds and the
+  model does not declare is dropped by the next migration, by its name. That is the same for any
+  index you remove.
+- **A name you did not state stays the same.** 5.x named an index `IX_{table}_{parts}`, and a
+  declaration here gets the same default name, for a column, an expression and a member of a JSON
+  document alike. The live test compares the names in the catalog.
+- **SQL you gave 5.x is a lambda here.** `filter: "\"DeletedOn\" IS NULL"` becomes
+  `where: x => x.DeletedOn == null`, and `HasExpressionIndex("lower(\"Email\")")` becomes
+  `pg.BTree(x => x.Email.ToLower())`. When the lambda becomes the SQL you wrote, the migration
+  stays empty: the sample above is written that way. When it becomes other SQL for the same thing,
+  the next migration rebuilds that index once.
+- **SQL that no lambda can say has no place yet.** A raw SQL form for a key or a condition is
+  [#26](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/26). Until then such
+  an index stays on 5.x, or is dropped there and created by `migrationBuilder.Sql(…)` of your own.
+- **Applying 5.x's migrations to a new database** works for an index on columns. A migration with
+  an index on an expression, or with `NULLS FIRST` or `NULLS LAST`, is rejected
+  ([below](#migrations-5x-scaffolded)).
+
+### What a declaration here cannot say
+
+`migrations add` fails and names the index when the snapshot holds one of these. Unless another
+way is given, remove the index from the model and add a migration while the project is still on
+5.x, then declare its replacement here.
+
+- **A date or a time in a JSON document.** 5.x indexed such a member as text. A declaration reads
+  it through the cast a query uses, which PostgreSQL does not take in an index.
+- **`AreNullsDistinct(false)` on an index that is not unique.** PostgreSQL keeps the setting, and
+  only `pg.Unique` has it here.
+- **A storage parameter the access method does not have,** or an option that is none of Npgsql's.
+- **An order on a key of an index that is not a B-tree.**
+- **A snapshot from before 5.4.0 with an index on a member of a JSON document, or on an
+  expression without a name.** 5.x wrote both differently then. Move to 5.6.0 first and apply the
+  migration it scaffolds.
+- **A snapshot from before 5.5.0 with an index on a TPC type that has derived types.** The index
+  was in that type's table alone. Move to 5.6.0 first, as above.
+
 ## Conditions
 
 A condition is a lambda over the entity, translated where it is written: a lambda with no
@@ -284,7 +405,7 @@ They stay, and SchemaKit's SQL generator applies them to a new database:
 
 ## What cannot move yet
 
-A model snapshot that holds a 5.x annotation nothing in `preview.1` reads is refused at the first
+A model snapshot that holds a 5.x annotation nothing in `preview.2` reads is refused at the first
 diff, whatever the model declares
 ([#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93)). Passed over, its
 objects would be created a second time, or never dropped. Such a project stays on 5.x until the
@@ -292,7 +413,7 @@ preview that reads it:
 
 | The snapshot holds | Comes with |
 |---|---|
-| Indexes: `CustomIndex:CompositeIndexes`, or `CustomIndex:IsIndexed` on a property | `preview.2`, [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
+| Indexes, on SQL Server or SQLite: `CustomIndex:CompositeIndexes`, or `CustomIndex:IsIndexed` on a property | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | Temporal constraints and temporal foreign keys: `CustomTemporal:Constraints`, `CustomTemporal:ForeignKeys` | [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | Exclusion constraints, with a context wired without the PostgreSQL package | Wire it as [above](#the-wiring) |
 
@@ -308,14 +429,14 @@ migration after such a move is not documented here.
 
 | 5.x | Goes to |
 |---|---|
-| `HasComplexIndex(…)`, every overload, on a complex property or on the entity type | Later, [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27). Native for a column-only index: `HasIndex(…)`, with `IsUnique()`, `HasFilter(sql)`, `HasDatabaseName(…)` |
-| `HasComplexCompositeIndex(…)`, both overloads | Later, #27. Native: `HasIndex(x => new { … })` |
-| `ComplexIndexBuilder.IsUnique()`, `HasFilter(string)`, `HasName(string)` | Later, #27 |
-| `DbOrder.Asc`, `DbOrder.Desc` | Later, #27. Native: `IsDescending(…)` |
-| `DbOrder.NullsFirst`, `DbOrder.NullsLast`, `DbNullSort` | Later, #27. Native on Npgsql, for a column: `HasNullSortOrder(…)` |
-| `IIndexExpression`, `SqlIndexExpression` | Later, [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) and #27 |
-| `GetDeclaredComplexIndexes()`, `GetComplexIndexes()`, `FindComplexIndex(name)` | Later, #27: `GetDeclarations<…>()` and `FindDeclaration<…>(name)` over the index type |
-| `IMutableEntityType.AddComplexIndex(…)`, `AddComplexIndexFilter(…)` | Later, #27 |
+| `HasComplexIndex(…)`, every overload, on a complex property or on the entity type | SchemaKit, [above](#indexes) |
+| `HasComplexCompositeIndex(…)`, both overloads | SchemaKit, above |
+| `ComplexIndexBuilder.IsUnique()`, `HasFilter(string)`, `HasName(string)` | `pg.Unique(…)`, `Where` and `name:`, above |
+| `DbOrder.Asc`, `DbOrder.Desc` | `pg.Key(…)`, `pg.Key(…).Desc()` |
+| `DbOrder.NullsFirst`, `DbOrder.NullsLast`, `DbNullSort` | `pg.Key(…).NullsFirst()`, `pg.Key(…).NullsLast()` |
+| `IIndexExpression`, `SqlIndexExpression` | A key that is a lambda, above. SQL as written is [#26](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/26) |
+| `GetDeclaredComplexIndexes()`, `GetComplexIndexes()`, `FindComplexIndex(name)` | `GetDeclarations<PgIndex>()` and `FindDeclaration<PgIndex>(name)` |
+| `IMutableEntityType.AddComplexIndex(…)`, `AddComplexIndexFilter(…)` | `Declare` and `Redeclare` on the entity type, with `AndWhere` on the declaration |
 | `UseComplexIndexes()`, `UseComplexIndexes<TContext>()`, `AddComplexIndexes()` | `UseSchemaKit()` on the options builder, `AddEntityFrameworkSchemaKit()`: the kernel alone, for a provider without a SchemaKit package. It declares nothing by itself |
 | `IndexNameScope` | Dropped: a property of the provider's dialect |
 | `CompositeIndexDefinition`, `IndexPartDefinition`, `ResolvedIndexPart`, `CompositeIndexSerializer`, `IndexPartsSerializer`, `ComplexIndexDeclaration` | Dropped: declarations are values, and their stored form is SchemaKit's |
@@ -330,15 +451,15 @@ migration after such a move is not documented here.
 |---|---|
 | `HasExclusionConstraint(…)` and its builder | SchemaKit, [above](#exclusion-constraints) |
 | `UseNpgsqlComplexIndexes()`, `UseNpgsqlComplexIndexes<TContext>()`, `AddNpgsqlComplexIndexes()` | `UseNpgsql(…, o => o.UseSchemaKit())`, `AddEntityFrameworkSchemaKitNpgsql()`, [above](#the-wiring) |
-| `UseGin()`, `UseGist()`, `UseBrin()`, `UseHash()`, `UseSpGist()` | Later, #27. Native: `HasMethod("gin")` |
-| `HasOperators(…)` | Later, #27. Native: `HasOperators(…)` |
-| `IncludeProperties(…)` | Later, #27. Native: `IncludeProperties(…)` |
-| `IsCreatedConcurrently()` | Later, #27. Native: `IsCreatedConcurrently()` |
-| `AreNullsDistinct(false)` | Later, #27. Native: `AreNullsDistinct(false)` |
-| `UseCollation(…)` | Later, #27. Native: `UseCollation(…)` |
-| `HasStorageParameter(name, value)` | Later, #27. Native: `HasStorageParameter(…)` |
-| `HasExpressionIndex(…)`, every overload, and `ExpressionIndexBuilder` | Later, #27 |
-| `HasFilter<TEntity>(predicate)` on an index builder, `AddComplexIndexFilter<TEntity>(…)` | Later, #27 |
+| `UseGin()`, `UseGist()`, `UseBrin()`, `UseHash()`, `UseSpGist()` | `pg.Gin(…)`, `pg.Gist(…)`, `pg.Brin(…)`, `pg.Hash(…)`, `pg.SpGist(…)`, [above](#indexes) |
+| `HasOperators(…)` | `pg.Key(…).Ops(…)` |
+| `IncludeProperties(…)` | `include:` |
+| `IsCreatedConcurrently()` | `concurrently: true` |
+| `AreNullsDistinct(false)` | `nullsDistinct: false` on `pg.Unique` |
+| `UseCollation(…)` | `pg.Key(…).Collate(…)` |
+| `HasStorageParameter(name, value)` | the method's own parameter, above |
+| `HasExpressionIndex(…)`, every overload, and `ExpressionIndexBuilder` | a key that is a lambda, above. SQL as written is #26 |
+| `HasFilter<TEntity>(predicate)` on an index builder, `AddComplexIndexFilter<TEntity>(…)` | `where:`, and `AndWhere` on a declaration |
 | `HasTemporalConstraint(…)` | Native: `HasAlternateKey(…).WithoutOverlaps()` or `HasKey(…).WithoutOverlaps()`. Its snapshot is refused until [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | `HasTemporalForeignKey(…)` | Native: `HasForeignKey(…).WithPeriod()`. Its snapshot is refused until #18 |
 | `UseBtreeGist()`, `SuppressTemporalExtensionAutoInjection()` | [Above](#call-by-call) |

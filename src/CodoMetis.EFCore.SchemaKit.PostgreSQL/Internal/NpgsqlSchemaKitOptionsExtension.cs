@@ -41,6 +41,8 @@ internal sealed class NpgsqlSchemaKitOptionsExtension : IDbContextOptionsExtensi
 
         // What a project that comes from EFCore.ComplexIndexes 5.x has in its snapshot.
         services.AddLegacyDeclarationReader<ComplexIndexes5xExclusionReader>();
+        services.AddLegacyDeclarationReader<ComplexIndexes5xIndexReader>();
+        services.AddLegacyDeclarationReader<ComplexIndexes5xPropertyIndexReader>();
     }
 
     private sealed class ExtensionInfo(IDbContextOptionsExtension extension) : DbContextOptionsExtensionInfo(extension)

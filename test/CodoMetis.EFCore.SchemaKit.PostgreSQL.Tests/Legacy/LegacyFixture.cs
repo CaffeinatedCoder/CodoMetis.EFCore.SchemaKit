@@ -296,6 +296,32 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
         /// <summary>What the 5.x migration of the TPC hierarchies does to a database, as 5.x scaffolded it.</summary>
         public static IReadOnlyList<MigrationOperation> TpcUp => CompiledTpc.Value.Migration.UpOperations;
 
+        /// <summary>The model with every kind of index 5.x stored (#218).</summary>
+        public static string IndexesFolder { get; } = Path.Combine(Fixtures, "ScaffoldedIndexes");
+
+        private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> CompiledIndexes = new(() => Compile(IndexesFolder));
+
+        /// <summary>The 5.x snapshot of the indexes as <c>dotnet ef</c> prepares it for a diff.</summary>
+        public static IRelationalModel IndexesSnapshot(DbContext context) => Prepare(context, CompiledIndexes.Value.Snapshot.Model);
+
+        /// <summary>The same snapshot as it is compiled, for a test that changes what it holds.</summary>
+        public static IModel IndexesSnapshotModel => CompiledIndexes.Value.Snapshot.Model;
+
+        /// <summary>What the 5.x migration of the indexes holds, as 5.x scaffolded it.</summary>
+        public static IReadOnlyList<MigrationOperation> IndexesUp => CompiledIndexes.Value.Migration.UpOperations;
+
+        /// <summary>
+        /// The script 5.x's own generator wrote for that migration, statement by statement: what a
+        /// database built by 5.x holds. SchemaKit does not replay a migration of 5.x that holds an
+        /// index on an expression (#28), so this is where such a database comes from.
+        /// </summary>
+        public static IReadOnlyList<string> IndexesScript { get; } =
+        [
+            .. System.Text.RegularExpressions.Regex.Split(File.ReadAllText(Path.Combine(IndexesFolder, "Initial.sql")), @"\r?\n\s*\r?\n")
+                .Select(statement => statement.Trim().TrimStart('\uFEFF'))
+                .Where(statement => statement.Length > 0),
+        ];
+
         /// <summary>The snapshot of the kinds nothing reads yet, as 5.x wrote it.</summary>
         public static IModel OtherKinds => CompiledOtherKinds.Value.Snapshot.Model;
 

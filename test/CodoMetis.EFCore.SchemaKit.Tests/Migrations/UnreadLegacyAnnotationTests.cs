@@ -60,7 +60,7 @@ public sealed class UnreadLegacyAnnotationTests
     public static IEnumerable<object[]> OnEntityTypes =>
         from annotation in new[]
         {
-            ("CustomIndex:CompositeIndexes", "indexes of Animal", "issues/27"),
+            ("CustomIndex:CompositeIndexes", "indexes of Animal", "call UseSchemaKit() on the options builder of UseNpgsql"),
             ("CustomTemporal:Constraints", "temporal constraints of Animal", "issues/18"),
             ("CustomTemporal:ForeignKeys", "temporal foreign keys of Animal", "issues/18"),
             ("CustomExclusion:Constraints", "exclusion constraints of Animal", "call UseSchemaKit() on the options builder of UseNpgsql"),
@@ -87,7 +87,8 @@ public sealed class UnreadLegacyAnnotationTests
 
         StringAssert.Contains(refused.Message, "The model snapshot holds an index on Spot.Name of Burrow");
         StringAssert.Contains(refused.Message, "'CustomIndex:IsIndexed'");
-        StringAssert.Contains(refused.Message, "issues/27");
+        StringAssert.Contains(refused.Message, "call UseSchemaKit() on the options builder of UseNpgsql");
+        StringAssert.Contains(refused.Message, "issues/29");
     }
 
     /// <summary>5.x read these as no declaration, and left the annotation behind when the last one went.</summary>
