@@ -406,6 +406,25 @@ public sealed class PgExclusionMigrationTests
             Contexts.Diff<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheNote>().Shape());
     }
 
+    /// <summary>
+    /// A renamed column too: PostgreSQL renames it inside the constraint, and SQL written by hand
+    /// goes on saying the old name in the model. The constraint is rebuilt around the rename,
+    /// whichever column it is (#209).
+    /// </summary>
+    [TestMethod]
+    public void Beside_SQL_that_names_no_column_a_renamed_column_is_rebuilt_around()
+    {
+        // The SQL as the model writes it, the old name in it: nothing here reads it.
+        const string add = """ALTER TABLE role_grants ADD CONSTRAINT ex_role_grant_note EXCLUDE USING gist ("GranteeId" WITH =, "Period" WITH &&, (lower("Note")) WITH =);""";
+
+        CollectionAssert.AreEqual(
+            new[] { Extension, DropOverNotes, "RenameColumnOperation", add },
+            Contexts.Diff<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithTheRoleRenamedBesideSqlThatNamesNoColumn>().Shape());
+        CollectionAssert.AreEqual(
+            new[] { Extension, DropOverNotes, "RenameColumnOperation", add },
+            Contexts.Diff<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithTheNoteRenamedBesideSqlThatNamesNoColumn>().Shape());
+    }
+
     /// <summary>A rename and a type change of a column an expression reads leave the constraint alone, as they leave one on the column itself.</summary>
     [TestMethod]
     public void A_renamed_or_altered_column_of_an_expression_leaves_the_constraint_alone()

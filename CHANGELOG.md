@@ -35,6 +35,9 @@ One section per version, newest first, in the form
 
 ### Fixed
 
+- A column or a table renamed under an index or an exclusion constraint with SQL written by hand (`SqlTemplate.Raw`) rebuilds the object around the rename, where the rename was scaffolded alone: the migration applied, PostgreSQL renamed the column inside the object, and the model's SQL went on naming a column that was gone. SQL that still names the old column now fails the migration (42703) and leaves the database as it was ([#209](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/209)).
+- On PostgreSQL, a collation or an operator class whose name is longer than 63 bytes is refused where the model is resolved. PostgreSQL shortened a collation's name without an error and built the index with the collation of the shortened name where there was one ([#210](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/210)).
+- A statement that holds the words `DROP … IF EXISTS` inside a value or a delimited name is no longer refused as a drop: an index with `where: x => x.Note == "DROP TABLE IF EXISTS"` is scaffolded ([#211](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/211)).
 - A 5.x snapshot with an empty list of exclusion constraints on a type of a TPC hierarchy is read as holding none, where one scaffolded before 5.5.0 was refused as if it held constraints ([#171](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/171)).
 
 ## [11.0.0-preview.1] — 2026-11-17

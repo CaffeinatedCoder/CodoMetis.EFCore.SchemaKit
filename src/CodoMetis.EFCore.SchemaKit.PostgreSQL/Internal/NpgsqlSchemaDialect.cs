@@ -30,6 +30,19 @@ internal sealed class NpgsqlSchemaDialect(SchemaDialectDependencies dependencies
 
     protected override int Measure(string name) => Encoding.UTF8.GetByteCount(name);
 
+    // A collation or an operator class is shortened like any identifier: 64 bytes become 63 with
+    // a notice and no error, and the index takes the collation of the shortened name where
+    // there is one (issue 210). Held to the server's own limit and not to the model's: a model
+    // may state a shorter one for its own names, and PostgreSQL's names are not the model's.
+    public override SqlName Name(string name)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        if (Measure(name) is var length && length > DefaultMaxIdentifierLength)
+            throw new InvalidOperationException(PgStrings.NameTooLong(name, length, DefaultMaxIdentifierLength));
+
+        return base.Name(name);
+    }
+
     // A table without a schema, in a model without a default schema, is created where the
     // search_path's first schema is, which on a stock database is public. A search_path that
     // points elsewhere makes a database the model does not describe: its ToTable("x", "public")

@@ -117,6 +117,17 @@ public static class IndexModels
         }
     }
 
+    /// <summary>The grants with one more column and <see cref="Active" /> built concurrently: from <see cref="Models.Bare" />, a column added and then the index.</summary>
+    public sealed class ActiveConcurrentlyWithOneMoreColumn : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property<int?>("Seat");
+            grants.DeclarePostgres(_ => [Active with { Concurrently = true }]);
+        }
+    }
+
     public sealed class UnnamedConcurrently : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
@@ -349,6 +360,55 @@ public static class IndexModels
             grants.Ignore(x => x.RoleId);
             grants.DeclarePostgres(_ =>
                 [new PgIndex.BTree([new BTreeKey(new KeyTarget.Template(SqlTemplate.Raw("""upper("Note")""")))]) { Name = "ix_by_hand" }]);
+        }
+    }
+
+    private static PgIndex.BTree ByHand(string sql) => new([new BTreeKey(new KeyTarget.Template(SqlTemplate.Raw(sql)))]) { Name = "ix_by_hand" };
+
+    /// <summary><see cref="ByHandWrittenSql" />, and EF Core renames the column the SQL reads. The SQL still says the old name.</summary>
+    public sealed class ByHandWrittenSqlWithTheNoteRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasColumnName("memo");
+            grants.DeclarePostgres(_ => [ByHand("""upper("Note")""")]);
+        }
+    }
+
+    /// <summary>The same rename, with the SQL written for the new name.</summary>
+    public sealed class ByHandWrittenSqlForTheMemo : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.Note).HasColumnName("memo");
+            grants.DeclarePostgres(_ => [ByHand("upper(memo)")]);
+        }
+    }
+
+    /// <summary><see cref="ByHandWrittenSql" /> on a table EF Core renames.</summary>
+    public sealed class ByHandWrittenSqlOnARenamedTable : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<RoleGrant>().ToTable("grants").DeclarePostgres(_ => [ByHand("""upper("Note")""")]);
+    }
+
+    /// <summary><see cref="ByHandWrittenSql" /> on a table EF Core moves to another schema.</summary>
+    public sealed class ByHandWrittenSqlInASchema : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<RoleGrant>().ToTable("role_grants", "grants").DeclarePostgres(_ => [ByHand("""upper("Note")""")]);
+    }
+
+    /// <summary><see cref="ByHandWrittenSql" />, and EF Core renames a column the SQL does not read.</summary>
+    public sealed class ByHandWrittenSqlWithTheRoleRenamed : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var grants = Grants(modelBuilder);
+            grants.Property(x => x.RoleId).HasColumnName("role");
+            grants.DeclarePostgres(_ => [ByHand("""upper("Note")""")]);
         }
     }
 

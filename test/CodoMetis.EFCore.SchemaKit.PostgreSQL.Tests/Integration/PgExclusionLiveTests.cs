@@ -714,6 +714,28 @@ public sealed class PgExclusionLiveTests
     public void Dropping_an_element_column_beside_SQL_that_names_no_column() => AssertMigratesTo<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheGrantee>(
         (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
 
+    /// <summary>
+    /// A renamed column beside SQL written by hand (#209): rebuilt around the rename, the SQL
+    /// that still names the old column fails the migration (42703) and the constraint stays as
+    /// it was, and a rename the SQL does not read leaves the constraint the model declares.
+    /// </summary>
+    [TestMethod]
+    public void Renaming_a_column_beside_SQL_that_names_no_column()
+    {
+        AssertMigratesTo<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithTheRoleRenamedBesideSqlThatNamesNoColumn>(
+            (migrated, _) => Assert.AreEqual(1, migrated.Exclusions().Count));
+
+        using var database = new LiveDatabase();
+        database.Create<Models.WithTheGranteeBesideSqlThatNamesNoColumn>();
+        var before = database.Exclusions();
+
+        var refusal = Assert.ThrowsExactly<PostgresException>(
+            database.Migrate<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithTheNoteRenamedBesideSqlThatNamesNoColumn>);
+
+        Assert.AreEqual(PostgresErrorCodes.UndefinedColumn, refusal.SqlState);
+        CollectionAssert.AreEqual(before, database.Exclusions());
+    }
+
     /// <summary>The column that SQL reads, which only the server knows: the constraint is out of its way before the drop.</summary>
     [TestMethod]
     public void Dropping_a_column_that_SQL_which_names_no_column_reads() => AssertMigratesTo<Models.WithTheGranteeBesideSqlThatNamesNoColumn, Models.WithoutTheNote>(
