@@ -139,10 +139,11 @@ sound() { # path, database
   judge check "$(db "$2")" shop
   if [[ $code == 0 ]] && has "$log" \
       'CONSTRAINT public.bookings ex_bookings_room_period: EXCLUDE USING gist ("RoomId" WITH =, "Period" WITH &&) WHERE (("CancelledOn" IS NULL))' \
+      'INDEX public.bookings ix_bookings_cancelled: CREATE INDEX ix_bookings_cancelled ON public.bookings USING btree ("RoomId", "CancelledOn" DESC NULLS LAST) WHERE ("CancelledOn" IS NOT NULL)' \
       'EXTENSION: btree_gist' 'FIRST: accepted' 'OVERLAP: 23P01' 'CANCELLED-OVERLAP: accepted'; then
-    ok "$1" "the constraint is in pg_constraint; an overlapping row is refused (23P01), a cancelled one is not"
+    ok "$1" "the constraint and the index are in the catalog; an overlapping row is refused (23P01), a cancelled one is not"
   else
-    fail "$1" "the database does not hold or enforce the constraint"
+    fail "$1" "the database does not hold the constraint and the index, or does not enforce the constraint"
   fi
 }
 

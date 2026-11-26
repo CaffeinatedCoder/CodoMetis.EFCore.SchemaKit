@@ -630,12 +630,38 @@ what is still missing).
   column is one test in `PgExclusionLiveTests`: a row is added with its test. The index's
   contributor reads the same table under its own kind, with its own rows and its own tests
   (`PgIndexLiveTests`), and writes no answer of its own.
-- **`PgIndex` has one case so far, `PgIndex.BTree`** (#202, slice A of #27), made by `pg.BTree`
-  and `pg.Unique` from keys `pg.Key` makes. Its stored form is a file format: owner `Pg.Index`,
-  kind `btree`, `keys` (each a `column` or `sql`, `desc` always, `nulls` where it was said),
-  `unique` with `nullsDistinct`, `include` always, `where`. `PgIndexDeclarationTests` holds two
-  keys and three values verbatim. `nullsDistinct:` is a parameter of `pg.Unique` alone, and
-  `Uniqueness` holds it, so no index that is not unique can say it.
+- **`PgIndex` has a case per access method** (#202 and #204, slices A and B of #27): `BTree`,
+  `Hash`, `Gist`, `SpGist`, `Gin`, `Brin`, each with the options PostgreSQL has for it and no
+  other, and a factory method each. Its stored form is a file format: owner `Pg.Index`, the
+  kind is the method, `keys` or `key` (each a `column` or `sql`, then `collation` and `ops`
+  where stated; a B-tree key has `desc` always and `nulls` where it was said), `unique` with
+  `nullsDistinct`, `include` always where the method has it, each storage parameter where it
+  was given, `where`. `PgIndexDeclarationTests` holds two keys and ten values verbatim.
+  `nullsDistinct:` is a parameter of `pg.Unique` alone, and `Uniqueness` holds it, so no index
+  that is not unique can say it.
+- **A key is typed by its method** (`PgKeys.cs`). `pg.Key` makes a `PgKey<TValue>`, which
+  converts to each method's key; `Desc()`, `NullsFirst()` and `NullsLast()` make it a
+  `BTreeKey`, and `Ops(…)` the key of the class's method. `Collate` is an extension on
+  `PgKey<string>` and `PgKey<char>`. `PgIndexProbeTests` compiles the design's nine P1 probes
+  and `P3.collate-on-integer` against the shipped assembly, each beside a twin that compiles,
+  and eight more for the options one method has and another lacks.
+- **A storage parameter's bounds are the server's,** checked in `init`, and each is held against
+  the server at its ends (`A_storage_parameters_bounds_are_the_servers`). B-tree's
+  `fillfactor` is 10 to 100 like every other method's: the first cut said 50, from memory, and
+  the server took 49. A changed parameter is a rebuild (decided with #27).
+- **`PgOperatorClasses` refuses at the diff one of PostgreSQL's own classes on a column whose
+  store type does not take it,** and answers only where it knows both: a class an extension
+  brings and a type that is not on its list (a domain, an enum) are the server's to judge.
+  `The_table_of_operator_classes_agrees_with_the_server` asks the server about every pair of a
+  known class and a known type; it found that `bpchar_pattern_ops` takes `text`. A row is
+  added with the server's word, never from the documentation.
+- **The catalog does not say an operator class that is the default of the key's type,** so a
+  key that states one and a key that states none are one index there and two descriptors here:
+  the diff between them is a rebuild that was not needed, and no more. Unlike a key's order,
+  which class is a type's default is not known where the descriptor is made.
+- **A GiST index's key on a scalar column needs `btree_gist`,** by the exclusion constraint's
+  rule for a column, unless the key names a class. An expression's type is not known, and an
+  index has no operator to judge it by: the model declares the extension for one.
 - **An order PostgreSQL has anyway is not in the descriptor.** An ascending key has its nulls
   last and a descending one first, and the catalog says neither: `Desc().NullsFirst()` and
   `Desc()` are one index, and a diff between them is empty

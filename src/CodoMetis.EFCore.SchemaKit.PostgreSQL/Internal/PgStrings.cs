@@ -26,6 +26,23 @@ internal static class PgStrings
         => $"include: takes properties, and '{lambda}' is more than one: an index carries columns, not expressions. "
            + "An expression can be a key.";
 
+    public const string CollationNeedsAName = "A collation needs its name, such as 'C' or 'en-US-x-icu'.";
+
+    public const string OperatorClassNeedsAName = "An operator class needs its name, such as 'jsonb_path_ops'.";
+
+    public static string OutOfRange(string parameter, int low, int high)
+        => high == int.MaxValue
+            ? $"PostgreSQL takes {parameter} from {low} on."
+            : $"PostgreSQL takes {parameter} from {low} to {high}.";
+
+    public static string UnknownBuffering(string token)
+        => $"'{token}' is no buffering of a GiST index. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
+
+    public static string OperatorClassNotForType(string index, string opClass, string method, string path, string storeType)
+        => $"The index '{index}' gives its key '{path}' the operator class '{opClass}' of {method}, which PostgreSQL has for other types than "
+           + $"the column's, '{storeType}': the server would refuse the index when the migration is applied. Leave the class out for the "
+           + "default one of the column's type, or name one that takes the type.";
+
     public static string UnknownNullOrder(string token)
         => $"'{token}' is no place for the nulls of a key. The declaration was written by a newer version of CodoMetis.EFCore.SchemaKit.PostgreSQL.";
 

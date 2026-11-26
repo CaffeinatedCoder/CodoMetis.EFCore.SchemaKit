@@ -37,7 +37,12 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
     /// <inheritdoc />
     public string Kind => this switch
     {
-        BTree => "btree",
+        BTree  => "btree",
+        Hash   => "hash",
+        Gist   => "gist",
+        SpGist => "spgist",
+        Gin    => "gin",
+        Brin   => "brin",
     };
 
     /// <summary>
@@ -56,19 +61,61 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
     {
         ArgumentNullException.ThrowIfNull(writer);
 
-        _ = this switch
+        // Each case writes what it has, in one order. A parameter that was not given is left out,
+        // which is the one thing a writer may leave out: a null. A flag is always written.
+        switch (this)
         {
-            BTree btree => WriteBTree(btree),
-        };
-        writer.OptionalTemplate("where", Where?.Template);
+            case BTree index:
+                writer.Array("keys", index.Keys, static (key, value) =>
+                {
+                    WriteTarget(key, value.Target);
+                    key.Boolean("desc", value.Descending);
+                    key.OptionalString("nulls", value.Nulls switch
+                    {
+                        NullOrder.First => "first",
+                        NullOrder.Last  => "last",
+                        _               => null,
+                    });
+                    WriteClasses(key, value.Collation, value.OpClass?.Name);
+                });
+                writer.OptionalObject("unique", index.Unique, static (unique, value) => unique.Boolean("nullsDistinct", value.NullsDistinct));
+                writer.Strings("include", index.Include);
+                writer.OptionalInt32("fillFactor", index.FillFactor);
+                writer.OptionalBoolean("deduplicateItems", index.DeduplicateItems);
+                break;
 
-        bool WriteBTree(BTree btree)
-        {
-            writer.Array("keys", btree.Keys, WriteKey);
-            writer.OptionalObject("unique", btree.Unique, static (unique, value) => unique.Boolean("nullsDistinct", value.NullsDistinct));
-            writer.Strings("include", btree.Include);
-            return true;
+            case Hash index:
+                writer.Object("key", key => WriteKey(key, index.Key.Target, index.Key.Collation, index.Key.OpClass?.Name));
+                writer.OptionalInt32("fillFactor", index.FillFactor);
+                break;
+
+            case Gist index:
+                writer.Array("keys", index.Keys, static (key, value) => WriteKey(key, value.Target, value.Collation, value.OpClass?.Name));
+                writer.Strings("include", index.Include);
+                writer.OptionalInt32("fillFactor", index.FillFactor);
+                writer.OptionalString("buffering", index.Buffering?.Token);
+                break;
+
+            case SpGist index:
+                writer.Object("key", key => WriteKey(key, index.Key.Target, index.Key.Collation, index.Key.OpClass?.Name));
+                writer.Strings("include", index.Include);
+                writer.OptionalInt32("fillFactor", index.FillFactor);
+                break;
+
+            case Gin index:
+                writer.Array("keys", index.Keys, static (key, value) => WriteKey(key, value.Target, value.Collation, value.OpClass?.Name));
+                writer.OptionalBoolean("fastUpdate", index.FastUpdate);
+                writer.OptionalInt32("pendingListLimit", index.PendingListLimit);
+                break;
+
+            case Brin index:
+                writer.Array("keys", index.Keys, static (key, value) => WriteKey(key, value.Target, value.Collation, value.OpClass?.Name));
+                writer.OptionalInt32("pagesPerRange", index.PagesPerRange);
+                writer.OptionalBoolean("autosummarize", index.Autosummarize);
+                break;
         }
+
+        writer.OptionalTemplate("where", Where?.Template);
     }
 
     /// <inheritdoc />
@@ -79,10 +126,69 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
 
         PgIndex index = header.Kind switch
         {
-            "btree" => new BTree(reader.Array("keys", ReadKey))
+            "btree" => new BTree(reader.Array("keys", static key => new BTreeKey(ReadTarget(key))
+            {
+                Descending = key.Boolean("desc"),
+                Nulls = key.OptionalString("nulls") switch
+                {
+                    null      => null,
+                    "first"   => NullOrder.First,
+                    "last"    => NullOrder.Last,
+                    var token => throw new InvalidOperationException(PgStrings.UnknownNullOrder(token)),
+                },
+                Collation = key.OptionalString("collation"),
+                OpClass = key.OptionalString("ops") is { } ops ? new BTreeOpClass(ops) : null,
+            }))
             {
                 Unique = reader.OptionalObject("unique", static unique => new Uniqueness(unique.Boolean("nullsDistinct"))),
                 Include = reader.Strings("include"),
+                FillFactor = reader.OptionalInt32("fillFactor"),
+                DeduplicateItems = reader.OptionalBoolean("deduplicateItems"),
+            },
+            "hash" => new Hash(reader.Object("key", static key => new HashKey(ReadTarget(key))
+            {
+                Collation = key.OptionalString("collation"),
+                OpClass = key.OptionalString("ops") is { } ops ? new HashOpClass(ops) : null,
+            }))
+            {
+                FillFactor = reader.OptionalInt32("fillFactor"),
+            },
+            "gist" => new Gist(reader.Array("keys", static key => new GistKey(ReadTarget(key))
+            {
+                Collation = key.OptionalString("collation"),
+                OpClass = key.OptionalString("ops") is { } ops ? new GistOpClass(ops) : null,
+            }))
+            {
+                Include = reader.Strings("include"),
+                FillFactor = reader.OptionalInt32("fillFactor"),
+                Buffering = reader.OptionalString("buffering") is { } buffering ? GistBuffering.Parse(buffering) : null,
+            },
+            "spgist" => new SpGist(reader.Object("key", static key => new SpGistKey(ReadTarget(key))
+            {
+                Collation = key.OptionalString("collation"),
+                OpClass = key.OptionalString("ops") is { } ops ? new SpGistOpClass(ops) : null,
+            }))
+            {
+                Include = reader.Strings("include"),
+                FillFactor = reader.OptionalInt32("fillFactor"),
+            },
+            "gin" => new Gin(reader.Array("keys", static key => new GinKey(ReadTarget(key))
+            {
+                Collation = key.OptionalString("collation"),
+                OpClass = key.OptionalString("ops") is { } ops ? new GinOpClass(ops) : null,
+            }))
+            {
+                FastUpdate = reader.OptionalBoolean("fastUpdate"),
+                PendingListLimit = reader.OptionalInt32("pendingListLimit"),
+            },
+            "brin" => new Brin(reader.Array("keys", static key => new BrinKey(ReadTarget(key))
+            {
+                Collation = key.OptionalString("collation"),
+                OpClass = key.OptionalString("ops") is { } ops ? new BrinOpClass(ops) : null,
+            }))
+            {
+                PagesPerRange = reader.OptionalInt32("pagesPerRange"),
+                Autosummarize = reader.OptionalBoolean("autosummarize"),
             },
             var kind => throw new InvalidOperationException(PgStrings.UnknownKind(OwnerId, kind)),
         };
@@ -96,43 +202,34 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
     }
 
     // A key's target is written under the name of its case, and exactly one of the two is there,
-    // as for an element of an exclusion constraint. The direction is always written: left out when
-    // it is false, a reader would have to have a default, and a default is how a stored index
-    // comes out of a snapshot as another one.
-    private static void WriteKey(SchemaJsonWriter writer, BTreeKey key)
+    // as for an element of an exclusion constraint.
+    private static void WriteTarget(SchemaJsonWriter writer, KeyTarget target)
     {
-        writer.OptionalString("column", (key.Target as KeyTarget.Column)?.Path);
-        writer.OptionalTemplate("sql", (key.Target as KeyTarget.Template)?.Sql);
-        writer.Boolean("desc", key.Descending);
-        writer.OptionalString("nulls", key.Nulls switch
-        {
-            NullOrder.First => "first",
-            NullOrder.Last  => "last",
-            _               => null,
-        });
+        writer.OptionalString("column", (target as KeyTarget.Column)?.Path);
+        writer.OptionalTemplate("sql", (target as KeyTarget.Template)?.Sql);
     }
 
-    private static BTreeKey ReadKey(SchemaJsonReader reader)
+    private static void WriteClasses(SchemaJsonWriter writer, string? collation, string? opClass)
+    {
+        writer.OptionalString("collation", collation);
+        writer.OptionalString("ops", opClass);
+    }
+
+    private static void WriteKey(SchemaJsonWriter writer, KeyTarget target, string? collation, string? opClass)
+    {
+        WriteTarget(writer, target);
+        WriteClasses(writer, collation, opClass);
+    }
+
+    private static KeyTarget ReadTarget(SchemaJsonReader reader)
     {
         var column = reader.OptionalString("column");
         var sql = reader.OptionalTemplate("sql");
-        KeyTarget target = (column, sql) switch
+        return (column, sql) switch
         {
             ({ } path, null)     => new KeyTarget.Column(path),
             (null, { } template) => new KeyTarget.Template(template),
             _                    => throw new InvalidOperationException(PgStrings.KeyNeedsOneTarget),
-        };
-
-        return new BTreeKey(target)
-        {
-            Descending = reader.Boolean("desc"),
-            Nulls = reader.OptionalString("nulls") switch
-            {
-                null    => null,
-                "first" => NullOrder.First,
-                "last"  => NullOrder.Last,
-                var token => throw new InvalidOperationException(PgStrings.UnknownNullOrder(token)),
-            },
         };
     }
 
@@ -149,6 +246,12 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
         ArgumentNullException.ThrowIfNull(paths, name);
         return paths.All(path => !string.IsNullOrWhiteSpace(path)) ? paths : throw new ArgumentException(PgStrings.IncludeNeedsAPath, name);
     }
+
+    // The bounds are PostgreSQL's own, the same on 16 and 18 (PgIndexLiveTests holds each against
+    // the server). A value outside them fails when the migration is applied; here it fails where
+    // it is written.
+    private static int? Within(int? value, int low, int high, string name)
+        => value is null || (value >= low && value <= high) ? value : throw new ArgumentOutOfRangeException(name, value, PgStrings.OutOfRange(name, low, high));
 
     /// <summary>
     /// A B-tree index, PostgreSQL's default: the one access method with an order, and the only
@@ -179,6 +282,134 @@ public closed record PgIndex : IPostgresObject, ISchemaDeclaration<PgIndex>
             get;
             init => field = RequirePaths(value, nameof(Include));
         } = [];
+
+        /// <summary><c>fillfactor</c>, 10 to 100, or null for PostgreSQL's own.</summary>
+        public int? FillFactor
+        {
+            get;
+            init => field = Within(value, 10, 100, nameof(FillFactor));
+        }
+
+        /// <summary><c>deduplicate_items</c>, or null for PostgreSQL's own.</summary>
+        public bool? DeduplicateItems { get; init; }
+    }
+
+    /// <summary>A hash index: one key, for equality alone. It has no order, cannot be unique and carries no other column.</summary>
+    /// <param name="Key">The key.</param>
+    public sealed record Hash(HashKey Key) : PgIndex
+    {
+        /// <summary>The key.</summary>
+        public HashKey Key
+        {
+            get;
+            init => field = value ?? throw new ArgumentNullException(nameof(value));
+        } = Key ?? throw new ArgumentNullException(nameof(Key));
+
+        /// <summary><c>fillfactor</c>, 10 to 100, or null for PostgreSQL's own.</summary>
+        public int? FillFactor
+        {
+            get;
+            init => field = Within(value, 10, 100, nameof(FillFactor));
+        }
+    }
+
+    /// <summary>A GiST index: several keys, and columns it carries. It has no order and cannot be unique.</summary>
+    /// <param name="Keys">The keys, in their order. At least one.</param>
+    public sealed record Gist(ValueList<GistKey> Keys) : PgIndex
+    {
+        /// <summary>The keys, in their order. At least one.</summary>
+        public ValueList<GistKey> Keys
+        {
+            get;
+            init => field = RequireKeys(value, nameof(Keys));
+        } = RequireKeys(Keys, nameof(Keys));
+
+        /// <inheritdoc cref="BTree.Include" />
+        public ValueList<string> Include
+        {
+            get;
+            init => field = RequirePaths(value, nameof(Include));
+        } = [];
+
+        /// <summary><c>fillfactor</c>, 10 to 100, or null for PostgreSQL's own.</summary>
+        public int? FillFactor
+        {
+            get;
+            init => field = Within(value, 10, 100, nameof(FillFactor));
+        }
+
+        /// <summary><c>buffering</c>, or null for PostgreSQL's own.</summary>
+        public GistBuffering? Buffering { get; init; }
+    }
+
+    /// <summary>An SP-GiST index: one key, and columns it carries.</summary>
+    /// <param name="Key">The key.</param>
+    public sealed record SpGist(SpGistKey Key) : PgIndex
+    {
+        /// <summary>The key.</summary>
+        public SpGistKey Key
+        {
+            get;
+            init => field = value ?? throw new ArgumentNullException(nameof(value));
+        } = Key ?? throw new ArgumentNullException(nameof(Key));
+
+        /// <inheritdoc cref="BTree.Include" />
+        public ValueList<string> Include
+        {
+            get;
+            init => field = RequirePaths(value, nameof(Include));
+        } = [];
+
+        /// <summary><c>fillfactor</c>, 10 to 100, or null for PostgreSQL's own.</summary>
+        public int? FillFactor
+        {
+            get;
+            init => field = Within(value, 10, 100, nameof(FillFactor));
+        }
+    }
+
+    /// <summary>A GIN index: several keys. It has no order, cannot be unique and carries no other column.</summary>
+    /// <param name="Keys">The keys, in their order. At least one.</param>
+    public sealed record Gin(ValueList<GinKey> Keys) : PgIndex
+    {
+        /// <summary>The keys, in their order. At least one.</summary>
+        public ValueList<GinKey> Keys
+        {
+            get;
+            init => field = RequireKeys(value, nameof(Keys));
+        } = RequireKeys(Keys, nameof(Keys));
+
+        /// <summary><c>fastupdate</c>, or null for PostgreSQL's own.</summary>
+        public bool? FastUpdate { get; init; }
+
+        /// <summary><c>gin_pending_list_limit</c> in kilobytes, 64 or more, or null for the server's setting.</summary>
+        public int? PendingListLimit
+        {
+            get;
+            init => field = Within(value, 64, int.MaxValue, nameof(PendingListLimit));
+        }
+    }
+
+    /// <summary>A BRIN index: several keys. It has no order, cannot be unique and carries no other column.</summary>
+    /// <param name="Keys">The keys, in their order. At least one.</param>
+    public sealed record Brin(ValueList<BrinKey> Keys) : PgIndex
+    {
+        /// <summary>The keys, in their order. At least one.</summary>
+        public ValueList<BrinKey> Keys
+        {
+            get;
+            init => field = RequireKeys(value, nameof(Keys));
+        } = RequireKeys(Keys, nameof(Keys));
+
+        /// <summary><c>pages_per_range</c>, 1 to 131072, or null for PostgreSQL's own.</summary>
+        public int? PagesPerRange
+        {
+            get;
+            init => field = Within(value, 1, 131072, nameof(PagesPerRange));
+        }
+
+        /// <summary><c>autosummarize</c>, or null for PostgreSQL's own.</summary>
+        public bool? Autosummarize { get; init; }
     }
 }
 
@@ -199,63 +430,40 @@ public enum NullOrder
     Last,
 }
 
-/// <summary>A key of a B-tree index: what is indexed, and in which order.</summary>
-/// <param name="Target">A column or an expression.</param>
-public sealed record BTreeKey(KeyTarget Target)
+/// <summary>How a GiST index is built: PostgreSQL's <c>buffering</c> parameter.</summary>
+public closed record GistBuffering
 {
-    /// <summary>A column or an expression.</summary>
-    public KeyTarget Target
+    private sealed record OnCase : GistBuffering;
+
+    private sealed record OffCase : GistBuffering;
+
+    private sealed record AutoCase : GistBuffering;
+
+    /// <summary><c>buffering = on</c></summary>
+    public static GistBuffering On { get; } = new OnCase();
+
+    /// <summary><c>buffering = off</c></summary>
+    public static GistBuffering Off { get; } = new OffCase();
+
+    /// <summary><c>buffering = auto</c>, which is PostgreSQL's own.</summary>
+    public static GistBuffering Auto { get; } = new AutoCase();
+
+    /// <summary>How the case is stored, and written into the statement. In consumers' snapshots: a file format.</summary>
+    internal string Token => this switch
     {
-        get;
-        init => field = value ?? throw new ArgumentNullException(nameof(value));
-    } = Target ?? throw new ArgumentNullException(nameof(Target));
+        OnCase   => "on",
+        OffCase  => "off",
+        AutoCase => "auto",
+    };
 
-    /// <summary>Whether the key is in descending order.</summary>
-    public bool Descending { get; init; }
-
-    /// <summary>Where nulls are put, or null for where the direction puts them.</summary>
-    public NullOrder? Nulls
+    internal static GistBuffering Parse(string token) => token switch
     {
-        get;
-        init => field = value is null || Enum.IsDefined(value.Value) ? value : throw new ArgumentOutOfRangeException(nameof(value));
-    }
+        "on"   => On,
+        "off"  => Off,
+        "auto" => Auto,
+        _      => throw new InvalidOperationException(PgStrings.UnknownBuffering(token)),
+    };
 
-    /// <summary>The same key in descending order.</summary>
-    public BTreeKey Desc() => this with { Descending = true };
-
-    /// <summary>The same key with nulls before every other value.</summary>
-    public BTreeKey NullsFirst() => this with { Nulls = NullOrder.First };
-
-    /// <summary>The same key with nulls after every other value.</summary>
-    public BTreeKey NullsLast() => this with { Nulls = NullOrder.Last };
-}
-
-/// <summary>
-/// A key as <see cref="PgSchema{TEntity}.Key" /> makes it: what is indexed, with the type of its
-/// values, before anything says which access method it is for. An order makes it a B-tree key.
-/// </summary>
-/// <typeparam name="TValue">The type of the key's values.</typeparam>
-public sealed class PgKey<TValue>
-{
-    internal PgKey(KeyTarget target) => Target = target;
-
-    /// <summary>A column or an expression.</summary>
-    public KeyTarget Target { get; }
-
-    /// <summary>A B-tree key in descending order. No other access method has an order.</summary>
-    public BTreeKey Desc() => new BTreeKey(Target).Desc();
-
-    /// <summary>A B-tree key with nulls before every other value.</summary>
-    public BTreeKey NullsFirst() => new BTreeKey(Target).NullsFirst();
-
-    /// <summary>A B-tree key with nulls after every other value.</summary>
-    public BTreeKey NullsLast() => new BTreeKey(Target).NullsLast();
-
-    /// <summary>The key as a B-tree key, ascending.</summary>
-    /// <param name="key">The key.</param>
-    public static implicit operator BTreeKey(PgKey<TValue> key)
-    {
-        ArgumentNullException.ThrowIfNull(key);
-        return new BTreeKey(key.Target);
-    }
+    /// <summary>The case's name, for messages.</summary>
+    public sealed override string ToString() => Token;
 }

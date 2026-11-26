@@ -73,6 +73,15 @@ public sealed partial class DocumentationSampleTests
             public string? Note { get; set; }
         }
 
+        public sealed class Document
+        {
+            public int Id { get; set; }
+            public string Title { get; set; } = "";
+            public int Rank { get; set; }
+            public string[] Tags { get; set; } = [];
+            public NpgsqlRange<DateOnly> Period { get; set; }
+        }
+
         public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options);
 
         public sealed class Booking

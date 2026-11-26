@@ -33,29 +33,39 @@ public readonly struct PgSchema<TEntity>
     /// <param name="key">A property, or an expression over the entity.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="deduplicateItems"><c>deduplicate_items</c>; PostgreSQL's own when null.</param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.BTree BTree<TValue>(
         Expression<Func<TEntity, TValue>> key,
         Expression<Func<TEntity, bool>>? where = null,
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        int? fillFactor = null,
+        bool? deduplicateItems = null,
         string? name = null)
-        => BTree([Key(key)], where, include, name);
+        => BTree([Key(key)], where, include, fillFactor, deduplicateItems, name);
 
     /// <summary>A B-tree index on several keys, or on keys with an order.</summary>
     /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…).Desc()]</c>.</param>
     /// <param name="where">The rows the index covers; all of them when null.</param>
     /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="deduplicateItems"><c>deduplicate_items</c>; PostgreSQL's own when null.</param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.BTree BTree(
         ValueList<BTreeKey> keys,
         Expression<Func<TEntity, bool>>? where = null,
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        int? fillFactor = null,
+        bool? deduplicateItems = null,
         string? name = null)
         => new(keys)
         {
-            Where = where is null ? null : Predicate.Of(where, PgSchema.Spelling),
+            Where = Indexes.Condition(where),
             Include = Indexes.Paths(include),
+            FillFactor = fillFactor,
+            DeduplicateItems = deduplicateItems,
             Name = name,
         };
 
@@ -70,6 +80,7 @@ public readonly struct PgSchema<TEntity>
     /// Whether two rows with a null in the key are two keys, which is PostgreSQL's default. With
     /// false the second of them is refused (<c>NULLS NOT DISTINCT</c>).
     /// </param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     /// <typeparam name="TValue">The type of the key's values.</typeparam>
     public PgIndex.BTree Unique<TValue>(
@@ -77,8 +88,9 @@ public readonly struct PgSchema<TEntity>
         Expression<Func<TEntity, bool>>? where = null,
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         bool nullsDistinct = true,
+        int? fillFactor = null,
         string? name = null)
-        => Unique([Key(key)], where, include, nullsDistinct, name);
+        => Unique([Key(key)], where, include, nullsDistinct, fillFactor, name);
 
     /// <summary>A unique index on several keys: no two rows it covers agree in all of them.</summary>
     /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…)]</c>.</param>
@@ -88,14 +100,176 @@ public readonly struct PgSchema<TEntity>
     /// Whether two rows with a null in a key are two keys, which is PostgreSQL's default. With
     /// false the second of them is refused (<c>NULLS NOT DISTINCT</c>).
     /// </param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
     /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
     public PgIndex.BTree Unique(
         ValueList<BTreeKey> keys,
         Expression<Func<TEntity, bool>>? where = null,
         IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
         bool nullsDistinct = true,
+        int? fillFactor = null,
         string? name = null)
-        => BTree(keys, where, include, name) with { Unique = new Uniqueness(nullsDistinct) };
+        => BTree(keys, where, include, fillFactor, name: name) with { Unique = new Uniqueness(nullsDistinct) };
+
+    /// <summary>A hash index: for equality on one key, and nothing else.</summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.Hash Hash<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        Expression<Func<TEntity, bool>>? where = null,
+        int? fillFactor = null,
+        string? name = null)
+        => Hash(Key(key), where, fillFactor, name);
+
+    /// <summary>A hash index on a key with an operator class or a collation.</summary>
+    /// <param name="key">The key, as <c>pg.Key(…)</c> makes it.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.Hash Hash(
+        HashKey key,
+        Expression<Func<TEntity, bool>>? where = null,
+        int? fillFactor = null,
+        string? name = null)
+        => new(key) { Where = Indexes.Condition(where), FillFactor = fillFactor, Name = name };
+
+    /// <summary>A GiST index on one key.</summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="buffering"><c>buffering</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.Gist Gist<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        int? fillFactor = null,
+        GistBuffering? buffering = null,
+        string? name = null)
+        => Gist([Key(key)], where, include, fillFactor, buffering, name);
+
+    /// <summary>A GiST index on several keys, or on keys with an operator class.</summary>
+    /// <remarks>
+    /// A key on a scalar column needs the <c>btree_gist</c> extension, as an element of an
+    /// exclusion constraint does: the migration installs it, unless the key names an operator
+    /// class, the model declares the extension or calls
+    /// <see cref="PostgresDeclarationExtensions.SuppressBtreeGistInjection" />.
+    /// </remarks>
+    /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…)]</c>.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="buffering"><c>buffering</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.Gist Gist(
+        ValueList<GistKey> keys,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        int? fillFactor = null,
+        GistBuffering? buffering = null,
+        string? name = null)
+        => new(keys)
+        {
+            Where = Indexes.Condition(where),
+            Include = Indexes.Paths(include),
+            FillFactor = fillFactor,
+            Buffering = buffering,
+            Name = name,
+        };
+
+    /// <summary>An SP-GiST index, which has one key.</summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.SpGist SpGist<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        int? fillFactor = null,
+        string? name = null)
+        => SpGist(Key(key), where, include, fillFactor, name);
+
+    /// <summary>An SP-GiST index on a key with an operator class.</summary>
+    /// <param name="key">The key, as <c>pg.Key(…)</c> makes it.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="include">Properties whose columns the index carries without their being keys.</param>
+    /// <param name="fillFactor"><c>fillfactor</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.SpGist SpGist(
+        SpGistKey key,
+        Expression<Func<TEntity, bool>>? where = null,
+        IEnumerable<Expression<Func<TEntity, object?>>>? include = null,
+        int? fillFactor = null,
+        string? name = null)
+        => new(key) { Where = Indexes.Condition(where), Include = Indexes.Paths(include), FillFactor = fillFactor, Name = name };
+
+    /// <summary>A GIN index on one key: an array, a <c>jsonb</c> document, a <c>tsvector</c>.</summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="ops">The operator class, such as <see cref="GinOpClass.JsonbPathOps" />; the default of the key's type when null.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="fastUpdate"><c>fastupdate</c>; PostgreSQL's own when null.</param>
+    /// <param name="pendingListLimit"><c>gin_pending_list_limit</c> in kilobytes; the server's setting when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.Gin Gin<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        GinOpClass? ops = null,
+        Expression<Func<TEntity, bool>>? where = null,
+        bool? fastUpdate = null,
+        int? pendingListLimit = null,
+        string? name = null)
+        => Gin([ops is null ? Key(key) : Key(key).Ops(ops)], where, fastUpdate, pendingListLimit, name);
+
+    /// <summary>A GIN index on several keys.</summary>
+    /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…).Ops(…)]</c>.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="fastUpdate"><c>fastupdate</c>; PostgreSQL's own when null.</param>
+    /// <param name="pendingListLimit"><c>gin_pending_list_limit</c> in kilobytes; the server's setting when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.Gin Gin(
+        ValueList<GinKey> keys,
+        Expression<Func<TEntity, bool>>? where = null,
+        bool? fastUpdate = null,
+        int? pendingListLimit = null,
+        string? name = null)
+        => new(keys) { Where = Indexes.Condition(where), FastUpdate = fastUpdate, PendingListLimit = pendingListLimit, Name = name };
+
+    /// <summary>A BRIN index on one key: for a large table whose rows are stored in the key's order, more or less.</summary>
+    /// <param name="key">A property, or an expression over the entity.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="pagesPerRange"><c>pages_per_range</c>; PostgreSQL's own when null.</param>
+    /// <param name="autosummarize"><c>autosummarize</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    /// <typeparam name="TValue">The type of the key's values.</typeparam>
+    public PgIndex.Brin Brin<TValue>(
+        Expression<Func<TEntity, TValue>> key,
+        Expression<Func<TEntity, bool>>? where = null,
+        int? pagesPerRange = null,
+        bool? autosummarize = null,
+        string? name = null)
+        => Brin([Key(key)], where, pagesPerRange, autosummarize, name);
+
+    /// <summary>A BRIN index on several keys.</summary>
+    /// <param name="keys">The keys in their order, as <c>[pg.Key(…), pg.Key(…)]</c>.</param>
+    /// <param name="where">The rows the index covers; all of them when null.</param>
+    /// <param name="pagesPerRange"><c>pages_per_range</c>; PostgreSQL's own when null.</param>
+    /// <param name="autosummarize"><c>autosummarize</c>; PostgreSQL's own when null.</param>
+    /// <param name="name">The index's name; <c>IX_{table}_{keys}</c> when null.</param>
+    public PgIndex.Brin Brin(
+        ValueList<BrinKey> keys,
+        Expression<Func<TEntity, bool>>? where = null,
+        int? pagesPerRange = null,
+        bool? autosummarize = null,
+        string? name = null)
+        => new(keys) { Where = Indexes.Condition(where), PagesPerRange = pagesPerRange, Autosummarize = autosummarize, Name = name };
 
     /// <summary>
     /// Starts the elements of an exclusion constraint with one compared by <c>=</c>. What it
@@ -301,6 +475,9 @@ public sealed class ExclusionElements<TEntity>
 
 internal static class Indexes
 {
+    public static Predicate? Condition<TEntity>(Expression<Func<TEntity, bool>>? where)
+        => where is null ? null : Predicate.Of(where, PgSchema.Spelling);
+
     /// <summary>
     /// The paths of the properties a list of lambdas names. A lambda over <c>object</c> boxes a
     /// value type, which the translator takes off as it does every conversion that keeps the

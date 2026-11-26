@@ -1,7 +1,22 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using NpgsqlTypes;
 
 namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Harness;
+
+/// <summary>A document, with a column for each kind of value an access method other than B-tree is for.</summary>
+public sealed class Document
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = "";
+    public int Rank { get; set; }
+    public string[] Tags { get; set; } = [];
+
+    /// <summary>A <c>jsonb</c> column, held as its text.</summary>
+    public string Payload { get; set; } = "{}";
+
+    public NpgsqlRange<DateOnly> Period { get; set; }
+}
 
 /// <summary>The models of the index tests: the grants of <see cref="Models" />, with indexes declared on them.</summary>
 public static class IndexModels
@@ -375,5 +390,96 @@ public static class IndexModels
             ReservationsInTablesOfTheirOwn(modelBuilder);
             modelBuilder.Entity<Reservation>().DeclarePostgres(pg => [pg.Unique(x => x.RoomId)]);
         }
+    }
+
+    // ── The other access methods ──
+
+    private static readonly PgSchema<Document> Docs = PgSchema.For<Document>();
+
+    private static EntityTypeBuilder<Document> Documents(ModelBuilder modelBuilder)
+    {
+        var documents = modelBuilder.Entity<Document>().ToTable("documents");
+        documents.Property(x => x.Payload).HasColumnType("jsonb");
+        return documents;
+    }
+
+    public sealed class DocumentsBare : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder);
+    }
+
+    /// <summary>One index of each access method, each with every option its method has.</summary>
+    public sealed class EveryMethod : ITestModel
+    {
+        public static readonly PgIndex[] Declared =
+        [
+            Docs.Hash(x => x.Title, fillFactor: 80, name: "ix_doc_title_hash"),
+            Docs.Gin(x => x.Payload, GinOpClass.JsonbPathOps, fastUpdate: false, pendingListLimit: 128, name: "ix_doc_payload"),
+            Docs.Gin([Docs.Key(x => x.Tags)], name: "ix_doc_tags"),
+            Docs.Gist([Docs.Key(x => x.Rank), Docs.Key(x => x.Period)], include: [x => x.Title], fillFactor: 90, buffering: GistBuffering.Off, name: "ix_doc_rank_period"),
+            Docs.SpGist(Docs.Key(x => x.Title).Ops(SpGistOpClass.TextOps), include: [x => x.Rank], fillFactor: 70, name: "ix_doc_title_sp"),
+            Docs.Brin([Docs.Key(x => x.Rank)], where: x => x.Rank > 0, pagesPerRange: 16, autosummarize: true, name: "ix_doc_rank_brin"),
+            Docs.BTree([Docs.Key(x => x.Title.ToLower()).Collate("C").Ops(BTreeOpClass.TextPatternOps).Desc()], fillFactor: 70, deduplicateItems: false, name: "ix_doc_title"),
+        ];
+
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(_ => Declared);
+    }
+
+    /// <summary><see cref="EveryMethod" /> with one thing about each index changed, under its name.</summary>
+    public sealed class EveryMethodChanged : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(pg =>
+        [
+            pg.Hash(x => x.Title, fillFactor: 60, name: "ix_doc_title_hash"),
+            pg.Gin(x => x.Payload, GinOpClass.JsonbOps, fastUpdate: false, pendingListLimit: 128, name: "ix_doc_payload"),
+            pg.BTree([pg.Key(x => x.Tags)], name: "ix_doc_tags"),
+            pg.Gist([pg.Key(x => x.Rank), pg.Key(x => x.Period)], include: [x => x.Title], fillFactor: 90, buffering: GistBuffering.On, name: "ix_doc_rank_period"),
+            pg.SpGist(pg.Key(x => x.Title), include: [x => x.Rank], fillFactor: 70, name: "ix_doc_title_sp"),
+            pg.Brin([pg.Key(x => x.Rank)], where: x => x.Rank > 0, pagesPerRange: 16, autosummarize: false, name: "ix_doc_rank_brin"),
+            pg.BTree([pg.Key(x => x.Title.ToLower()).Collate("POSIX").Ops(BTreeOpClass.TextPatternOps).Desc()], fillFactor: 70, deduplicateItems: false, name: "ix_doc_title"),
+        ]);
+    }
+
+    /// <summary>The range alone under GiST: its type has an operator class without any extension.</summary>
+    public sealed class GistOnTheRangeAlone : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(pg => [pg.Gist(x => x.Period, name: "ix_doc_period")]);
+    }
+
+    /// <summary>A class of GIN's for documents on a column of arrays: PostgreSQL has no index for the pair.</summary>
+    public sealed class ADocumentsClassOnAnArray : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(pg => [pg.Gin(x => x.Tags, GinOpClass.JsonbPathOps, name: "ix_doc_tags")]);
+    }
+
+    /// <summary>A class this package does not know, which an extension may bring: the server's to judge.</summary>
+    public sealed class AClassOfAnExtension : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(pg => [pg.Gin(x => x.Title, new GinOpClass("gin_trgm_ops"), name: "ix_doc_title_trgm")]);
+    }
+
+    /// <summary>A class and a collation on a key of each method that <see cref="EveryMethod" /> gives none.</summary>
+    public sealed class KeysWithClasses : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(pg =>
+        [
+            pg.Hash(pg.Key(x => x.Title).Collate("C").Ops(new HashOpClass("text_ops")), name: "ix_doc_title_hash"),
+            pg.Brin([pg.Key(x => x.Rank).Ops(new BrinOpClass("int4_minmax_multi_ops")), pg.Key(x => x.Title).Collate("C")], name: "ix_doc_rank_brin"),
+            pg.Gist([pg.Key(x => x.Period).Ops(GistOpClass.RangeOps)], name: "ix_doc_period"),
+            pg.Gin([pg.Key(x => x.Tags).Ops(GinOpClass.ArrayOps)], name: "ix_doc_tags"),
+        ]);
+    }
+
+    /// <summary>The README's sample of the other access methods, as it stands there.</summary>
+    public sealed class AsInTheReadme : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder) => Documents(modelBuilder).DeclarePostgres(pg =>
+        [
+            pg.Gin(x => x.Tags, name: "ix_doc_tags"),
+            pg.Gist([pg.Key(x => x.Rank), pg.Key(x => x.Period)], include: [x => x.Title], name: "ix_doc_rank_period"),
+            pg.Hash(x => x.Title, fillFactor: 80, name: "ix_doc_title_hash"),
+            pg.Brin(x => x.Rank, pagesPerRange: 16, name: "ix_doc_rank_brin"),
+            pg.BTree([pg.Key(x => x.Title).Collate("C").Ops(BTreeOpClass.TextPatternOps)], name: "ix_doc_title"),
+        ]);
     }
 }

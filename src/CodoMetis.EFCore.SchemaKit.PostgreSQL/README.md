@@ -2,8 +2,8 @@
 
 Schema objects of PostgreSQL that EF Core 11 and Npgsql 11 have no API for, declared in the model
 and carried by every migration path: `migrations add`, `EnsureCreated()`, `GenerateCreateScript()`
-and the pending-changes check. In this preview: exclusion constraints, and B-tree and unique
-indexes with expressions as keys, on PostgreSQL 16 and 18.
+and the pending-changes check. In this preview: exclusion constraints, and indexes of every
+access method with expressions as keys, on PostgreSQL 16 and 18.
 
 ```csharp
 services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString, o => o.UseSchemaKit()));
@@ -34,6 +34,9 @@ modelBuilder.Entity<RoleGrant>().DeclarePostgres(pg =>
     pg.BTree([pg.Key(x => x.Note!.ToLower()), pg.Key(x => x.RevokedOn).Desc().NullsLast()]),
 ]);
 ```
+
+`pg.Hash`, `pg.Gist`, `pg.SpGist`, `pg.Gin` and `pg.Brin` declare the other access methods, each
+with the options PostgreSQL has for it.
 
 The package depends on
 [CodoMetis.EFCore.SchemaKit](https://www.nuget.org/packages/CodoMetis.EFCore.SchemaKit) at exactly

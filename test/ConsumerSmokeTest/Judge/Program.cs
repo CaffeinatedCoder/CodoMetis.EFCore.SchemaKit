@@ -141,6 +141,23 @@ static void Constraints(NpgsqlConnection connection)
         if (!any) Console.WriteLine("CONSTRAINTS: none");
     }
 
+    // Every index that is neither a primary key nor a constraint's own, as the catalog states it.
+    using (var command = new NpgsqlCommand(
+        """
+        SELECT n.nspname || '.' || t.relname, c.relname, pg_get_indexdef(i.indexrelid)
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE NOT i.indisprimary
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = i.indexrelid)
+        ORDER BY 1, 2
+        """, connection))
+    using (var reader = command.ExecuteReader())
+        while (reader.Read())
+            Console.WriteLine($"INDEX {reader.GetString(0)} {reader.GetString(1)}: {reader.GetString(2)}");
+
     using var extension = new NpgsqlCommand("SELECT count(*) FROM pg_extension WHERE extname = 'btree_gist'", connection);
     Console.WriteLine((long)extension.ExecuteScalar()! == 1 ? "EXTENSION: btree_gist" : "EXTENSION: none");
 }
