@@ -275,6 +275,34 @@ public sealed class PgJsonMemberTests
         CollectionAssert.Contains(Created<JsonModels.AMemberNamedNullAtTheTop>(), "CREATE UNIQUE INDEX ix_nick ON people ((prefs ->> 'null'));");
     }
 
+    /// <summary>
+    /// A document is in the table it is mapped to. On a split entity a member had a column in
+    /// every table, so an index that also read the second table's column landed there, where the
+    /// document is not, and failed at apply (#243). It reads a column of each table, and is refused
+    /// as such a declaration is (#191). Alone it is in the first table, on the model and on its
+    /// snapshot.
+    /// </summary>
+    [TestMethod]
+    public void A_member_on_a_split_entity_is_in_the_table_of_its_document()
+    {
+        CollectionAssert.AreEqual(
+            new[] { "CREATE UNIQUE INDEX ux_nick ON subscribers ((prefs ->> 'Nick'));" },
+            Contexts.Diff<JsonModels.SubscribersBare, JsonModels.AMemberOfTheFirstTable>().Sql());
+
+        using (var context = Contexts.Of<JsonModels.AMemberOfTheFirstTable>())
+        {
+            var differ = context.GetService<IMigrationsModelDiffer>();
+            StringAssert.Contains(differ.GetDifferences(null, Snapshot(context)).OfType<SqlOperation>().Single().Sql, "ux_nick ON subscribers ", "its snapshot");
+        }
+
+        foreach (var refused in new[]
+                 {
+                     Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<JsonModels.SubscribersBare, JsonModels.AMemberIncludingAColumnOfTheSecond>()),
+                     Assert.ThrowsExactly<InvalidOperationException>(() => Contexts.Diff<JsonModels.SubscribersBare, JsonModels.AMemberUnderAConditionOnTheSecond>()),
+                 })
+            StringAssert.Contains(refused.Message, "Subscriber is split over the tables subscribers, subscriber_details. No one of them has a column for everything");
+    }
+
     [TestMethod]
     public void A_path_through_a_collection_is_refused()
         => StringAssert.Contains(Refused<JsonModels.ThroughACollection>(), "goes through 'Items', which is a collection");

@@ -438,6 +438,10 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   are in more than one. More than one table: the declaration reads the key's columns alone, and
   is in the first; with SQL written by hand it is refused, since nothing says which table the
   SQL means.
+- **A member of a JSON document is in the tables its document is mapped to** (#243,
+  `GetMappedStoreObjects`): asked of the container column alone, a member had a column in
+  every table of a split entity, and an index that also read the second table landed there
+  (`A_member_on_a_split_entity_is_in_the_table_of_its_document`).
 - **A derived type with a table of its own that reads an inherited column is refused with the
   base type named** (#191). The column is in the base type's table; the refusal was there
   before, as a path without a column.
@@ -539,6 +543,9 @@ what is still missing: `[SchemaFunction]`).
 - **An order comparison on what a converter stores as text is refused at finalization,** and so
   is a value the mapping refuses, with the property named. A converter between numbers, or from
   an enum to its number, keeps the order (Npgsql stores an `sbyte` that way).
+- **Two properties ordered by each other are asked the same,** each one that is a property
+  path (#242): `x.A > x.B` over two ints stored as text compared `'10'` with `'2'`. An operand
+  that is an expression over such a property is not asked.
 - **A boolean stored as something else is compared with what true is stored as,** and a negation
   with what false is stored as, not wrapped in `NOT`: that is how EF Core writes both.
 - **`SchemaKitBindingCheckConvention` binds a second time, first on the finalized model,** and
