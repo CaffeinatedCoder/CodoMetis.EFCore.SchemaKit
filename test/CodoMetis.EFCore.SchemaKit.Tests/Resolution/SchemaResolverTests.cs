@@ -215,7 +215,6 @@ public sealed class SchemaResolverTests
     [DataRow("Team.Title", "'Person' has no property 'Team'")]
     [DataRow("Address", "ends on a complex property")]
     [DataRow("Address.Geo", "ends on a complex property")]
-    [DataRow("Prefs.Theme", "goes into 'Prefs', which is stored as a JSON document")]
     public void A_path_that_names_no_column_is_refused_on_both_sides(string path, string message)
     {
         using var sides = Resolve(Provider.Npgsql);
@@ -226,6 +225,53 @@ public sealed class SchemaResolverTests
             StringAssert.Contains(Refused(() => resolver.Column(path)), $"'{path}' on Person", side);
             StringAssert.Contains(Refused(() => resolver.Template($"{{{path}}} IS NULL")), message, side);
         }
+    }
+
+    /// <summary>
+    /// A complex property mapped to a JSON column is that column: a plain column, of the type the
+    /// document is stored as, on any provider. What is inside the document is the provider's to
+    /// write, as its queries write it, and the kernel's own dialect has no answer: an expression
+    /// that is not the query's would be an index no query uses.
+    /// </summary>
+    [TestMethod, DataRow(Provider.Npgsql), DataRow(Provider.SqlServer), DataRow(Provider.Sqlite)]
+    public void A_JSON_document_is_its_column_and_a_member_is_the_providers_to_write(Provider provider)
+    {
+        using var sides = Resolve(provider);
+        var column = sides.Context.GetService<ISqlGenerationHelper>().DelimitIdentifier("Prefs");
+
+        foreach (var (side, resolver) in sides.Both)
+        {
+            var document = resolver.Column("Prefs");
+            Assert.AreEqual(column, document.ToString(), side);
+            Assert.IsTrue(document.IsColumn, side);
+            CollectionAssert.AreEqual(
+                new Dependency[] { new Dependency.Column(resolver.Table, resolver.Dialect.Identifier("Prefs"), ColumnRole.Key) },
+                document.Dependencies.ToList(),
+                side);
+            Assert.AreEqual($"{column} IS NULL", resolver.Template($"{{Prefs}} IS NULL").ToString(), side);
+            Assert.AreEqual(resolver.StoreType("Prefs"), sides.Model.StoreType("Prefs"), side);
+
+            var refusal = Refused(() => resolver.Column("Prefs.Theme"));
+            StringAssert.Contains(refusal, "'Theme' is a member of the JSON document in the column 'Prefs'", side);
+            StringAssert.Contains(refusal, "no SchemaKit package for this provider says it", side);
+            StringAssert.Contains(Refused(() => resolver.Template($"{{Prefs.Theme}} IS NULL")), "'Theme' is a member of the JSON document", side);
+        }
+    }
+
+    /// <summary>A column by itself says so, and nothing composed of it does.</summary>
+    [TestMethod]
+    public void A_fragment_says_whether_it_is_one_column()
+    {
+        using var sides = Resolve(Provider.Npgsql);
+        var resolver = sides.Model;
+        var name = resolver.Column("Name");
+
+        Assert.IsTrue(name.IsColumn);
+        Assert.IsTrue(name.As(ColumnRole.Included).IsColumn);
+        Assert.IsFalse(resolver.Template($"lower({{Name}})").IsColumn);
+        Assert.IsFalse(resolver.Sql.Fragment($"{name}").IsColumn);
+        Assert.IsFalse(resolver.Sql.Fragment($"({name})").IsColumn);
+        Assert.IsFalse(SqlFragment.Empty.IsColumn);
     }
 
     [TestMethod]

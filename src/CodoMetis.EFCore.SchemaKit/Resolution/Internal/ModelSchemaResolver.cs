@@ -51,10 +51,12 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     private readonly ISchemaRenames? _renames;
     private readonly TableRef _ownTable;
     private readonly bool _suffixed;
+    private readonly IRelationalTypeMappingSource _mappings;
 
     /// <param name="entityType">The entity type the declaration is on.</param>
     /// <param name="table">The table, as the entity type's own model names it.</param>
     /// <param name="dialect">The dialect.</param>
+    /// <param name="mappings">The provider's type mappings, for a member of a JSON document in a model that holds none yet.</param>
     /// <param name="renames">
     /// For the source side of a diff whose objects follow EF Core's renames: the table and its
     /// columns are answered as the target model names them. Null to resolve a model as it is.
@@ -63,8 +65,15 @@ internal sealed class ModelSchemaResolver : SchemaResolver
     /// For a copy of a declaration on a table of a derived type, when its name is taken beyond the
     /// table: a name the declaration states gets the table's name behind it.
     /// </param>
-    public ModelSchemaResolver(IReadOnlyEntityType entityType, StoreObjectIdentifier table, ISchemaDialect dialect, ISchemaRenames? renames = null, bool suffixed = false)
+    public ModelSchemaResolver(
+        IReadOnlyEntityType entityType,
+        StoreObjectIdentifier table,
+        ISchemaDialect dialect,
+        IRelationalTypeMappingSource mappings,
+        ISchemaRenames? renames = null,
+        bool suffixed = false)
     {
+        _mappings = mappings;
         _entityType = entityType;
         _storeObject = table;
         _renames = renames;
@@ -94,8 +103,7 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         if (!IsPropertyPath(path))
             throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(_entityType.ShortName(), path));
 
-        var (column, own) = ResolveColumn(path);
-        return new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column, ColumnRole.Key)], own);
+        return Resolve(path, ColumnRole.Key).Fragment;
     }
 
     public override string StoreType(string path)
@@ -104,9 +112,12 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         if (!IsPropertyPath(path))
             throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(_entityType.ShortName(), path));
 
+        var walked = PropertyPaths.Walk(_entityType, path);
+        if (walked.Document is not null) return JsonStoreType(walked, path);
+
         // Asked of the declared property in this table, as its column is. A snapshot holds the type
         // as an annotation and a configured model computes it from the mapping: one answer.
-        return FindProperty(path).GetColumnType(_storeObject)
+        return walked.Property!.GetColumnType(_storeObject)
                ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
     }
 
@@ -135,11 +146,18 @@ internal sealed class ModelSchemaResolver : SchemaResolver
                     break;
 
                 case SqlSegment.Column path:
-                    var (column, own) = ResolveColumn(path.Path);
-                    sql.Append(Dialect.Delimit(column));
+                    var (fragment, own) = Resolve(path.Path, ColumnRole.Expression);
+
+                    // A member of a JSON document is an expression, and what stands around a
+                    // placeholder was written for a column: in parentheses it is one operand
+                    // whatever the operators beside it bind to.
+                    sql.Append(fragment.IsColumn ? fragment.Text : $"({fragment.Text})");
                     token.Append(own);
-                    Dependency read = new Dependency.Column(Table, column, ColumnRole.Expression);
-                    if (!reads.Contains(read)) reads.Add(read);
+                    foreach (var read in fragment.Dependencies)
+                    {
+                        if (!reads.Contains(read)) reads.Add(read);
+                    }
+
                     break;
             }
         }
@@ -151,17 +169,80 @@ internal sealed class ModelSchemaResolver : SchemaResolver
         return new SqlFragment(sql.ToString(), [.. reads], NameTokens.Of(token.ToString()));
     }
 
-    /// <summary>The column of a path as the SQL names it, and as the model itself names it, which a default name is built from.</summary>
-    private (Identifier Column, string Own) ResolveColumn(string path)
+    /// <summary>
+    /// A path as SQL, and what a default name takes for it. A property with a column is that
+    /// column; a complex property mapped to JSON is the column that holds the document; anything
+    /// inside a document is what the dialect writes for a member, and reads the document's column.
+    /// </summary>
+    /// <param name="path">The path.</param>
+    /// <param name="role">How a plain column is read: by itself, or within a template.</param>
+    private (SqlFragment Fragment, string Own) Resolve(string path, ColumnRole role)
     {
-        var property = FindProperty(path);
-        var own = property.GetColumnName(_storeObject)
-                  ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
-        var column = Dialect.Identifier(own);
-        return (_renames?.Forward(Table, column) ?? column, own);
+        var walked = PropertyPaths.Walk(_entityType, path);
+        if (walked.Document is null)
+        {
+            var own = walked.Property!.GetColumnName(_storeObject)
+                      ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
+            var column = Forwarded(own);
+            return (new SqlFragment(Dialect.Delimit(column), [new Dependency.Column(Table, column, role)], own, isColumn: true), own);
+        }
+
+        var ownContainer = walked.Document.ComplexType.GetContainerColumnName()
+                           ?? throw MissingColumn.Refusal(SchemaKitStrings.PathHasNoColumn(_entityType.ShortName(), path, _ownTable), path);
+        var container = Forwarded(ownContainer);
+
+        // The document itself: a column like any other, of the document's type.
+        if (walked.JsonNames.Count == 0)
+            return (new SqlFragment(Dialect.Delimit(container), [new Dependency.Column(Table, container, role)], ownContainer, isColumn: true), ownContainer);
+
+        var member = new JsonMember(container, [.. walked.JsonNames], KindOf(walked), JsonStoreType(walked, path), MappingOf(walked, path));
+        var written = Dialect.JsonMember(member, Sql);
+
+        // The document's column and the names, never the SQL: a member rendered differently is
+        // still the same name. It is read as an expression wherever it stands, since that is what
+        // it is to the database: a document's column that is dropped takes an index with it, and
+        // is held by a constraint, as any expression's column is.
+        var token = ownContainer + string.Concat(walked.JsonNames);
+        return (new SqlFragment(written.Text, [new Dependency.Column(Table, container, ColumnRole.Expression)], token), token);
     }
 
-    private IReadOnlyProperty FindProperty(string path) => PropertyPaths.Find(_entityType, path).Property;
+    private Identifier Forwarded(string own)
+    {
+        var column = Dialect.Identifier(own);
+        return _renames?.Forward(Table, column) ?? column;
+    }
+
+    private static JsonMemberKind KindOf(PropertyPaths.Walked walked) => walked.Property switch
+    {
+        { IsPrimitiveCollection: true } => JsonMemberKind.Collection,
+        not null                        => JsonMemberKind.Scalar,
+        null                            => walked.Through[^1].IsCollection ? JsonMemberKind.Collection : JsonMemberKind.Document,
+    };
+
+    // A member's own type for a scalar, as its mapping states it. A nested document and a
+    // collection are of the document's type: what is taken out of one is one.
+    private string JsonStoreType(PropertyPaths.Walked walked, string path)
+        => walked.Property is { IsPrimitiveCollection: false }
+            ? MappingOf(walked, path)!.StoreType
+            : walked.Document!.ComplexType.GetContainerColumnType() ?? MappingOf(walked, path)?.StoreType
+              ?? throw new InvalidOperationException(SchemaKitStrings.JsonMemberWithoutAMapping(_entityType.ShortName(), path));
+
+    private RelationalTypeMapping? MappingOf(PropertyPaths.Walked walked, string path)
+    {
+        if (walked.Property is not { } property) return null;
+
+        // A snapshot keeps a member's type and its facets and not a column type that was stated
+        // for it: the context's own model would cast to one type and its snapshot to another, in
+        // every diff. Only a configured model can hold the annotation, so only it is refused.
+        if (property.FindAnnotation(RelationalAnnotationNames.ColumnType)?.Value is string stated)
+            throw new InvalidOperationException(SchemaKitStrings.JsonMemberStatesItsColumnType(_entityType.ShortName(), path, stated));
+
+        // A member has no column of its own whose type a model could state, so its type is its
+        // mapping's. A model that was never initialized, a snapshot as it is compiled, holds no
+        // mapping yet, and the provider's mapping source is asked for the one it would get.
+        return property.FindRelationalTypeMapping() ?? _mappings.FindMapping((IProperty)property)
+               ?? throw new InvalidOperationException(SchemaKitStrings.JsonMemberWithoutAMapping(_entityType.ShortName(), path));
+    }
 
     /// <summary>Dotted segments, each a letter or an underscore followed by letters, digits and underscores.</summary>
     internal static bool IsPropertyPath(ReadOnlySpan<char> text)
@@ -193,6 +274,20 @@ internal sealed class ModelSchemaResolver : SchemaResolver
 internal static class PropertyPaths
 {
     /// <summary>
+    /// What a path names: a scalar property, or a complex property mapped to a JSON document, and
+    /// the way there.
+    /// </summary>
+    /// <param name="Property">The scalar property the path ends at; null when it ends at a document or a collection.</param>
+    /// <param name="Through">The complex properties on the path, the last one included when the path ends at one.</param>
+    /// <param name="Document">The complex property mapped to a JSON column that the path enters or ends at; null for a path outside any.</param>
+    /// <param name="JsonNames">The names below the document, as the JSON has them; empty when the path is the document itself.</param>
+    public sealed record Walked(
+        IReadOnlyProperty? Property,
+        IReadOnlyList<IReadOnlyComplexProperty> Through,
+        IReadOnlyComplexProperty? Document,
+        IReadOnlyList<string> JsonNames);
+
+    /// <summary>
     /// Walks the path through complex properties to a scalar property. The property that is found is
     /// the declared one, and its column is asked of it: a column looked up by name in the table
     /// could be another property's.
@@ -204,30 +299,66 @@ internal static class PropertyPaths
     public static (IReadOnlyProperty Property, IReadOnlyList<IReadOnlyComplexProperty> Through) Find(
         IReadOnlyEntityType entityType, string path, Func<IReadOnlyProperty, CoreTypeMapping?>? mapping = null)
     {
+        var walked = Walk(entityType, path, mapping);
+        return walked.Property is { } property
+            ? (property, walked.Through)
+            : throw new InvalidOperationException(SchemaKitStrings.PathEndsOnComplexProperty(entityType.ShortName(), path));
+    }
+
+    /// <summary>
+    /// The same walk, for a path that may go into a JSON document or end at one. A complex
+    /// property mapped to a JSON column starts a document, and what is below it is named as the
+    /// JSON names it.
+    /// </summary>
+    /// <param name="entityType">The entity type.</param>
+    /// <param name="path">The property names from the entity type down, separated by dots.</param>
+    /// <param name="mapping">Where a property's mapping comes from; null to ask the property.</param>
+    public static Walked Walk(IReadOnlyEntityType entityType, string path, Func<IReadOnlyProperty, CoreTypeMapping?>? mapping = null)
+    {
         var segments = path.Split('.');
         IReadOnlyTypeBase current = entityType;
         List<IReadOnlyComplexProperty> through = [];
+        IReadOnlyComplexProperty? document = null;
+        List<string> names = [];
+
+        Walked Scalar(IReadOnlyProperty property)
+        {
+            if (document is not null) names.Add(property.GetJsonPropertyName() ?? property.Name);
+            return new Walked(property, through, document, names);
+        }
 
         for (var i = 0; i < segments.Length; i++)
         {
             var segment = segments[i];
+            var complex = current.FindComplexProperty(segment);
 
             if (i == segments.Length - 1)
             {
-                if (current.FindProperty(segment) is { } property) return (property, through);
+                if (current.FindProperty(segment) is { } property) return Scalar(property);
 
-                throw new InvalidOperationException(current.FindComplexProperty(segment) is not null
+                // A document as a whole, or a document or a collection inside one. A complex
+                // property that is spread over columns of its own has no one column to be.
+                if (complex is not null && (document is not null || IsJson(complex)))
+                {
+                    through.Add(complex);
+                    if (document is null) document = complex;
+                    else names.Add(complex.GetJsonPropertyName() ?? complex.Name);
+                    return new Walked(null, through, document, names);
+                }
+
+                throw new InvalidOperationException(complex is not null
                     ? SchemaKitStrings.PathEndsOnComplexProperty(entityType.ShortName(), path)
                     : SchemaKitStrings.PathNotFound(entityType.ShortName(), path, segment, current.ShortName()));
             }
 
-            if (current.FindComplexProperty(segment) is { } complex)
+            if (complex is not null)
             {
-                // What a member of a JSON document is in SQL is the provider's to say, and it has to
-                // say it as its queries do. Until a provider package does, there is no answer here
-                // that an index could be trusted with.
-                if (complex.IsCollection || complex.ComplexType.GetContainerColumnName() is not null)
-                    throw new InvalidOperationException(SchemaKitStrings.PathIntoJson(entityType.ShortName(), path, segment));
+                // An element of a collection has no one value in a row.
+                if (complex.IsCollection)
+                    throw new InvalidOperationException(SchemaKitStrings.PathThroughCollection(entityType.ShortName(), path, segment));
+
+                if (document is not null) names.Add(complex.GetJsonPropertyName() ?? complex.Name);
+                else if (IsJson(complex)) document = complex;
 
                 through.Add(complex);
                 current = complex.ComplexType;
@@ -235,7 +366,7 @@ internal static class PropertyPaths
             }
 
             if (i == segments.Length - 2 && current.FindProperty(segment) is { } scalar && ConvertedMember(current, scalar, segments[i + 1], mapping))
-                return (scalar, through);
+                return Scalar(scalar);
 
             throw new InvalidOperationException(current.FindProperty(segment) is not null
                 ? SchemaKitStrings.PathPastScalar(entityType.ShortName(), path, segment, segments[i + 1])
@@ -243,6 +374,8 @@ internal static class PropertyPaths
         }
 
         throw new InvalidOperationException(SchemaKitStrings.NotAPropertyPath(entityType.ShortName(), path));
+
+        static bool IsJson(IReadOnlyComplexProperty complex) => complex.IsCollection || complex.ComplexType.GetContainerColumnName() is not null;
     }
 
     /// <summary>
@@ -310,7 +443,7 @@ internal static class ResolutionEpoch
 /// A diff-time service: it takes the dialect, which reads the design-time model, so nothing that is
 /// resolved while a model is being built may take it in its constructor.
 /// </remarks>
-internal sealed class SchemaResolverFactory(ISchemaDialect dialect)
+internal sealed class SchemaResolverFactory(ISchemaDialect dialect, IRelationalTypeMappingSource mappings)
 {
     /// <summary>The resolver for a declaration of an entity type, in the table the type is mapped to.</summary>
     /// <param name="entityType">The entity type.</param>
@@ -337,7 +470,7 @@ internal sealed class SchemaResolverFactory(ISchemaDialect dialect)
         if (declaration.Epoch != ResolutionEpoch.Current)
             throw new InvalidOperationException(SchemaKitStrings.UnknownEpoch(entityType.ShortName(), Describe(declaration), declaration.Epoch, ResolutionEpoch.Current));
 
-        return new ModelSchemaResolver(entityType, table, dialect, renames, suffixed);
+        return new ModelSchemaResolver(entityType, table, dialect, mappings, renames, suffixed);
     }
 
     private static string Describe(ISchemaObject declaration)

@@ -116,6 +116,11 @@ internal sealed class PgIndexContributor(SchemaContributorDependencies dependenc
 
         var name = resolver.Name(declaration.Name, "IX", targets);
 
+        PgJsonMembers.RequireImmutable(
+            resolver,
+            [.. keys.SelectMany(key => PgJsonMembers.PathsOf(key.Target)), .. declaration.Where is { } condition ? PgJsonMembers.PathsOf(condition.Template) : []],
+            PgStrings.TheIndex(name.Name));
+
         foreach (var key in keys)
         {
             // An operator class of PostgreSQL's own on a column whose type does not take it: the
@@ -136,11 +141,10 @@ internal sealed class PgIndexContributor(SchemaContributorDependencies dependenc
             declaration is PgIndex.BTree { Unique.NullsDistinct: false },
             [.. keys.Select((key, index) =>
             {
-                var target = key.Target switch
-                {
-                    KeyTarget.Column   => targets[index],
-                    KeyTarget.Template => sql.Fragment($"({targets[index]})"),
-                };
+                // A column stands bare and everything else in parentheses of its own, which is what
+                // PostgreSQL's grammar asks of a key. What the declaration held does not say which:
+                // a path into a JSON document is a column there and an expression here.
+                var target = targets[index].IsColumn ? targets[index] : sql.Fragment($"({targets[index]})");
 
                 if (key.Collation is { } collation) target = sql.Fragment($"{target} COLLATE {resolver.Dialect.Name(collation)}");
                 if (key.OpClass is { } opClass) target = sql.Fragment($"{target} {resolver.Dialect.Name(opClass)}");
@@ -157,7 +161,9 @@ internal sealed class PgIndexContributor(SchemaContributorDependencies dependenc
                     (true, _)                => sql.Fragment($"{target} DESC"),
                 };
             })],
-            [.. IncludeOf(declaration).Select(path => resolver.Column(path).As(ColumnRole.Included))],
+            [.. IncludeOf(declaration).Select(path => resolver.Column(path) is { IsColumn: true } column
+                ? column.As(ColumnRole.Included)
+                : throw new InvalidOperationException(PgStrings.IncludeNeedsAColumn(name.Name, path)))],
             [.. ParametersOf(declaration, sql)],
             declaration.Where is { } where ? resolver.Template(where.Template).As(ColumnRole.Condition) : SqlFragment.Empty,
             new Operational<SqlName?>(NeedsBtreeGist(declaration, resolver) ? resolver.Dialect.Name(PgExclusionContributor.BtreeGist) : null),

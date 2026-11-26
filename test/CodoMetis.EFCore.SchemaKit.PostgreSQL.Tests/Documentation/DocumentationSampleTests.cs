@@ -82,6 +82,19 @@ public sealed partial class DocumentationSampleTests
             public NpgsqlRange<DateOnly> Period { get; set; }
         }
 
+        public sealed class Customer
+        {
+            public int Id { get; set; }
+            public string Name { get; set; } = "";
+            public CustomerPrefs Prefs { get; set; } = new();
+        }
+
+        public sealed class CustomerPrefs
+        {
+            public int Rank { get; set; }
+            public bool Active { get; set; }
+        }
+
         public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options);
 
         public sealed class Booking

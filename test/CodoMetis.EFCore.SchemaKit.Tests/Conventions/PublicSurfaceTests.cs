@@ -43,6 +43,8 @@ public sealed class PublicSurfaceTests
         "CodoMetis.EFCore.SchemaKit.Dependency+Extension",
         "CodoMetis.EFCore.SchemaKit.Dependency+SchemaObject",
         "CodoMetis.EFCore.SchemaKit.Dependency+WholeTable",
+        "CodoMetis.EFCore.SchemaKit.JsonMember",
+        "CodoMetis.EFCore.SchemaKit.JsonMemberKind",
         "CodoMetis.EFCore.SchemaKit.OperationEffect",
         "CodoMetis.EFCore.SchemaKit.OperationEffect+Changes",
         "CodoMetis.EFCore.SchemaKit.OperationEffect+NotWritten",

@@ -37,7 +37,7 @@ public sealed partial class DocumentationApiTests
     private static readonly HashSet<string> ExternalApi = new(StringComparer.Ordinal)
     {
         // EF Core
-        "EnsureCreated", "Migrate", "GenerateCreateScript", "ToTable", "HasIndex", "GetIndexes", "HasKey", "HasAlternateKey", "HasForeignKey",
+        "EnsureCreated", "Migrate", "GenerateCreateScript", "ToTable", "ToJson", "HasIndex", "GetIndexes", "HasKey", "HasAlternateKey", "HasForeignKey",
         "HasFilter", "HasDatabaseName", "IsDescending", "IsUnique", "HasFillFactor", "IncludeProperties", "UseCollation",
         "HasConversion", "IsRequired",
         // Npgsql

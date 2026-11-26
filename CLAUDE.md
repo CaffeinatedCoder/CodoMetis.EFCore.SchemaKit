@@ -12,9 +12,9 @@ stays in CaffeinatedCoder/EFCore.ComplexIndexes and shares no code and no branch
 resolver, the planner and the lambda translator, and the PostgreSQL package has the first real
 contributor: an exclusion constraint declared with `DeclarePostgres` reaches the database through
 every path, on PostgreSQL 16 and 18, and a snapshot scaffolded by 5.x with exclusion constraints
-moves to the same model declared here with no operations. An index is the second object: three
+moves to the same model declared here with no operations. An index is the second object: four
 of the five slices of `PgIndex` are in (#27 has the slices and what was decided for them), every
-access method and `concurrently:`. Nothing of
+access method, `concurrently:` and members of a JSON document. Nothing of
 `preview.2` is published** (what is left of
 the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
 `Sql.Raw<T>` in an element, a factory for SP-GiST, the compile probes). The repository holds:
@@ -206,6 +206,14 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   shortened name where there is one
   (`A_collation_longer_than_PostgreSQL_keeps_would_be_another_one`). The limit is the
   server's and not the model's, which may state a shorter one for its own names. None of the value types has a public constructor taking text.
+- **A store type becomes SQL through `ISchemaDialect.TypeName`, which checks its form** (#208):
+  words, one list of numbers or `max` in parentheses, brackets for an array. It is how a cast
+  to a member's type is written, and it is no hole for a string: a type that needs delimiters
+  or a schema is refused, with the expression written by hand as the way out.
+- **`SqlFragment.IsColumn` says whether a fragment is one column by itself.** The resolver sets
+  it, `As` keeps it, and anything composed is not one. A contributor asks it, and never what
+  the declaration held, where the database tells a column from an expression: a key in
+  parentheses of its own, a column and nothing else in `INCLUDE`.
 - **`SchemaSql` appends the provider's statement terminator** and refuses a statement that brings
   one, an empty one, and a `DROP … IF EXISTS`. The drop is looked for in the statement without
   its string literals and delimited names (#211): a value that holds the words is no drop.
@@ -492,7 +500,7 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
 ## The lambda translator
 
 `src/CodoMetis.EFCore.SchemaKit/Translation` (`design/schemakit-core-plan.md`, section 3.9; #26 lists
-what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
+what is still missing: `[SchemaFunction]`).
 
 - **It is 5.x's translator, ported with its rules unchanged.** Each comment in it that names a
   failure records one that happened. Do not simplify a rule because it looks redundant: a stored
@@ -558,8 +566,10 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
   with Roslyn and compares the translator and the resolver with EF Core's `ToQueryString()`, both
   parsed with PostgreSQL's precedence. A disagreement is fixed or listed in `waivers.txt` with its
   reason, and a waiver nothing needs any more fails. `TranslatorParityLiveTests` runs the same
-  rows on PostgreSQL 18. Members of a JSON document are left out behind
-  `ParityCatalogue.JsonMembers` until a provider renders them.
+  rows on PostgreSQL 18. Members of a JSON document are swept since the
+  PostgreSQL package's dialect writes them (#208): the sweep's context is wired through that
+  package, and its rows over a document fall under the blocks that waive the same row over a
+  column.
 - **A literal is written as it is.** 5.x doubled a brace inside a literal for a second template
   grammar it had; the resolver has one grammar and takes nothing inside quotes for a placeholder.
 - **`ConvertChecked` is `Convert` wherever a conversion is taken off** (#126). A project compiled
@@ -575,7 +585,7 @@ what is still missing: `[SchemaFunction]`, and JSON members in the sweep).
 ## The resolver
 
 `src/CodoMetis.EFCore.SchemaKit/Resolution` (`design/schemakit-core-plan.md`, section 3.5; #43 lists
-what is still missing: JSON members, TPC).
+what is still missing: a member of a collection's element, an owned type mapped to JSON).
 
 - **It reads metadata only,** which is what a configured model and a snapshot have in common. Every
   rule is tested on both (`SchemaResolverTests`, through `Harness/Snapshots.cs`): an answer that
@@ -585,6 +595,28 @@ what is still missing: JSON members, TPC).
   Refusing it there lets the first `migrations add` pass and fails every diff after it.
 - **The column is asked of the declared property** (`GetColumnName(storeObject)`), never looked up
   by name in the table.
+- **A path into a JSON document is the provider's to write** (#208). `PropertyPaths.Walk` is
+  the one walk: a complex property mapped to a JSON column starts a document, and what is
+  below it is named as the JSON names it (`HasJsonPropertyName`). A path that ends at the
+  document, or at a top-level complex collection, is the column that holds it, a plain column
+  on every provider. Anything inside is what `ISchemaDialect.JsonMember` answers for a
+  `JsonMember` (the container, the names, a kind, the store type, the mapping), and
+  `resolver.Column` hands it on as an expression that reads the container as an `Expression`.
+  The kernel's own dialect refuses: a member written otherwise than the provider's queries
+  write it is an index no query uses. In a template a member stands in parentheses.
+- **A member's type is its mapping's, and a column type stated for it is refused.** A snapshot
+  keeps a member's type and its facets (`HasPrecision`, `HasMaxLength`) and not
+  `HasColumnType`, so the model and its snapshot would cast to two types in every diff
+  (measured, #208). Only a configured model can hold the annotation, so the refusal needs no
+  word on whose model it is. A model that was never initialized holds no mapping on a member:
+  the resolver then asks the provider's mapping source, as the binder does.
+- **A path through a collection is refused,** and a path into an owned type mapped with
+  `ToJson()` names no property: that one is a navigation, and stays out until its snapshot's
+  paths are measured.
+- **A default name takes the container and the JSON names,** `IX_people_prefsRank`, 5.x's rule,
+  never the SQL. Under a rename of the container column the SQL takes the new name and the
+  name does not: a rename of the index in place
+  (`Renaming_the_documents_column`).
 - **The resolver scans nothing.** A template arrives as segments: text is written as it is, a
   column segment is resolved by its path.
 - **A fragment records what it reads,** and composition keeps it. SQL written by hand depends on
@@ -706,6 +738,24 @@ what is still missing).
   read has no row. Since the four answers are one, nothing yet tells an included column's role
   from a key's in a test: `As(ColumnRole.Included)` and `As(ColumnRole.Condition)` in the
   contributor say what is true and are held by no test until a row differs by them.
+- **`NpgsqlSchemaDialect.JsonMember` writes a member as Npgsql's queries write it** (#208), case
+  for case and in the order of Npgsql's own generator: `->` for what is JSON itself (a
+  collection, a nested document), `->>` for a text, `decode(…, 'base64')` for `bytea`, and a
+  `CAST` of the text to the member's store type for everything else; one step is `->>`, more
+  are `#>>` with `'{a,b}'`, or `ARRAY[…]::text[]` when a name is not ASCII letters and digits.
+  `PgJsonMemberTests` holds each kind against `ToQueryString()` on the model and on its
+  snapshot, and `The_planner_takes_a_members_index_for_the_query_EF_Core_writes` asks the
+  server. A new kind of member gets its row in both.
+- **A member whose cast is not immutable is refused by the index and by the exclusion
+  constraint, not by the dialect** (`PgJsonMembers`, decided with #208). A date, a time, an
+  interval or money out of a document is a cast PostgreSQL takes neither as a key nor in a
+  condition (42P17), and as text it serves no query EF Core writes. Each contributor checks
+  every path it reads, in keys and in conditions, by `IsColumn` and the store type; a column of
+  such a type is no member. The list is asked of the server type by type
+  (`The_casts_an_index_refuses_are_the_servers`). A later object, a trigger, may read such a
+  member, which is why the rule is not the dialect's.
+- **A key stands bare when the resolver says it is a column, and in parentheses otherwise,** in
+  both contributors. `include:` takes a column: the document's is one, a member is refused.
 - **`concurrently:` is how an index is built, not what it is** (#206, slice C of #27). It is
   stored through `writer.Operational` and sits in the descriptor as an `Operational<bool>`, so
   a declaration that differs only in it has the same key and diffs to nothing, both ways. The
@@ -771,6 +821,11 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
   Server has no boolean that is a condition, so `Condition` takes the negation too
   (`[Active] = CAST(0 AS bit)`), and its queries do not fold a substring's start, so an argument
   arrives as SQL and as a value.
+- **Each database's dialect writes a member of a JSON document** (#208, `JsonMemberParityTests`):
+  SQL Server's `JSON_VALUE` with a path and a cast, SQLite's `->>` with a name or a path,
+  compared with `ToQueryString()`. One audit point: the path is a literal, and the contract's
+  only literal is the provider's string literal, `N'$.Rank'` on SQL Server where the query
+  writes `'$.Rank'`.
 - **A rule is held when a test fails with the rule changed, and that was measured by hand, once.**
   Each line of the two contributors, dialects and declarations was changed in turn and the
   project run on the server: 102 changes, of which 94 fail a test and 8 are no rules (#119 says

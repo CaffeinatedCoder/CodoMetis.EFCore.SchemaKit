@@ -152,6 +152,43 @@ an annotation named `CodoMetis:SchemaKit:Object`.
 - **It is about creating the index only.** A drop and a rename are written as for any index.
   Adding `concurrently:` to an index you already declared, or taking it away, is no migration.
 
+A key or a condition can read a member of a JSON document, which is a complex property mapped
+with `ToJson()`. The document itself can be a key too:
+
+```csharp
+modelBuilder.Entity<Customer>(customer =>
+{
+    customer.ToTable("customers");
+    customer.ComplexProperty(x => x.Prefs, prefs => prefs.ToJson("prefs"));
+    customer.DeclarePostgres(pg =>
+    [
+        pg.BTree(x => x.Prefs.Rank, name: "ix_customer_rank"),
+        pg.BTree(x => x.Name, where: x => x.Prefs.Active, name: "ix_customer_active"),
+        pg.Gin(x => x.Prefs, GinOpClass.JsonbPathOps, name: "ix_customer_prefs"),
+    ]);
+});
+```
+
+```sql
+CREATE INDEX ix_customer_rank ON customers ((CAST(prefs ->> 'Rank' AS integer)));
+CREATE INDEX ix_customer_active ON customers ("Name") WHERE (CAST(prefs ->> 'Active' AS boolean));
+CREATE INDEX ix_customer_prefs ON customers USING gin (prefs jsonb_path_ops);
+```
+
+A member is written as Npgsql writes it in a query, so PostgreSQL uses `ix_customer_rank` for
+`Where(x => x.Prefs.Rank == 5)`. A test asks the server's planner for that, for each kind of
+member.
+
+- **A date or a time in the document cannot be a key or stand in a condition.** `migrations add`
+  fails and names the member (`InvalidOperationException`). A query reads such a member through
+  a cast that PostgreSQL rejects in an index (42P17). Keep the value in a column of its own.
+- **`HasColumnType` on a member you index fails in `migrations add`.** The model snapshot does
+  not keep it for a member, so every later migration would rebuild the index. `HasPrecision`,
+  `HasMaxLength` and a value converter are kept.
+- **`include:` takes columns.** The document's column is one; a member of it is not.
+- **Not yet:** a member of an element of a collection in the document, and an owned type mapped
+  with `ToJson()`. Both fail in `migrations add`.
+
 Good to know:
 
 - **A storage parameter out of PostgreSQL's range throws where you write it**
@@ -216,7 +253,6 @@ Good to know:
 
 | | Issue |
 |---|---|
-| Indexes: a member of a JSON document as a key | [#27](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/27) |
 | A 5.x project whose snapshot holds indexes or temporal constraints: the snapshot is refused, so the project stays on 5.x for now | [#93](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/93), [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | SQL Server | [#29](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/29) |
 | SQLite: no contributor yet. A create on a table the same migration rebuilds is refused until it is placed after the rebuild | [#145](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/145), [#115](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/115) |
@@ -224,7 +260,7 @@ Good to know:
 | A declaration on a column only a derived type has, while the type shares its table: refused | [#85](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/85) |
 | A cast in a lambda that changes the value, such as `(int)x.Amount == 2`: refused | [#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103) |
 | Raw SQL in an element, and a factory for SP-GiST | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |
-| A member of a JSON document in a lambda: refused | [#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43) |
+| A member of an element of a JSON collection, and an owned type mapped with `ToJson()`: refused | [#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43) |
 
 Known defects of this preview, each with what it costs:
 

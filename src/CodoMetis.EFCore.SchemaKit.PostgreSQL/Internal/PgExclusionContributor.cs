@@ -58,18 +58,23 @@ internal sealed class PgExclusionContributor(SchemaContributorDependencies depen
             })
             .ToList();
 
+        var name = resolver.Name(declaration.Name, "EX", keys);
+
+        PgJsonMembers.RequireImmutable(
+            resolver,
+            [.. elements.SelectMany(element => PgJsonMembers.PathsOf(element.Target)), .. declaration.Where is { } condition ? PgJsonMembers.PathsOf(condition.Template) : []],
+            PgStrings.TheConstraint(name.Name));
+
         return new PgExclusionDescriptor(
             resolver.Table,
-            new QualifiedName(null, resolver.Name(declaration.Name, "EX", keys)),
+            new QualifiedName(null, name),
             resolver.Dialect.Name(declaration.Kind),
             [.. elements.Select((element, index) =>
             {
                 var op = resolver.Dialect.Operator(element.Operator.Token);
-                return element.Target switch
-                {
-                    KeyTarget.Column   => sql.Fragment($"{keys[index]} WITH {op}"),
-                    KeyTarget.Template => sql.Fragment($"({keys[index]}) WITH {op}"),
-                };
+                // A column bare, everything else in parentheses: a member of a JSON document is
+                // a path in the declaration and an expression here.
+                return keys[index].IsColumn ? sql.Fragment($"{keys[index]} WITH {op}") : sql.Fragment($"({keys[index]}) WITH {op}");
             })],
             // The resolver says how an element reads its columns, by itself or in an expression. The
             // condition's columns are read as a condition, which PostgreSQL treats as its own case

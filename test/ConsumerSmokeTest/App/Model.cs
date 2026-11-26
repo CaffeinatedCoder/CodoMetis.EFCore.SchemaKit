@@ -10,6 +10,15 @@ public sealed class Booking
     public int RoomId { get; set; }
     public NpgsqlRange<DateOnly> Period { get; set; }
     public DateOnly? CancelledOn { get; set; }
+
+    /// <summary>Kept as a JSON document. Optional, so that a row without one can be written.</summary>
+    public BookingDetails? Details { get; set; }
+}
+
+public sealed class BookingDetails
+{
+    public int Seats { get; set; }
+    public string Contact { get; set; } = "";
 }
 
 /// <summary>
@@ -24,6 +33,7 @@ public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbConte
         => modelBuilder.Entity<Booking>(booking =>
         {
             booking.ToTable("bookings");
+            booking.ComplexProperty(x => x.Details, details => details.ToJson("details"));
 
             // No two bookings of a room overlap, among those not cancelled. SMOKE_MODEL=changed drops
             // the condition: a change only SchemaKit's differ can see.
@@ -44,6 +54,10 @@ public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbConte
                     [pg.Key(x => x.RoomId), pg.Key(x => x.CancelledOn).Desc().NullsLast()],
                     where: x => x.CancelledOn != null,
                     name: "ix_bookings_cancelled"),
+
+                // A member of the JSON document as a key: written as the query reads it, and the
+                // same in the model and in the snapshot `dotnet ef` compiles.
+                pg.BTree(x => x.Details!.Seats, name: "ix_bookings_seats"),
             ]);
         });
 }

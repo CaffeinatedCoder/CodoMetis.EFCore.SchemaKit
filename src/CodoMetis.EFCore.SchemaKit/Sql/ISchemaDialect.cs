@@ -34,6 +34,28 @@ public interface ISchemaDialect
     /// <summary>The name as it is written into a statement: bare when it can be, delimited otherwise.</summary>
     string Delimit(SqlName name);
 
+    /// <summary>
+    /// A store type as it is written into a statement, such as the target of a cast:
+    /// <c>integer</c>, <c>numeric(10,2)</c>, <c>timestamp with time zone</c>. Checked against the
+    /// dialect's grammar for one, and refused when it is anything else.
+    /// </summary>
+    /// <param name="storeType">The type, as a model's type mapping states it.</param>
+    SqlFragment TypeName(string storeType);
+
+    /// <summary>
+    /// What a member of a JSON document is in SQL, written as the provider's queries write it:
+    /// an index serves only a query whose expression is the index's own.
+    /// </summary>
+    /// <remarks>
+    /// The kernel's resolver calls it for a path that goes into a complex property mapped to a
+    /// JSON column, and hands on the answer as an expression that reads the document's column.
+    /// Whether an object may hold the expression is the object's to say, not this method's: a
+    /// cast an index refuses is one a trigger may read.
+    /// </remarks>
+    /// <param name="member">The member.</param>
+    /// <param name="sql">What the expression is composed with.</param>
+    SqlFragment JsonMember(JsonMember member, SchemaSql sql);
+
     /// <summary>What ends a statement. <see cref="SchemaSql" /> appends it to every one.</summary>
     string StatementTerminator { get; }
 
@@ -101,6 +123,43 @@ public interface ISchemaDialect
     /// describe, and its tables are not where the model says they are.
     /// </remarks>
     Identifier? DefaultSchema { get; }
+}
+
+/// <summary>
+/// A member of a JSON document, as the model has it: what <see cref="ISchemaDialect.JsonMember" />
+/// writes an expression for.
+/// </summary>
+/// <param name="Container">The column that holds the document.</param>
+/// <param name="Path">
+/// The names from the document down to the member, as the JSON has them
+/// (<c>HasJsonPropertyName</c>, or the property's name). At least one.
+/// </param>
+/// <param name="Kind">What the member is.</param>
+/// <param name="StoreType">
+/// The member's store type as the model's mapping states it, for a scalar; the document's own
+/// type for a nested document or a collection.
+/// </param>
+/// <param name="Mapping">The member's type mapping, for a scalar or a collection of scalars; null for a nested document.</param>
+[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+public sealed record JsonMember(
+    Identifier Container,
+    ValueList<string> Path,
+    JsonMemberKind Kind,
+    string StoreType,
+    RelationalTypeMapping? Mapping);
+
+/// <summary>What a member of a JSON document is.</summary>
+[Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+public enum JsonMemberKind
+{
+    /// <summary>One value: a number, a text, a flag.</summary>
+    Scalar,
+
+    /// <summary>An array: a collection of scalars, or of documents.</summary>
+    Collection,
+
+    /// <summary>A document inside the document.</summary>
+    Document,
 }
 
 /// <summary>The objects of a model that EF Core creates itself and that take a name.</summary>
@@ -216,6 +275,33 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The form a store type has on the providers known here: words, with one list of numbers,
+    /// or <c>max</c>, in parentheses, and one pair of brackets behind it for an array. A type
+    /// that needs delimiters, or a schema, is not written: there is no hole for a string, and a
+    /// type's name is no exception to why.
+    /// </remarks>
+    public virtual SqlFragment TypeName(string storeType)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(storeType);
+        if (!StoreTypeForm().IsMatch(storeType))
+            throw new InvalidOperationException(SchemaKitStrings.NotAStoreType(storeType));
+
+        return new SqlFragment(storeType);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Refused here: how a member is written is a provider's own, and one written otherwise than
+    /// the provider's queries write it is an index no query uses.
+    /// </remarks>
+    public virtual SqlFragment JsonMember(JsonMember member, SchemaSql sql)
+    {
+        ArgumentNullException.ThrowIfNull(member);
+        throw new InvalidOperationException(SchemaKitStrings.NoJsonMembers(member.Container.Name, string.Join(".", member.Path)));
+    }
+
+    /// <inheritdoc />
     public virtual string StatementTerminator => Dependencies.SqlGenerationHelper.StatementTerminator;
 
     /// <inheritdoc />
@@ -287,6 +373,9 @@ public partial class SchemaDialect(SchemaDialectDependencies dependencies, int m
 
     [GeneratedRegex("^[a-z_][a-z0-9_$]*$")]
     private static partial Regex BareName();
+
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*(?: [A-Za-z_][A-Za-z0-9_]*)*(?:\((?:\d+(?:, ?\d+)?|max)\))?(?: [A-Za-z_][A-Za-z0-9_]*)*(?:\[\])?$", RegexOptions.CultureInvariant)]
+    private static partial Regex StoreTypeForm();
 
     [GeneratedRegex(@"^[+\-*/<>=~!@#%^&|`?]{1,63}$")]
     private static partial Regex OperatorToken();

@@ -219,9 +219,26 @@ internal static class SchemaKitStrings
            $"column only when '{property}' has a value converter that stores the type of '{member}': otherwise the object " +
            "would be built on the whole column while the declaration names a part of it.";
 
-    public static string PathIntoJson(string entity, string path, string segment)
-        => $"The path '{path}' on {entity} goes into '{segment}', which is stored as a JSON document. A member of a document " +
-           "has to be written as the provider's queries write it, which this version of SchemaKit does not do yet.";
+    public static string NoJsonMembers(string container, string member)
+        => $"'{member}' is a member of the JSON document in the column '{container}'. What a member is in SQL is the provider's to " +
+           "say, as its queries write it, and no SchemaKit package for this provider says it.";
+
+    public static string PathThroughCollection(string entity, string path, string segment)
+        => $"The path '{path}' on {entity} goes through '{segment}', which is a collection. A member of one of its elements " +
+           "has no single value in a row: the collection as a whole can be named, and nothing inside it.";
+
+    public static string JsonMemberStatesItsColumnType(string entity, string path, string storeType)
+        => $"The path '{path}' on {entity} names a member of a JSON document whose type is stated with HasColumnType('{storeType}'). " +
+           "A model snapshot does not keep the column type of such a member, so the next migration would find another " +
+           "type there and rebuild the object each time. State the type through the member's own type, a value converter, " +
+           "HasPrecision or HasMaxLength, which a snapshot keeps.";
+
+    public static string JsonMemberWithoutAMapping(string entity, string path)
+        => $"The path '{path}' on {entity} names a member of a JSON document that has no type mapping in this model.";
+
+    public static string NotAStoreType(string storeType)
+        => $"'{storeType}' cannot be written into a statement as a store type: only a type name of plain words, with numbers " +
+           "in parentheses where it has them. Write the expression that needs it as SQL by hand.";
 
     public static string PathHasNoColumn(string entity, string path, TableRef table)
         => $"The path '{path}' on {entity} has no column in the table '{table}'.";

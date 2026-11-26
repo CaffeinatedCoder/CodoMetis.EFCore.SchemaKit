@@ -147,6 +147,14 @@ internal sealed class ProbeSqliteIndexContributor(SchemaContributorDependencies 
 internal sealed class ProbeSqliteDialect(SchemaDialectDependencies dependencies, int maxIdentifierLength)
     : SchemaDialect(dependencies, maxIdentifierLength)
 {
+    // A member of a JSON document as SQLite's queries write it: ->> with the name, or with a
+    // path from the root for a member of a nested document, and no cast (JsonMemberParityTests).
+    public override SqlFragment JsonMember(JsonMember member, SchemaSql sql)
+    {
+        var path = member.Path.Count == 1 ? Literal(member.Path[0]) : Literal("$." + string.Join(".", member.Path));
+        return sql.Fragment($"{member.Container} ->> {path}");
+    }
+
     // A table and an index share the database's one namespace, whatever table the index is on.
     // A constraint's name is taken nowhere: SQLite keeps it in the table's SQL and compares it
     // with nothing. EF Core's provider writes no schema, so none is compared.

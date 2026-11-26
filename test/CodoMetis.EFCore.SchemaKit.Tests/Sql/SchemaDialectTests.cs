@@ -36,6 +36,32 @@ public sealed class SchemaDialectTests
     }
 
     /// <summary>
+    /// A store type is written into a statement as the model's mapping states it, when it has the
+    /// form of one: words, with numbers in parentheses, and brackets for an array. There is no
+    /// hole for a string, and a type's name is no way round that.
+    /// </summary>
+    [TestMethod]
+    [DataRow("integer"), DataRow("double precision"), DataRow("numeric(10,2)"), DataRow("numeric(10, 2)"), DataRow("character varying(20)")]
+    [DataRow("timestamp(3) with time zone"), DataRow("nvarchar(max)"), DataRow("int"), DataRow("integer[]"), DataRow("TEXT")]
+    public void A_store_type_of_the_usual_form_is_written(string storeType)
+    {
+        using var context = Context(Provider.Npgsql);
+
+        Assert.AreEqual(storeType, context.GetService<ISchemaDialect>().TypeName(storeType).ToString());
+    }
+
+    [TestMethod]
+    [DataRow("integer); DROP TABLE t; --"), DataRow("\"Mood\""), DataRow("app.mood"), DataRow("numeric(10,2,3)"), DataRow("integer "), DataRow(" integer")]
+    [DataRow("numeric(a)"), DataRow("text'"), DataRow("int4range(1)(2)"), DataRow("a--b"), DataRow("varchar()")]
+    public void Anything_else_is_no_store_type(string storeType)
+    {
+        using var context = Context(Provider.Npgsql);
+
+        var refusal = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<ISchemaDialect>().TypeName(storeType));
+        StringAssert.Contains(refusal.Message, "cannot be written into a statement as a store type");
+    }
+
+    /// <summary>
     /// SQLite states no limit, and EF Core's answer for a model without one is 32767. A long name is
     /// simply accepted there, as the database accepts it.
     /// </summary>

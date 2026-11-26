@@ -18,6 +18,25 @@ internal sealed class ProbeSqlServerDialect(SchemaDialectDependencies dependenci
     /// <summary>Every kind and name the kernel asked about, for the tests of what it does not ask.</summary>
     public List<(SchemaModelObject Kind, string Name)> Asked { get; } = [];
 
+    // A member of a JSON document as SQL Server's queries write it at the compatibility level EF
+    // Core assumes by default: JSON_VALUE with a path, cast to the member's store type unless it
+    // is a text (JsonMemberParityTests). The contract's shape for it is the one PostgreSQL's
+    // package fills: a container, the names, a kind, a store type.
+    //
+    // Audit: the path is a literal, and the contract's only literal is the provider's string
+    // literal, which on SQL Server is N'$.Rank' where the query writes '$.Rank'. The two are one
+    // path to JSON_VALUE; whether they are one expression to the optimizer, for a computed column
+    // or an indexed view that has to match a query, is not measured here. A name that is not an
+    // identifier is written "…" with JSON's escapes, which this probe does not do.
+    public override SqlFragment JsonMember(JsonMember member, SchemaSql sql)
+    {
+        var path = Literal("$." + string.Join(".", member.Path));
+        if (member.Kind != JsonMemberKind.Scalar) return sql.Fragment($"JSON_QUERY({member.Container}, {path})");
+
+        var value = sql.Fragment($"JSON_VALUE({member.Container}, {path})");
+        return member.Mapping is null or StringTypeMapping ? value : sql.Fragment($"CAST({value} AS {TypeName(member.StoreType)})");
+    }
+
     // A table without a schema is created in the default schema of the user that runs the
     // migration, which is dbo for the owner of a database. A user with another default schema is
     // a database the model does not describe, as a search_path is on PostgreSQL.
