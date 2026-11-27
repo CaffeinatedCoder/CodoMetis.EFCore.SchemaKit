@@ -6,7 +6,7 @@ One section per version, newest first, in the form
 <!-- The date replaces "unreleased" in the commit that is tagged. release.yml refuses a tag whose
      heading is not `## [x.y.z] — yyyy-mm-dd`, so this heading stops a tag until then. -->
 
-## [11.0.0-preview.2] — unreleased
+## [11.0.0-preview.2] — 2026-11-27
 
 ### Breaking
 
