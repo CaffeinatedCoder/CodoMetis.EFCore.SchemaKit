@@ -429,6 +429,13 @@ internal static class LambdaTranslator
             }
         }
 
+        // Two properties compared with each other order as what is stored, as a property and a
+        // value do: x.A > x.B over two ints stored as text compared '10' with '2' (#242).
+        if (comparison.NodeType is not (ExpressionType.Equal or ExpressionType.NotEqual))
+            foreach (var operand in (System.Linq.Expressions.Expression[])[comparison.Left, comparison.Right])
+                if (PathOf(operand, root) is { } operandPath && !root.Facts.KeepsOrder(operandPath))
+                    throw new NotSupportedException(SchemaKitStrings.OrderOfConverted(comparison, operandPath));
+
         var left  = VisitOperand(comparison.Left, root);
         var right = VisitOperand(comparison.Right, root);
 

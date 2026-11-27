@@ -36,6 +36,10 @@ public sealed class Ticket
 
     public DateTime OpenedAt { get; set; }
     public Guid Key { get; set; }
+
+    // Two numbers, stored as text in one model.
+    public int Low { get; set; }
+    public int High { get; set; }
 }
 
 /// <summary>
@@ -129,6 +133,26 @@ public sealed class ModelFactsBindingTests
             => Configured(modelBuilder.Entity<Ticket>().DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.During), where: x => x.Stage > TicketState.Open)]));
     }
 
+    private sealed class TwoPropertiesOrderedByWhatIsStoredAsText : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var ticket = Configured(modelBuilder.Entity<Ticket>().DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.During), where: x => x.Low < x.High)]));
+            ticket.Property(x => x.Low).HasConversion<string>();
+            ticket.Property(x => x.High).HasConversion<string>();
+        }
+    }
+
+    private sealed class TwoPropertiesEqualAsStored : ITestModel
+    {
+        public static void Build(ModelBuilder modelBuilder)
+        {
+            var ticket = Configured(modelBuilder.Entity<Ticket>().DeclarePostgres(pg => [pg.Exclusion(pg.Overlaps(x => x.During), where: x => x.Low != x.High)]));
+            ticket.Property(x => x.Low).HasConversion<string>();
+            ticket.Property(x => x.High).HasConversion<string>();
+        }
+    }
+
     private sealed class ADateTheColumnCannotHold : ITestModel
     {
         public static void Build(ModelBuilder modelBuilder)
@@ -147,6 +171,24 @@ public sealed class ModelFactsBindingTests
 
         var refused = Assert.ThrowsExactly<NotSupportedException>(() => context.GetService<IDesignTimeModel>().Model);
         StringAssert.Contains(refused.Message, "orders by 'Stage', which is stored through a value converter");
+    }
+
+    /// <summary>
+    /// Two properties ordered by each other order as what is stored too: two ints stored as text
+    /// compared '10' with '2', and the condition said otherwise than the lambda (#242). Equality
+    /// keeps its meaning through the converter, and is taken.
+    /// </summary>
+    [TestMethod]
+    public void An_order_of_two_properties_stored_as_text_is_refused()
+    {
+        using (var context = Contexts.Of<TwoPropertiesOrderedByWhatIsStoredAsText>())
+        {
+            var refused = Assert.ThrowsExactly<NotSupportedException>(() => context.GetService<IDesignTimeModel>().Model);
+            StringAssert.Contains(refused.Message, "orders by 'Low', which is stored through a value converter");
+        }
+
+        using (var context = Contexts.Of<TwoPropertiesEqualAsStored>())
+            Assert.IsNotNull(context.GetService<IDesignTimeModel>().Model);
     }
 
     /// <summary>The mapping's own refusal reaches the consumer with the property it is about.</summary>
