@@ -340,6 +340,23 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
         ];
 
         /// <summary>
+        /// The model whose unique indexes and exclusion constraints got one more condition from a
+        /// convention, beside a condition of their own (#249), and the script 5.6.0 wrote for it.
+        /// </summary>
+        public static string ConventionFolder { get; } = Path.Combine(Fixtures, "ScaffoldedConvention");
+
+        private static readonly Lazy<(ModelSnapshot Snapshot, Migration Migration)> CompiledConvention = new(() => Compile(ConventionFolder));
+
+        /// <summary>The 5.x snapshot of that model as <c>dotnet ef</c> prepares it for a diff.</summary>
+        public static IRelationalModel ConventionSnapshot(DbContext context) => Prepare(context, CompiledConvention.Value.Snapshot.Model);
+
+        /// <summary>What the 5.x migration of that model holds, as 5.x scaffolded it.</summary>
+        public static IReadOnlyList<MigrationOperation> ConventionUp => CompiledConvention.Value.Migration.UpOperations;
+
+        /// <summary>The script 5.x's own generator wrote for it, statement by statement.</summary>
+        public static IReadOnlyList<string> ConventionScript { get; } = Statements(Path.Combine(ConventionFolder, "Initial.sql"));
+
+        /// <summary>
         /// Two migrations whose indexes only 5.x's SQL generator rendered (#28), each with an option
         /// of Npgsql's beside the parts, and the scripts the published 5.6.0 wrote for them.
         /// </summary>
