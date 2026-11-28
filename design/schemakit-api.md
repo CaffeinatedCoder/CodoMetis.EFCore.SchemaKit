@@ -1331,7 +1331,7 @@ for one 5.x annotation. They have no native counterpart, so nothing in the slice
 | Snapshot v2 for `Pg.Exclusion`, the v1 reader for `CustomExclusion:Constraints`, the #10 test for exclusion constraints | v2 and v1 for indexes |
 | `PgSchema<T>`: `Equal`, `Overlaps`, `Exclusion`; `DeclarePostgres`; `UseSchemaKit()` on Npgsql's builder | `PgIndex` and its six methods: preview.2 |
 | The ownership check, runtime half | Design-time half: after its spike |
-| The compile probes, moved from `test/SchemaKit.ApiProbes` into the kernel's test project against the real assemblies | SQL Server: preview.3 |
+| The compile probes, moved from `test/SchemaKit.ApiProbes` into the kernel's test project against the real assemblies | SQL Server: preview.4 |
 
 Done when `migrations add`, `EnsureCreated()`, `GenerateCreateScript()` and the pending-changes check
 all see a declared exclusion constraint on PostgreSQL 16 and 18, a 5.x model with exclusion
