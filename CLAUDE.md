@@ -29,6 +29,7 @@ a factory for SP-GiST, the compile probes). The repository holds:
 | `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedTpc/` of two TPC hierarchies with a constraint on a root, `ScaffoldedOtherKinds/` of one with an index on a property, one on an entity type and a temporal constraint, which nothing reads yet, `ScaffoldedIndexes/` of one with 32 indexes of every kind 5.x stored, beside the script 5.x's own generator wrote for them (`Initial.sql`), `ScaffoldedConvention/` of one whose unique indexes and exclusion constraints got one more condition from a loop over the entity types, beside a condition of their own, with its script, `ScaffoldedReplay/` of two migrations whose indexes carry `CustomIndex:IndexParts` with every option 5.x's generator wrote beside the parts, and the scripts it wrote for them from nothing to the second and back (`Up.sql`, `Down.sql`). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
 | `test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests` | The second provider (#119): two contributors nobody ships, written against the kernel's public contract alone, since the kernel grants the assembly no `InternalsVisibleTo`. A filtered nonclustered index with included columns on SQL Server and an index on an expression on SQLite, each with a dialect, and their tests: the SQL Server one on a live SQL Server 2022 (`Integration/`), the SQLite one on a database file. A comment that begins `Audit:` marks what the contract could not say |
+| `test/CodoMetis.EFCore.SchemaKit.ValueRanges.Tests` | The cross-tests with CodoMetis.ValueRanges (#4): the only project that references both libraries, ValueRanges at `11.0.0-preview.1`, written against the PostgreSQL package's public surface alone. Exclusion constraints and a GiST index over a `DateRange`, a `RangeSet`, a `TimeRange` and a `LocalDateRange`, each beside its twin over Npgsql's own range, without a server and on a live one (`Integration/`) |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, E, the impact table of the plan's section 3.7 measured on live servers, and F, which binds a declaration when the model is finalized and says what a convention sees there (no type mapping on a property yet: the mapping source is asked), for #114. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
@@ -64,6 +65,9 @@ dotnet test test/CodoMetis.EFCore.SchemaKit.Tests/CodoMetis.EFCore.SchemaKit.Tes
 # The second provider's contributors: SQLite always, SQL Server when SCHEMAKIT_TEST_MSSQL is a SqlClient connection string
 dotnet test test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.csproj
 SCHEMAKIT_TEST_MSSQL="Server=localhost,1433;User Id=sa;Password=…;TrustServerCertificate=True" dotnet test test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests.csproj --filter "TestCategory=Integration"
+
+# The cross-tests with CodoMetis.ValueRanges, whose packages come from nuget.org; the live ones when SCHEMAKIT_TEST_PG is set
+dotnet test test/CodoMetis.EFCore.SchemaKit.ValueRanges.Tests/CodoMetis.EFCore.SchemaKit.ValueRanges.Tests.csproj
 
 # The probes and the prototype's behaviour tests (outside the solution: they pin their own compiler)
 dotnet test test/SchemaKit.ApiProbes/SchemaKit.ApiProbes.csproj
@@ -1030,6 +1034,53 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
   `CI` is set. The lane `integration-sqlserver` starts SQL Server 2022 in a step, with a password
   it makes there, since a service's environment would have to be in the file.
 
+## The cross-tests with ValueRanges
+
+`test/CodoMetis.EFCore.SchemaKit.ValueRanges.Tests` (#4): a consumer of SchemaKit and of
+CodoMetis.ValueRanges `11.0.0-preview.1`, the same maintainer's range types, mapped to
+PostgreSQL's range and multirange columns. The mirror tests on the other side are
+CaffeinatedCoder/CodoMetis.ValueRanges#333.
+
+- **Neither library references the other, and that stays so** (decided). The contract between
+  them is the column's store type: `daterange`, `datemultirange`, `timerange`. SchemaKit reads
+  it for the `btree_gist` rule and reads nothing else of ValueRanges. `IndependenceTests` holds
+  both directions, the project files under `src/`, and that the packages grant the assembly no
+  internals: what compiles there compiles for a consumer. This project is the only one that may
+  reference ValueRanges.
+- **A range of ValueRanges is an element through `WithUncheckedOperator(x => x.Period, "&&")`,**
+  since the typed `Overlaps` takes Npgsql's `NpgsqlRange<T>` forms alone. The typed form for
+  ValueRanges' types comes with its satellite (CaffeinatedCoder/CodoMetis.ValueRanges#540).
+  `TypedOverlaps` in the harness is what that package can write today with nothing
+  experimental, and `SatelliteSurfaceTests` holds that it makes the same declaration, and that
+  nothing public starts the elements with an operator of one's own (#257): a constraint over
+  the range alone, or with the range first, is written as records until then.
+- **Each model has a twin over Npgsql's own range,** with the same table, columns and names.
+  The first migration, the create script and the catalog `EnsureCreated()` leaves are compared
+  between the two, so a difference is the property type's. None was found.
+- **A snapshot holds a property of ValueRanges as the `NpgsqlRange<T>` its converter writes,**
+  never as ValueRanges' type, and the column's type as text. On that side Npgsql's mapping is
+  asked, on the model's ValueRanges'. To a snapshot such a column is one of Npgsql's own, so a
+  5.x snapshot over one is the fixture's form: `ComingFrom5xTests` diffs one against the model
+  declared here, both ways. Its snapshot is written in the test, since no fixture was
+  scaffolded by 5.x beside ValueRanges 10.x.
+- **The snapshot of a `TimeRange` column cannot be the target of a diff, and that is not
+  SchemaKit's.** Nothing maps `NpgsqlRange<TimeOnly>` to `timerange` in a context wired as
+  ValueRanges documents, and EF Core's own differ throws a `NullReferenceException`, also with
+  no SchemaKit in the context
+  (`The_snapshot_of_a_TimeRange_column_fails_as_the_target_of_a_diff_with_or_without_SchemaKit`).
+  `MapRange<TimeOnly>("timerange")` beside `UseValueRanges()` is the way round it that was
+  measured. The test fails when nothing is thrown any more, and says what to move then.
+- **`timerange` is created by the model** (`HasPostgresRange`), as an `AlterDatabaseOperation`
+  of EF Core's. SchemaKit's create comes after EF Core's operations, the type's among them
+  (`One_migration_creates_the_range_type_the_table_and_the_constraint`). `LiveDatabase` there
+  calls `ReloadTypes` after a migration, as Npgsql's migrator does: a data source keeps the
+  types it read before the type existed.
+- **The README's sample is a model of these tests** (`Bookings.AsInTheReadme`). The sample
+  tests compile against the shipped assemblies alone and cannot see a type of ValueRanges, so
+  the page's entity has Npgsql's range, and the test here holds the statements the page shows.
+- **Dependabot raises ValueRanges here on purpose:** the pull request that brings its next
+  preview is where the cross-tests meet it.
+
 ## Packaging and the release
 
 `.github/workflows/release.yml`, `nightly.yml`, and the tests under `Conventions/` of the kernel's
@@ -1084,6 +1135,11 @@ here yet are listed in #152, each with what has to exist first.
 - **Every test project directly under `test/` has a NuGet entry in `dependabot.yml`**
   (`DependabotConventionTests`, #236). What is deeper, the smoke test's consumers and the 5.x
   fixture, pins what it measures and has none.
+- **Every test project of the solution is run by the `test` lane, and one with integration
+  tests by a lane that has a server** (`TestLaneConventionTests`). `dotnet.yml` names each
+  lane's projects, so that a project that ran no test fails its step; one nobody added to the
+  list would be run by no lane. The steps are run with a function in `dotnet`'s place that
+  records what it was called with.
 - **A test that reads the repository reads what git tracks** (`RepositoryLayout.Files`), not
   the folder: a file that was never added and another worktree's copy are on the disk and in no
   commit. Add a new file before a test is asked about it.

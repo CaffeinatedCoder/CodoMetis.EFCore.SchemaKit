@@ -189,6 +189,7 @@ created again.
 | Not deferrable | No `deferral:`, which is `Deferral.NotDeferrable` | No operations |
 | `WithExpression("lower(\"Code\")", "=")` | The SQL as it was, `pg.Equal(x => Sql.Raw<string>("lower(\"Code\")"))`, or a lambda, `pg.Equal(x => x.Code.ToLower())`. See [Expressions](#expressions) | No operations with the SQL as it was. With a lambda, when the text is the same |
 | `WithColumn("Column", "-\|-")`, any other operator | `.WithUncheckedOperator(x => x.Column, "-|-")`, after the first element. The database checks the operator when the migration is applied | Not in the fixture |
+| `WithOverlaps(x => x.Period)`, or `x => x.Period` as the range, over a range of CodoMetis.ValueRanges | `.WithUncheckedOperator(x => x.Period, "&&")`, after the first element: `pg.Overlaps` takes Npgsql's own ranges. See [the README](../README.md#ranges-of-codometisvalueranges) | No operations (`A_5x_snapshot_against_the_same_constraint_over_a_DateRange_is_no_operations`), with a snapshot written in the test in 5.x's form, not scaffolded by 5.x |
 | `UseMethod("spgist")`, one element | `new PgExclusion.SpGist(new ExclusionElement(new KeyTarget.Column("…"), ExclusionOperator.Overlaps))`; a factory method comes with [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) | No operations |
 | `UseMethod("gist")` | `pg.Exclusion(…)`, which is GiST | No operations |
 | `UseMethod("btree")`, `"hash"`, `"gin"`, `"brin"`, or SP-GiST with more than one element | Refused: the snapshot is not read. PostgreSQL cannot back an exclusion constraint with these, or it is a unique constraint. Remove it in the 5.x project first, apply that migration, and keep it by hand-written SQL afterwards | Refused |
@@ -551,6 +552,10 @@ Measured in the review of 2026-11-14 and checked again since.
   `ToTable("role_grants", "public")`, and the move is written
   (`Moving_the_table_back_with_the_default_schema_named`). This is also the Down of every move
   into a schema. It is Npgsql's to fix; #105 tracks the report upstream.
+- **A `TimeRange` column of CodoMetis.ValueRanges needs `MapRange<TimeOnly>("timerange")`
+  beside `UseValueRanges()`.** Without it, EF Core throws (`NullReferenceException`) when the
+  model snapshot is the target of a diff, with or without SchemaKit. The
+  [README](../README.md#ranges-of-codometisvalueranges) says why, and names the tests.
 - **On `11.0.0-preview.1`, Npgsql's rc.3 is restored.** That preview was built against
   `Npgsql.EntityFrameworkCore.PostgreSQL` `11.0.0-rc.3`, which depends on EF Core
   `11.0.0-rc.3.26522.148` exactly. Reference `Npgsql.EntityFrameworkCore.PostgreSQL` 11.0.0 in the

@@ -48,6 +48,12 @@ Where no lambda says what you need, write the SQL into the lambda:
 [README](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#sql-you-write-yourself)
 says what to know about it.
 
+A column that [CodoMetis.ValueRanges](https://www.nuget.org/packages/CodoMetis.ValueRanges.EFCore.PostgreSQL)
+maps is an element of a constraint with `WithUncheckedOperator(x => x.Period, "&&")`, after
+another element, and a key of `pg.Gist`. The
+[README](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/blob/main/README.md#ranges-of-codometisvalueranges)
+says what to know, a `TimeRange` column included.
+
 `concurrently: true` on any of them builds the index with `CREATE INDEX CONCURRENTLY`, outside the
 migration's transaction. `migrations script --idempotent` fails for a migration with such an
 index and names it, since PostgreSQL rejects the statement in that script (25001). The

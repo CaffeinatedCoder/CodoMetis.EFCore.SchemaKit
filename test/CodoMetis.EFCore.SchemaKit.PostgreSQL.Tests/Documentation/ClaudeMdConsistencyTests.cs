@@ -66,7 +66,6 @@ public sealed partial class ClaudeMdConsistencyTests
     {
         ["AddUniqueConstraint"] = "EF Core's: the call a migration of 5.x holds",
         ["MigrationHarness"] = "EFCore.ComplexIndexes': named as what is not ported",
-        ["NullReferenceException"] = "the BCL's",
     };
 
     /// <summary>A test class named alone: <c>DeclarationStoreTests</c>.</summary>

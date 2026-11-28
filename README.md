@@ -270,6 +270,68 @@ Good to know:
 - **A namespace named `Sql` in your project hides the class.** Add
   `using Sql = CodoMetis.EFCore.SchemaKit.Sql;` inside your namespace.
 
+## Ranges of CodoMetis.ValueRanges
+
+[CodoMetis.ValueRanges](https://www.nuget.org/packages/CodoMetis.ValueRanges.EFCore.PostgreSQL)
+stores its range types in PostgreSQL's range and multirange columns. You declare a constraint or
+an index over such a column like over any other. For `&&` in a constraint, use
+`WithUncheckedOperator`:
+
+```csharp
+modelBuilder.Entity<Booking>().ToTable("bookings").DeclarePostgres(pg =>
+[
+    // During is a DateRange of ValueRanges here, which is a daterange column.
+    pg.Exclusion(pg.Equal(x => x.RoomId).WithUncheckedOperator(x => x.During, "&&"), name: "ex_booking_room_during"),
+    pg.Gist(x => x.During, name: "ix_booking_during"),
+]);
+```
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE INDEX ix_booking_during ON bookings USING gist ("During");
+ALTER TABLE bookings ADD CONSTRAINT ex_booking_room_during EXCLUDE USING gist ("RoomId" WITH =, "During" WITH &&);
+```
+
+Call both `UseSchemaKit()` and ValueRanges' `UseValueRanges()` inside `UseNpgsql`, in either
+order. Neither package references the other. SchemaKit reads the column's type, `daterange`
+here, and needs nothing else from ValueRanges.
+
+This is tested on `main` against ValueRanges `11.0.0-preview.1`, on PostgreSQL 16 and 18, for a
+`DateRange`, a `RangeSet<DateRange, DateOnly>`, a `TimeRange` and the `LocalDateRange` of its
+NodaTime package (`ValueRangesLiveTests`). For each of them the migration leaves the database
+`EnsureCreated()` builds, PostgreSQL rejects a row that overlaps (23P01), and it accepts one that
+is adjacent. PostgreSQL uses the GiST index for a query with `Overlaps`
+(`The_planner_takes_the_index_for_the_overlap_query_EF_Core_writes`).
+
+Good to know:
+
+- **`pg.Overlaps` takes Npgsql's own ranges only.** A typed `Overlaps` for the types of
+  ValueRanges comes with a package of ValueRanges
+  ([CodoMetis.ValueRanges#540](https://github.com/CaffeinatedCoder/CodoMetis.ValueRanges/issues/540)).
+  Until then `WithUncheckedOperator` with `&&` declares the same constraint. The migration and
+  the database are the ones you get for a column of `NpgsqlRange<DateOnly>`
+  (`A_column_of_ValueRanges_and_one_of_Npgsqls_own_are_the_same_database`).
+- **`WithUncheckedOperator` comes after another element.** A constraint over the range alone, or
+  with the range first, has no lambda form yet
+  ([#257](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/257)). Write its
+  elements as records:
+  `new PgExclusion.Gist([new ExclusionElement(new KeyTarget.Column("During"), ExclusionOperator.Overlaps)])`.
+- **A range needs no `btree_gist`.** The migration installs the extension for the `=` element. A
+  constraint over the range alone installs nothing
+  (`A_constraint_over_the_range_alone_applies_on_a_database_without_any_extension`).
+- **A `TimeRange` column needs one more line with this preview of ValueRanges.** Your model
+  creates the type with `HasPostgresRange("timerange", "time")`, and the migration creates it
+  before the table and the constraint. The model snapshot, the file `migrations add` keeps beside
+  your migrations, holds the property as `NpgsqlRange<TimeOnly>`, and nothing maps that to
+  `timerange`. EF Core then throws (`NullReferenceException`) when the snapshot is the target of
+  a diff, which is how it computes the `Down` of a later migration. It does so without SchemaKit
+  as well (`The_snapshot_of_a_TimeRange_column_fails_as_the_target_of_a_diff_with_or_without_SchemaKit`).
+  Call `MapRange<TimeOnly>("timerange")` beside `UseValueRanges()`: the model and its snapshot
+  then differ in nothing, both ways
+  (`With_timerange_mapped_to_Npgsqls_range_too_the_model_and_its_snapshot_differ_in_nothing`).
+- **Coming from 5.x,** a constraint over such a column moves with no operations. The
+  [guide](docs/moving-from-complexindexes-5x.md#call-by-call) has the row.
+
 ## What this preview does
 
 - **Exclusion constraints on PostgreSQL,** declared with `DeclarePostgres`: elements compared by
@@ -288,6 +350,8 @@ Good to know:
   EF Core renames is followed, and a change of a column's type leaves the index in place.
   PostgreSQL drops an index with any column it reads, so the migration writes no drop for it and
   creates what you still declare.
+- **Columns of CodoMetis.ValueRanges** as elements of a constraint and as keys of a GiST index
+  ([above](#ranges-of-codometisvalueranges)). This is tested on `main` and not for `preview.2`.
 - **Every migration path,** on PostgreSQL 16 and 18. The live tests apply each diff to a server in CI
   and compare the catalog it leaves with what `EnsureCreated()` builds for the same model.
 - **Changes in place where PostgreSQL has one:** a renamed constraint is renamed. Anything else
@@ -325,6 +389,7 @@ Good to know:
 | A declaration on a column only a derived type has, while the type shares its table: refused | [#85](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/85) |
 | A cast in a lambda that changes the value, such as `(int)x.Amount == 2`: refused | [#103](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/103) |
 | A factory method for an SP-GiST exclusion constraint | [#25](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/25) |
+| An exclusion constraint that starts with an element compared by an operator of your own, or has no other element, such as one over a range of CodoMetis.ValueRanges alone: no lambda form. Write the elements as records | [#257](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/257) |
 | A member of an element of a JSON collection, and an owned type mapped with `ToJson()`: refused | [#43](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/43) |
 
 Known limits of this preview, each with what it costs:

@@ -16,11 +16,14 @@ updates:
 
   # Every test project directly under test/ has an entry (DependabotConventionTests). What is
   # deeper, the smoke test's consumers and the 5.x fixture, is a measurement of what it pins.
+  # CodoMetis.ValueRanges is not ignored: the cross-tests (#4) are meant to meet each of its
+  # previews, and the pull request that raises it is where they do.
   - package-ecosystem: nuget
     directories:
       - /test/CodoMetis.EFCore.SchemaKit.Tests
       - /test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests
       - /test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests
+      - /test/CodoMetis.EFCore.SchemaKit.ValueRanges.Tests
     schedule:
       interval: monthly
     groups:
