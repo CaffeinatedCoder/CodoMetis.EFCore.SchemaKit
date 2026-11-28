@@ -201,7 +201,7 @@ created again.
 | `SuppressTemporalExtensionAutoInjection()` | `modelBuilder.SuppressBtreeGistInjection()`, which sets the same annotation | |
 | `GetDeclaredExclusionConstraints()`, `GetExclusionConstraints()` | `entityType.GetDeclarations<PgExclusion>()`, on the declaring type | |
 | `FindExclusionConstraint(name)` | `entityType.FindDeclaration<PgExclusion>(name)` | |
-| `AddExclusionConstraintFilter(…)` | `entityType.Redeclare<PgExclusion>(ex => ex.AndWhere(…))`. How a condition is written outside `DeclarePostgres` is not settled ([#112](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/112)) | |
+| `AddExclusionConstraintFilter(…)` | `entityType.Redeclare<PgExclusion>(ex => ex.AndWhere(…))`, with the condition as a value from `PgSchema.Where`: [a condition a convention adds](#a-condition-a-convention-adds) | No operations |
 | `ExclusionConstraintDeclaration`, `ExclusionPartDefinition`, `ExclusionConstraintDefinition` | `PgExclusion`, `ExclusionElement` | |
 | `NpgsqlExclusionAnnotations.Constraints` | Not public. The snapshot's `CustomExclusion:Constraints` is read; in the context's own model it is refused | |
 
@@ -397,6 +397,43 @@ Refused where the lambda is written, each with a message that says why:
   `{Amount} = 2`;
 - a method outside the list above.
 
+### A condition a convention adds
+
+In 5.x a loop could give the indexes and constraints of an entity type one more condition after
+they were declared, for entity types it knew only when it ran:
+
+```csharp 5.x
+foreach (var entityType in modelBuilder.Model.GetEntityTypes().Where(e => e.FindProperty("DeletedOn") is not null))
+{
+    entityType.AddComplexIndexFilter("{DeletedOn} IS NULL", index => index.IsUnique);
+    entityType.AddExclusionConstraintFilter("{DeletedOn} IS NULL");
+}
+```
+
+Here the condition is a value, and `Redeclare` adds it to each declaration:
+
+```csharp
+var live = PgSchema.Where<object>(x => Sql.Raw<bool>("{DeletedOn} IS NULL"));
+foreach (var entityType in modelBuilder.Model.GetEntityTypes().Where(e => e.FindProperty("DeletedOn") is not null))
+{
+    entityType.Redeclare<PgIndex>(index => index is PgIndex.BTree { Unique: not null } ? index.AndWhere(live) : index);
+    entityType.Redeclare<PgExclusion>(exclusion => exclusion.AndWhere(live));
+}
+```
+
+- The condition is written once, for no entity type in particular: `object` is enough, since the
+  SQL names the property by its path. `{DeletedOn}` is the column of that property on each entity
+  type the condition is added to, and the property can be a shadow property.
+- Run the loop after the declarations it is for. It changes what is declared when it runs.
+- `Redeclare` returns how many declarations it changed, as 5.x's two calls did.
+- `AndWhere` does not add a condition that is the declaration's last one already, so a loop that
+  runs twice changes nothing the second time.
+- The first migration after the move has no operations, for a declaration without a condition of
+  its own and for one that has one, written as SQL or as a lambda. 5.x stored
+  `(its own) AND (the convention's)`, and `AndWhere` writes the same. `LegacyConventionHandoverTests`
+  holds it against a snapshot 5.6.0 scaffolded, and `LegacyConventionLiveTests` compares the catalog
+  with the database 5.6.0's script builds, on both servers.
+
 ## Migrations 5.x scaffolded
 
 They stay, and SchemaKit's SQL generator applies them to a new database:
@@ -458,7 +495,7 @@ migration after such a move is not documented here.
 | `DbOrder.NullsFirst`, `DbOrder.NullsLast`, `DbNullSort` | `pg.Key(…).NullsFirst()`, `pg.Key(…).NullsLast()` |
 | `IIndexExpression`, `SqlIndexExpression` | `Sql.Raw<T>("…")` inside the key's lambda, or a key that is a lambda, above |
 | `GetDeclaredComplexIndexes()`, `GetComplexIndexes()`, `FindComplexIndex(name)` | `GetDeclarations<PgIndex>()` and `FindDeclaration<PgIndex>(name)` |
-| `IMutableEntityType.AddComplexIndex(…)`, `AddComplexIndexFilter(…)` | `Declare` and `Redeclare` on the entity type, with `AndWhere` on the declaration |
+| `IMutableEntityType.AddComplexIndex(…)`, `AddComplexIndexFilter(…)` | `Declare` and `Redeclare` on the entity type, with `AndWhere` on the declaration: [a condition a convention adds](#a-condition-a-convention-adds) |
 | `UseComplexIndexes()`, `UseComplexIndexes<TContext>()`, `AddComplexIndexes()` | `UseSchemaKit()` on the options builder, `AddEntityFrameworkSchemaKit()`: the kernel alone, for a provider without a SchemaKit package. It declares nothing by itself |
 | `IndexNameScope` | Dropped: a property of the provider's dialect |
 | `CompositeIndexDefinition`, `IndexPartDefinition`, `ResolvedIndexPart`, `CompositeIndexSerializer`, `IndexPartsSerializer`, `ComplexIndexDeclaration` | Dropped: declarations are values, and their stored form is SchemaKit's |
@@ -481,7 +518,7 @@ migration after such a move is not documented here.
 | `UseCollation(…)` | `pg.Key(…).Collate(…)` |
 | `HasStorageParameter(name, value)` | the method's own parameter, above |
 | `HasExpressionIndex(…)`, every overload, and `ExpressionIndexBuilder` | `Sql.Raw<T>("…")` inside the key's lambda, or a key that is a lambda, above |
-| `HasFilter<TEntity>(predicate)` on an index builder, `AddComplexIndexFilter<TEntity>(…)` | `where:`, and `AndWhere` on a declaration |
+| `HasFilter<TEntity>(predicate)` on an index builder, `AddComplexIndexFilter<TEntity>(…)` | `where:`, and `AndWhere` on a declaration with the lambda in `PgSchema.Where<TEntity>(…)`: [a condition a convention adds](#a-condition-a-convention-adds) |
 | `HasTemporalConstraint(…)` | Native: `HasAlternateKey(…).WithoutOverlaps()` or `HasKey(…).WithoutOverlaps()`. Its snapshot is refused until [#18](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/18) |
 | `HasTemporalForeignKey(…)` | Native: `HasForeignKey(…).WithPeriod()`. Its snapshot is refused until #18 |
 | `UseBtreeGist()`, `SuppressTemporalExtensionAutoInjection()` | [Above](#call-by-call) |

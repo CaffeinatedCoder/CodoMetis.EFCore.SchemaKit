@@ -9,7 +9,7 @@
 # being a 5.x consumer. Packages come from nuget.org into a private folder, so nothing built here
 # can stand in for a published one.
 #
-# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds, ../ScaffoldedTpc, ../ScaffoldedIndexes and ../ScaffoldedReplay. It is checked in and never edited by hand: the tests compile
+# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds, ../ScaffoldedTpc, ../ScaffoldedIndexes, ../ScaffoldedConvention and ../ScaffoldedReplay. It is checked in and never edited by hand: the tests compile
 # these files as they are. EF Core stamps a migration with the time it was added; the name is fixed
 # here so that a second run changes nothing else.
 set -euo pipefail
@@ -89,6 +89,19 @@ grep -q "WITHOUT OVERLAPS" "$here/ScaffoldedOtherKinds/Initial.cs" \
 
 [ "$(grep -c "CREATE .*INDEX" "$here/ScaffoldedIndexes/Initial.sql")" -ge 30 ] \
   || { echo "The script holds fewer than thirty indexes: 5.x did not take part." >&2; exit 1; }
+
+# A condition a convention added to every unique index and exclusion constraint (#249), beside a
+# condition of the declaration's own, and the script 5.x's own generator writes for the model.
+scaffold ConventionContext ScaffoldedConvention Legacy5x.Migrations.Convention
+dotnet build "$work/Generator/Legacy5x.csproj" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
+"$work/tools/dotnet-ef" migrations script --no-build \
+  --project "$work/Generator/Legacy5x.csproj" \
+  --context ConventionContext \
+  --output "$here/ScaffoldedConvention/Initial.sql"
+sed -i.bak -E "s/'[0-9]{14}_Initial'/'20260101000000_Initial'/" "$here/ScaffoldedConvention/Initial.sql"
+rm "$here/ScaffoldedConvention/Initial.sql.bak"
+grep -q "AND ({DeletedOn} IS NULL)" "$here/ScaffoldedConvention/ConventionContextModelSnapshot.cs" \
+  || { echo "The snapshot holds no condition joined to another: the convention did not run." >&2; exit 1; }
 
 # The operations only 5.x's generator rendered (#28), in two migrations, and the scripts 5.x's own
 # generator writes for them: Up.sql from nothing to the second migration, Down.sql back to nothing.
