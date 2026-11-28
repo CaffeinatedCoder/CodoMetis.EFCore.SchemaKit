@@ -596,8 +596,9 @@ first. No public API is written before they pass. **Both passed on 2026-11-11.**
 | `rc.1` | The contract freezes, after the SQL Server package has been written against it; the migration guide is complete. The floors moved to `[11.0.0, 12.0.0)` when Npgsql shipped 11.0.0 (#174) | Every row of section 4 green |
 | `11.0.0` | | Package validation gets its first baseline (#6) |
 
-Not placed in a preview yet: the handover matcher (#10), the handover of temporal constraints (#18)
-and legacy replay on SQLite (the rest of #28). They stay in the `11.0.0` milestone.
+Not placed in a preview yet: the handover matcher (#10), the handover of temporal constraints (#18),
+and what is left of the legacy replay (#28): SQLite's, and the temporal operations 5.0.1 and
+earlier scaffolded. They stay in the `11.0.0` milestone.
 
 ## 7. Decisions
 
