@@ -52,7 +52,7 @@ jobs:
       # A project that ran no test fails the step, so one added here cannot pass on nothing.
       - name: Test
         run: |
-          for project in CodoMetis.EFCore.SchemaKit.Tests CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests CodoMetis.EFCore.SchemaKit.SecondProvider.Tests; do
+          for project in CodoMetis.EFCore.SchemaKit.Tests CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests CodoMetis.EFCore.SchemaKit.SecondProvider.Tests CodoMetis.EFCore.SchemaKit.ValueRanges.Tests; do
             echo "::group::$project"
             dotnet test "test/$project/$project.csproj" \
               -c Release --no-build \
@@ -129,7 +129,7 @@ jobs:
       # category cannot retire a project's live tests while the lane reports green.
       - name: Integration tests
         run: |
-          for project in CodoMetis.EFCore.SchemaKit.Tests CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests; do
+          for project in CodoMetis.EFCore.SchemaKit.Tests CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests CodoMetis.EFCore.SchemaKit.ValueRanges.Tests; do
             echo "::group::$project"
             dotnet test "test/$project/$project.csproj" \
               -c Release \

@@ -29,8 +29,8 @@ public sealed partial class DocumentationApiTests
     private const string Kernel = "CodoMetis.EFCore.SchemaKit";
 
     /// <summary>
-    /// What a sentence may call that is not SchemaKit's: EF Core, Npgsql, the BCL and dependency
-    /// injection. Everything else has to be this repository's and has to exist, which is what makes
+    /// What a sentence may call that is not SchemaKit's: EF Core, Npgsql, the BCL, dependency
+    /// injection and CodoMetis.ValueRanges. Everything else has to be this repository's and has to exist, which is what makes
     /// the test say anything. A call that is added to a page belongs here when it is not ours, and
     /// the failure names it.
     /// </summary>
@@ -42,7 +42,9 @@ public sealed partial class DocumentationApiTests
         "HasConversion", "IsRequired",
         // Npgsql
         "UseNpgsql", "AddEntityFrameworkNpgsql", "HasPostgresExtension",
-        "AreNullsDistinct", "WithoutOverlaps", "WithPeriod",
+        "AreNullsDistinct", "WithoutOverlaps", "WithPeriod", "HasPostgresRange", "MapRange",
+        // CodoMetis.ValueRanges, in the pages' section on its ranges (#4)
+        "UseValueRanges",
         // SQL Server
         "IsClustered", "IsCreatedOnline", "SortInTempDb", "UseDataCompression",
         // The BCL

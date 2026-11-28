@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>CodoMetis.EFCore.SchemaKit.ValueRanges.Tests</RootNamespace>
+        <!-- The snapshot harness drives EF's design-time services, which are EF-internal. SK9001 is
+             not switched off: what a consumer of both libraries writes carries no experimental
+             mark, and the one file that stands in for a package of its own says so where it does. -->
+        <NoWarn>$(NoWarn);EF1001;1591</NoWarn>
+    </PropertyGroup>
+
+    <!--
+        The cross-tests with CodoMetis.ValueRanges (#4): a consumer of both libraries. Neither
+        references the other, so the one place they meet is a project that references both, and
+        this is the only one in the repository. Nothing under src/ may name ValueRanges
+        (IndependenceTests holds it).
+
+        The PostgreSQL package through its public surface alone: it grants this assembly no
+        InternalsVisibleTo, as a consumer and a satellite of ValueRanges have none.
+    -->
+    <ItemGroup>
+        <ProjectReference Include="../../src/CodoMetis.EFCore.SchemaKit.PostgreSQL/CodoMetis.EFCore.SchemaKit.PostgreSQL.csproj" />
+    </ItemGroup>
+
+    <!-- The four packages at the version the tests were measured against. The two EF Core packages
+         bring the other two; all four are named, so that each one's version is stated here. -->
+    <ItemGroup>
+        <PackageReference Include="CodoMetis.ValueRanges" Version="11.0.0-preview.1" />
+        <PackageReference Include="CodoMetis.ValueRanges.NodaTime" Version="11.0.0-preview.1" />
+        <PackageReference Include="CodoMetis.ValueRanges.EFCore.PostgreSQL" Version="11.0.0-preview.1" />
+        <PackageReference Include="CodoMetis.ValueRanges.EFCore.PostgreSQL.NodaTime" Version="11.0.0-preview.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0" />
+        <PackageReference Include="MSTest" Version="4.5.3" />
+    </ItemGroup>
+
+    <!-- One copy of each: what scaffolds and compiles a model snapshot, what finds the server, and
+         what finds the checkout and its files (with the version type it reads). -->
+    <ItemGroup>
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/Snapshots.cs" Link="Harness/Snapshots.cs" />
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/RepositoryLayout.cs" Link="Harness/RepositoryLayout.cs" />
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Harness/ReleaseVersion.cs" Link="Harness/ReleaseVersion.cs" />
+        <Compile Include="../CodoMetis.EFCore.SchemaKit.Tests/Integration/PostgresServer.cs" Link="Integration/PostgresServer.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    </ItemGroup>
+
+</Project>
