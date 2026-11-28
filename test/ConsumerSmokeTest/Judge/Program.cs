@@ -140,6 +140,7 @@ switch (args[0])
         {
             "shop" => Behaviour(connection, "bookings", "\"RoomId\", \"Period\", \"CancelledOn\"", cancelled: true),
             "legacy" => Behaviour(connection, "\"Booking\"", "\"RoomId\", \"During\"", cancelled: false),
+            "indexes" => Duplicate(connection),
             _ => throw new InvalidOperationException($"Unknown model '{args[2]}'."),
         };
     }
@@ -193,6 +194,43 @@ static void Constraints(NpgsqlConnection connection)
 
     using var extension = new NpgsqlCommand("SELECT count(*) FROM pg_extension WHERE extname = 'btree_gist'", connection);
     Console.WriteLine((long)extension.ExecuteScalar()! == 1 ? "EXTENSION: btree_gist" : "EXTENSION: none");
+}
+
+// What an index 5.x built on an expression is for: a second account whose title differs in case
+// alone is refused (23505), by the unique index on lower("Title"). Everything else of the two
+// rows differs, so that no other index refuses them. Rolled back.
+static int Duplicate(NpgsqlConnection connection)
+{
+    using (var exists = new NpgsqlCommand("SELECT to_regclass('accounts') IS NOT NULL", connection))
+        if (!(bool)exists.ExecuteScalar()!)
+        {
+            Console.WriteLine("DUPLICATE: no table");
+            return 0;
+        }
+
+    static string Account(int n, string title)
+    {
+        var document = "{\"Level\":" + n + ",\"Theme\":\"t\",\"Active\":true,\"Address\":{\"Zip\":\"z\"}}";
+        return $"""
+            INSERT INTO accounts ("Email", "Nick", "Kind", "Title", "GranteeId", "Rank", "CreatedAt", "Tags", "Period", "Contact_City", "Contact_Phone", payload, prefs)
+            VALUES ('e{n}', 'n{n}', 'k{n}', '{title}', {n}, {n}, now(), ARRAY[]::text[], '[2026-01-01,2026-02-01)', 'c', 'p{n}', '{document}', '{document}')
+            """;
+    }
+
+    using var transaction = connection.BeginTransaction();
+    try
+    {
+        using (var first = new NpgsqlCommand(Account(1, "Rent"), connection, transaction)) first.ExecuteNonQuery();
+        using (var second = new NpgsqlCommand(Account(2, "RENT"), connection, transaction)) second.ExecuteNonQuery();
+        Console.WriteLine("DUPLICATE: accepted");
+    }
+    catch (PostgresException refused)
+    {
+        Console.WriteLine($"DUPLICATE: {refused.SqlState} {refused.ConstraintName}");
+    }
+
+    transaction.Rollback();
+    return 0;
 }
 
 // What the constraint is for: a second, overlapping booking of the room is refused (23P01). In the

@@ -666,6 +666,56 @@ else
   fail "5.x: has-pending-model-changes" "exit $code"
 fi
 
+# ---- a project that comes from 5.x with indexes ---------------------------------------------------------------
+
+# The snapshot and the migration the published 5.6.0 scaffolded for 32 indexes, in a project that
+# declares the same indexes with SchemaKit. Ten of the migration's indexes are operations only
+# 5.x's own SQL generator rendered, an index on an expression or with a null order (#28): the
+# packed package has to replay them, or a 5.x project builds no new database.
+echo "==> A project that comes from EFCore.ComplexIndexes 5.x, with indexes on expressions"
+legacy_indexes=$work/LegacyIndexes
+mkdir -p "$legacy_indexes/Migrations"
+cp "$root"/test/Fixtures/ComplexIndexes5x/ScaffoldedIndexes/*.cs "$legacy_indexes/Migrations/"
+build "$legacy_indexes"
+use_db legacyindexes
+
+ef "$legacy_indexes" migrations has-pending-model-changes
+if [[ $code == 0 ]] && has "$log" 'No changes have been made'; then
+  ok "5.x indexes: has-pending-model-changes on 5.x's snapshot" "no changes: the declarations are the indexes 5.x created"
+else
+  fail "5.x indexes: has-pending-model-changes on 5.x's snapshot" "exit $code"
+fi
+
+ef "$legacy_indexes" database update
+[[ $code == 0 ]] || fail "5.x indexes: database update" "exit $code: 5.x's migration did not apply"
+judge check "$(db legacyindexes)" indexes
+replayed_indexes=(
+  'INDEX public.accounts IX_accounts_lowerTitle: CREATE UNIQUE INDEX "IX_accounts_lowerTitle" ON public.accounts USING btree (lower("Title"))'
+  'INDEX public.accounts ux_account_kind_title: CREATE UNIQUE INDEX ux_account_kind_title ON public.accounts USING btree ("Kind", upper("Title") DESC NULLS LAST) WHERE ("Rank" > 0)'
+  'INDEX public.accounts IX_accounts_Kind_Rank_Score: CREATE INDEX "IX_accounts_Kind_Rank_Score" ON public.accounts USING btree ("Kind", "Rank" DESC, "Score" NULLS FIRST)'
+)
+if [[ $code == 0 && $(grep -c '^INDEX ' "$log") == 32 ]] && has "$log" "${replayed_indexes[@]}" 'DUPLICATE: 23505 IX_accounts_lowerTitle'; then
+  ok "5.x indexes: database update, 5.x's migration as scaffolded" "the 32 indexes in pg_index, those on an expression among them; a title that differs in case alone is refused (23505)"
+else
+  fail "5.x indexes: database update, 5.x's migration as scaffolded" "the database does not hold the 32 indexes"
+fi
+
+ef "$legacy_indexes" migrations script --output "$work/legacy-indexes.sql"
+if [[ $code == 0 ]] && has "$work/legacy-indexes.sql" 'CREATE UNIQUE INDEX "IX_accounts_lowerTitle" ON accounts ((lower("Title")));' \
+    && lacks "$work/legacy-indexes.sql" '__requires_UseNpgsqlComplexIndexes__'; then
+  ok "5.x indexes: migrations script" "the statement 5.x wrote, and none of the operation's placeholder columns"
+else
+  fail "5.x indexes: migrations script" "the script does not hold the index as 5.x wrote it"
+fi
+
+ef "$legacy_indexes" database update 0
+judge check "$(db legacyindexes)" indexes
+if [[ $code == 0 && $(grep -c '^INDEX ' "$log") == 0 ]] && has "$log" 'DUPLICATE: no table'; then
+  ok "5.x indexes: database update 0" "the way back: the tables are gone"
+else
+  fail "5.x indexes: database update 0" "the Down of 5.x's migration did not apply"
+fi
+
 # ---- the outcome ------------------------------------------------------------------------------------------------
 
 echo

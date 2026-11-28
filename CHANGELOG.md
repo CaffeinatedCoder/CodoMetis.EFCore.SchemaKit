@@ -6,6 +6,13 @@ One section per version, newest first, in the form
 <!-- The date replaces "unreleased" in the commit that is tagged. release.yml refuses a tag whose
      heading is not `## [x.y.z] — yyyy-mm-dd`, so this heading stops a tag until then. -->
 
+## [11.0.0-preview.3] — unreleased
+
+### Added
+
+- A migration `EFCore.ComplexIndexes` 5.x scaffolded with an index on an expression, or with `NULLS FIRST`/`LAST`, applies to a new PostgreSQL database, where `preview.2` refused it. 5.x scaffolded such an index as a `CreateIndex` with the annotation `CustomIndex:IndexParts`, which only its own SQL generator wrote. The operation becomes the statement that generator wrote: the script `migrations script` writes for two such migrations is the script the published 5.6.0 wrote, statement for statement, up and down. An annotation in a shape 5.x never wrote is refused by name. An index 5.x built with `CONCURRENTLY` is refused in `migrations script --idempotent`, as a declared one is ([#252](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/252)).
+- In the contract, `LegacyOperationRewriter` and `AddLegacyOperationRewriter`: a package replays an operation of a migration an earlier package scaffolded. One annotation has one rewriter, and an answer that is empty or still carries the annotation is refused, as is a rewriter that takes the annotation off the operation it was asked for.
+
 ## [11.0.0-preview.2] — 2026-11-27
 
 ### Breaking

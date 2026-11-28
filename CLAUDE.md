@@ -15,8 +15,9 @@ every path, on PostgreSQL 16 and 18. An index is the second object: all five sli
 `PgIndex` are in (#27 has the slices and what was decided for them), every access method,
 `concurrently:`, members of a JSON document, and the readers for 5.x's indexes. A snapshot
 scaffolded by 5.x with exclusion constraints and indexes moves to the same model declared here
-with no operations. Nothing of
-`preview.2` is published** (what is left of
+with no operations, and a migration 5.x scaffolded with an index on an expression is replayed
+as the statement 5.x wrote (#28, the PostgreSQL slice). `preview.2` is published and
+`preview.3` is what is being prepared** (what is left of
 the resolver is #43, of the planner #24, of the translator #26, of exclusion constraints #25:
 a factory for SP-GiST, the compile probes). The repository holds:
 
@@ -25,13 +26,13 @@ a factory for SP-GiST, the compile probes). The repository holds:
 | `src/CodoMetis.EFCore.SchemaKit` | The kernel. So far the host (`UseSchemaKit()`, the differ and generator decorators, the wiring guards), the SQL vocabulary statements are built from, the contributor contract and the declaration store. Public are the registration methods and the contract, which is marked experimental (`SK9001`) until it freezes at rc.1; the rest is internal |
 | `src/CodoMetis.EFCore.SchemaKit.PostgreSQL` | The PostgreSQL package: `UseSchemaKit()` on Npgsql's builder, the dialect that counts bytes, `PgExclusion` and `PgIndex` with their factory `PgSchema<T>` and `DeclarePostgres`, and a contributor for each. Written against the kernel's public contract alone: the kernel grants it no `InternalsVisibleTo` |
 | `test/CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests` | Its tests: the stored form, the wiring, the statements of each diff, and the same diffs applied on a live server (`Integration/PgExclusionLiveTests.cs`) |
-| `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedTpc/` of two TPC hierarchies with a constraint on a root, `ScaffoldedOtherKinds/` of one with an index on a property, one on an entity type and a temporal constraint, which nothing reads yet, `ScaffoldedIndexes/` of one with 32 indexes of every kind 5.x stored, beside the script 5.x's own generator wrote for them (`Initial.sql`). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
+| `test/Fixtures/ComplexIndexes5x` | What the **published** 5.6.0 scaffolded on `net10.0`: `Generator/` is the consumer, `generate.sh` builds it outside the repository, `Scaffolded/` is the snapshot and migration of a model with exclusion constraints, `ScaffoldedTpc/` of two TPC hierarchies with a constraint on a root, `ScaffoldedOtherKinds/` of one with an index on a property, one on an entity type and a temporal constraint, which nothing reads yet, `ScaffoldedIndexes/` of one with 32 indexes of every kind 5.x stored, beside the script 5.x's own generator wrote for them (`Initial.sql`), `ScaffoldedReplay/` of two migrations whose indexes carry `CustomIndex:IndexParts` with every option 5.x's generator wrote beside the parts, and the scripts it wrote for them from nothing to the second and back (`Up.sql`, `Down.sql`). Checked in and never edited: the tests compile those files as they are, and a second run of the script changes nothing |
 | `test/CodoMetis.EFCore.SchemaKit.Tests` | The kernel's tests, on Npgsql, SQL Server and SQLite. `Harness/TestKit.cs` is the stand-in planner the host's own tests still use; `Harness/SampleContract.cs` is a contributor written against the public contract alone. `Conventions/` holds the repository itself: the workflows, the changelog, the packages, SECURITY.md |
 | `test/CodoMetis.EFCore.SchemaKit.SecondProvider.Tests` | The second provider (#119): two contributors nobody ships, written against the kernel's public contract alone, since the kernel grants the assembly no `InternalsVisibleTo`. A filtered nonclustered index with included columns on SQL Server and an index on an expression on SQLite, each with a dialect, and their tests: the SQL Server one on a live SQL Server 2022 (`Integration/`), the SQLite one on a database file. A comment that begins `Audit:` marks what the contract could not say |
 | `spikes/` | The two spikes the host was built on (A: decorators and ownership, B: design time from a packed consumer), D, which applies `SqlOperation`s through scripts and bundles on live servers and says which statements a script does not carry (`CREATE INDEX CONCURRENTLY` in an idempotent script on PostgreSQL, a bare `CREATE TRIGGER` in any script on SQL Server) and what EF Core does with an annotation on a `SqlOperation`, E, the impact table of the plan's section 3.7 measured on live servers, and F, which binds a declaration when the model is finalized and says what a convention sees there (no type mapping on a property yet: the mapping source is asked), for #114. B is the consumer smoke test until the real one replaces it |
 | `design/schemakit-api.md` | The public surface and the type model, written against rc.2. Its open questions are answered in the plan |
 | `design/schemakit-core-plan.md` | The plan for the core after EF Core 11 GA, with the maintainer's decisions (section 7). **Where the two disagree, the plan holds** |
-| `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing. `Mixed/` references the kernel at another version than the PostgreSQL package's, which NuGet builds with NU1608, and must be refused (#113) |
+| `test/ConsumerSmokeTest` | The consumer smoke test (#34): `run.sh` packs both packages, restores them into consumers outside the repository and drives every path a consumer has (`dotnet ef`, the runtime, a compiled model, a factory with a migrations assembly of its own, a project that comes from 5.x, and one that comes from 5.x with indexes on expressions, whose migration the packed package has to replay) on a live server, judged by `Judge/` from the catalog and a row that must be refused. `SMOKE_BREAK` takes a registration away to show it failing. `Mixed/` references the kernel at another version than the PostgreSQL package's, which NuGet builds with NU1608, and must be refused (#113) |
 | `docs/moving-from-complexindexes-5x.md` | The guide for a project coming from 5.x, a first cut that covers `preview.1` (#73) |
 | `test/SchemaKit.ApiProbes` | A prototype of the surface and 30 compile probes: each forbidden declaration is compiled with Roslyn and its diagnostic asserted, beside an allowed twin |
 
@@ -156,7 +157,10 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   after the inner differ's and splices them; `HasDifferences` runs the same plan. The host knows
   nothing of declarations or contributors: they arrive behind that planner.
 - **`SchemaKitSqlGenerator`** runs `IMigrationOperationRewriter`s (for operations 5.x scaffolded) and
-  hands the inner generator the whole list in one call.
+  hands the inner generator the whole list in one call. That interface is the host's own and
+  takes the whole list, which a rewriter that moves an operation needs (SQLite's, still owed).
+  A package's rewriter is a `LegacyOperationRewriter`, below, and reaches the host through
+  `LegacyOperationRewriters`, which is one such rewriter.
 - **After the rewriters, an operation that still carries an annotation only a 5.x generator
   rendered is refused** (`LegacyFormats.RequireRewritten`, #110). The provider's generator writes
   such an operation as if the annotation were not there: an `AddUniqueConstraint` stamped
@@ -166,6 +170,8 @@ Read `design/schemakit-core-plan.md` before writing code. What must not be re-de
   `CustomIndex:AfterTableRebuild` on a `CreateIndex`. It is the generator's side of the snapshot's
   guard (#93) and the same on every provider. A rewriter leaves it by taking the annotation off the
   operation or replacing the operation (#28); the check reads the operations alone, never the model.
+  The PostgreSQL package replays `CustomIndex:IndexParts`. The other four are still refused
+  everywhere, and that one on a context without the package.
 
 - **A statement of SchemaKit's that runs outside a transaction is refused where the way the
   migration is applied does not carry one** (`StatementStamp.RequireCarried`, #155, #206). The
@@ -344,6 +350,20 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   derived type inherits is read at its base type, or one object would be two
   (`A_property_is_read_where_it_is_declared`). An annotation of a property and one of an
   entity type are two annotations, whatever their names.
+- **A `LegacyOperationRewriter` replays an operation of a migration an earlier package
+  scaffolded** (`AddLegacyOperationRewriter`, marked like the rest of the contract; #28). It is
+  asked for an operation that carries its `Annotation`, and what it returns is generated in
+  that operation's place. The operation itself is not changed: a migration's operations are
+  compiled code, generated from again each time. The base class refuses an answer that is
+  empty or still carries the annotation, since either is an object the database does not get,
+  and a rewriter that took the annotation off the operation it was asked for: generated a
+  second time, that operation went to the provider alone.
+  Two rewriter classes for one annotation are refused when the first migration is generated,
+  and of two annotations on one operation the first the operation holds decides, not the
+  order of two registrations. A statement it writes with the transaction suppressed is
+  stamped as SchemaKit's own are, so `StatementStamp.RequireCarried` asks the dialect about
+  it. It takes no model and no dialect. `LegacyOperationRewriterTests` holds each rule on the
+  three providers.
 - **One annotation has one reader, as one owner has one contributor** (#108). Two reader classes
   for one annotation each read the same objects out of a snapshot: one copy pairs with the model's
   declaration and the other is dropped by the migration, while the model still declares it. The
@@ -884,10 +904,38 @@ what is still missing).
   applies it and compares the catalog with what `EnsureCreated()` builds for the model
   declared here (`Legacy/LegacyIndexFixture.cs`), and `LegacyIndexHandoverTests` holds the
   empty diff both ways and that every index is found under the name the script created it
-  by. SchemaKit does not replay 5.x's migration where it holds an index on an expression
-  (#28), which is why the script is the source. A storage parameter is compared as a set and
+  by. The script is the source, not what SchemaKit makes of 5.x's migration: an oracle that
+  went through the replay would hold the replay against itself. A storage parameter is compared as a set and
   a flag by what it means: 5.x wrote `deduplicate_items=false` where this package writes
   `off`, and the catalog keeps each as written.
+- **`Legacy/Internal/ComplexIndexes5xIndexPartsRewriter` replays the index 5.x scaffolded as a
+  `CreateIndex` with `CustomIndex:IndexParts`** (#28): one with an expression or a null order,
+  which only 5.x's generator wrote. The operation becomes a `SqlOperation` with the statement
+  that generator wrote, built clause for clause as 5.6.0's `NpgsqlComplexIndexSqlGenerator`
+  built it. It is 5.x's statement and not `PgIndex`'s: every expression in parentheses of its
+  own, names through the provider's helper, `deduplicate_items=false`. 5.x rendered when a
+  migration was applied, with the version installed then: one text from 5.1.0 to 5.6.0, and
+  before 5.0.0 neither `DESC` nor a null order (read from 5.x's tags), so a database applied
+  back then holds such an index without the order, and one built from the migration today has it.
+  The operation's columns, with their last one `__requires_UseNpgsqlComplexIndexes__`, are not
+  read, and nothing is written for an annotation 5.x's generator passed over.
+- **The oracle for the replay is 5.x's own script too.** `LegacyIndexReplayTests` holds the
+  index statements of `ScaffoldedReplay`'s two migrations, and of `ScaffoldedIndexes`',
+  against the scripts character for character, and the migrator's whole script against
+  `Up.sql` and `Down.sql` from the first transaction on, which holds the order and which
+  statement runs outside a transaction. `LegacyIndexReplayLiveTests` applies the migrations
+  through EF Core's migrator, as an application and a bundle do, and compares the catalog and
+  the history with what 5.x's scripts build, up, back to the first migration and to nothing.
+  5.x kept one index per list of parts, so the fixture's indexes each have parts of their own:
+  a second index over `lower("Code")` replaced the first without a word.
+- **Parts in a shape 5.x never wrote are refused by name,** and so is a value beside them in a
+  type no migration of 5.x holds: the format is `e` and `v` from 3.0.0, `d` from 3.1.0 and `n`
+  as `First` or `Last` from 5.0.0, read from 5.x's tags. Read loosely, the index would be
+  built without what was not understood.
+- **An index 5.x built with `CONCURRENTLY` is refused in an idempotent script,** where the
+  published 5.6.0 wrote the statement into a `DO` block (measured 2026-11-28), in which
+  PostgreSQL refuses it (25001): the replayed statement carries the stamp of a statement
+  outside a transaction, and the dialect answers for it as for a declared index (#206).
 - **What `PgIndex` cannot say of a 5.x index is refused by name:** a date or a time in a JSON
   document, which 5.x indexed as the member's text; `NULLS NOT DISTINCT` on an index that is
   not unique, which PostgreSQL keeps; an order on a key that is no B-tree's; an option or a
@@ -977,7 +1025,7 @@ package (#29): nothing moves from it to `src/` without its `Audit:` comments bei
 test project that hold them, ported from 5.x (#35). The guards of 5.x whose subject does not exist
 here yet are listed in #152, each with what has to exist first.
 
-- **The PostgreSQL package depends on the kernel at exactly its own version,** `[11.0.0-preview.2]`.
+- **The PostgreSQL package depends on the kernel at exactly its own version,** `[11.0.0-preview.3]`.
   Pack writes a project reference as a lower bound; the target `ExactKernelVersion` in the
   package's project file brackets it. It hooks `_GetProjectReferenceVersions`, a name of NuGet's
   that is no contract, so the test reads the packed `.nuspec` and not the project file.
