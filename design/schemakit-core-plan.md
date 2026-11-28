@@ -590,10 +590,15 @@ first. No public API is written before they pass. **Both passed on 2026-11-11.**
 | Release | Contents | Exit |
 |---|---|---|
 | `11.0.0-preview.1` | Kernel host, the three guards, exclusion constraints on PostgreSQL, their 5.x reader, spike C's exclusion half | Catalog and behaviour oracles green for exclusion constraints on 16 and 18 |
-| `preview.2` | `PgIndex` with expression and JSON-member keys and typed filters; the translator and its sweep; the 5.x index reader; legacy replay on PostgreSQL and SQLite; the handover matcher | A 5.x project's migrations replay on a fresh database; its snapshot diffs to nothing or the documented migration |
-| `preview.3` | SQL Server package; the catalog verifier for PostgreSQL; the analyzer; the first contributor outside the repository (`CodoMetis.ValueRanges.EFCore.PostgreSQL.SchemaKit`) | The contract is compiled against from outside; analyzer and translator agree on every construct |
-| `rc.1` | When Npgsql ships 11.0.0: floors move to `[11.0.0, 12.0.0)`, the contract freezes, the migration guide is complete | Every row of section 4 green |
+| `preview.2` | `PgIndex` of every access method, with expression and JSON-member keys and typed filters; the translator and its sweep; the binder at model finalization; the 5.x index readers | A 5.x project's snapshot diffs to nothing against the same model declared here. The replay of its migrations did not ship with it (#28) |
+| `preview.3` | What a PostgreSQL project on 5.x needs to move: legacy replay on PostgreSQL (#28); the cross-tests with CodoMetis.ValueRanges and the first contributor outside the repository (`CodoMetis.ValueRanges.EFCore.PostgreSQL.SchemaKit`, #4); the catalog verifier for PostgreSQL (#30); where they fit, the analyzer (#31) and the golden corpus (#33) | A 5.x project's migrations replay on a fresh database; the contract is compiled against from outside |
+| `preview.4` | SQL Server package (#29), with what the contract needs from it before it freezes (#200, #156, the rest of #116, SQL Server's scopes of #44) | The SQL Server package is written against the contract; analyzer and translator agree on every construct |
+| `rc.1` | The contract freezes, after the SQL Server package has been written against it; the migration guide is complete. The floors moved to `[11.0.0, 12.0.0)` when Npgsql shipped 11.0.0 (#174) | Every row of section 4 green |
 | `11.0.0` | | Package validation gets its first baseline (#6) |
+
+Not placed in a preview yet: the handover matcher (#10), the handover of temporal constraints (#18),
+and what is left of the legacy replay (#28): SQLite's, and the temporal operations 5.0.1 and
+earlier scaffolded. They stay in the `11.0.0` milestone.
 
 ## 7. Decisions
 
@@ -621,6 +626,7 @@ Taken by the maintainer on 2026-11-11. "As recommended" means the plan above alr
 | The contract: `Plan` and `ImpactOf` mandatory, frozen after an outside contributor ([3.10](#310-the-contributor-contract)) | Adopted, with the freeze at `rc.1` |
 | The name of the kernel's own `UseSchemaKit()` on `DbContextOptionsBuilder`, beside a provider package's (#141, decided 2026-11-14) | It keeps its name, and is neither renamed nor hidden. The guard is the refusal where an object is declared without its package's registration (#113) |
 | When a lambda becomes SQL, and how it is stored (#114, #112; decided 2026-11-24, after spike F) | **Bound when the model is finalized, stored as segments.** The provider's factory checks the lambda at the call and makes its captured values constants; a finalizing convention binds null compensation and literals from the model, and binds a second time on the finalized model as a guard. Stored: translator text, a column by its path, raw SQL, as `v` 3. The stored key is computed after binding; a repeated declaration is still refused at the call. `Predicate` and `KeyTarget.Template` show no SQL string. A `preview.1` snapshot (`v` 2) is refused and scaffolded again. This replaces the moment and the stored form of [3.5](#35-resolution-and-renderer-epochs)'s first point, not its principle: what is stored is rendered text, never a tree rendered on both sides. Built in three slices: the stored form (#178), the binding at finalization (#179), and nullability and literals from the model with the second binding (#180). The spelling is the provider's package's since #184: `SqlSpelling` is abstract, the kernel holds none, and PostgreSQL's tables are in its package |
+| The order of the previews after `preview.2` (#250, decided 2026-11-28) | **`preview.3` is what a PostgreSQL project on 5.x needs to move, and the SQL Server package moves to `preview.4`.** `preview.2` shipped without the replay of 5.x's migrations (#28), and that is what stands between a 5.x project and a trial: a real application's snapshots were read by the published `preview.2` and moved with no operations, and its migrations with an index on an expression were refused on a fresh database. The contract still freezes only after the SQL Server package has been written against it ([section 6](#6-sequence)) |
 
 **Surface** (the open questions of `design/schemakit-api.md`, section 16)
 
