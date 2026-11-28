@@ -307,6 +307,9 @@ Good to know:
 - **The move from `EFCore.ComplexIndexes` 5.x for exclusion constraints:** a snapshot 5.x scaffolded
   is read, and a model that declares the same constraints with SchemaKit scaffolds no operations.
   The [guide](docs/moving-from-complexindexes-5x.md) has each 5.x call and its new form.
+- **Migrations 5.x scaffolded** apply to a new database, the ones with an index on an expression
+  included: such an index is created by the statement 5.x wrote for it. This is on `main` and
+  not in `preview.2`.
 - **Guards** that refuse, with a message that names the fix: a declaration on a context without
   `UseSchemaKit()`, a second declaration of the same object, a name PostgreSQL would cut at 63 bytes,
   a name another object of the model takes, and a 5.x package still referenced.

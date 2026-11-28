@@ -9,7 +9,7 @@
 # being a 5.x consumer. Packages come from nuget.org into a private folder, so nothing built here
 # can stand in for a published one.
 #
-# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds, ../ScaffoldedTpc and ../ScaffoldedIndexes. It is checked in and never edited by hand: the tests compile
+# The result replaces ../Scaffolded, ../ScaffoldedOtherKinds, ../ScaffoldedTpc, ../ScaffoldedIndexes and ../ScaffoldedReplay. It is checked in and never edited by hand: the tests compile
 # these files as they are. EF Core stamps a migration with the time it was added; the name is fixed
 # here so that a second run changes nothing else.
 set -euo pipefail
@@ -66,9 +66,8 @@ scaffold LegacyContext Scaffolded Legacy5x.Migrations
 scaffold OtherKindsContext ScaffoldedOtherKinds Legacy5x.Migrations.OtherKinds
 # The exclusion constraints of two TPC hierarchies, a copy in every table (#189).
 scaffold TpcContext ScaffoldedTpc Legacy5x.Migrations.Tpc
-# Every kind of index (#218), and the script 5.x's own generator writes for them: SchemaKit does not
-# replay a migration of 5.x that holds an index on an expression (#28), so the database as 5.x
-# built it comes from the SQL 5.x wrote.
+# Every kind of index (#218), and the script 5.x's own generator writes for them: the database as
+# 5.x built it comes from the SQL 5.x wrote, never from what SchemaKit makes of the migration.
 scaffold IndexesContext ScaffoldedIndexes Legacy5x.Migrations.Indexes
 dotnet build "$work/Generator/Legacy5x.csproj" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
 "$work/tools/dotnet-ef" migrations script --no-build \
@@ -90,5 +89,38 @@ grep -q "WITHOUT OVERLAPS" "$here/ScaffoldedOtherKinds/Initial.cs" \
 
 [ "$(grep -c "CREATE .*INDEX" "$here/ScaffoldedIndexes/Initial.sql")" -ge 30 ] \
   || { echo "The script holds fewer than thirty indexes: 5.x did not take part." >&2; exit 1; }
+
+# The operations only 5.x's generator rendered (#28), in two migrations, and the scripts 5.x's own
+# generator writes for them: Up.sql from nothing to the second migration, Down.sql back to nothing.
+# What SchemaKit writes when it replays the two migrations is held against these.
+replay=$here/ScaffoldedReplay
+rm -rf "$replay" "$work/Generator/Migrations/ScaffoldedReplay"
+mkdir -p "$replay"
+"$work/tools/dotnet-ef" migrations add Initial --no-build \
+  --project "$work/Generator/Legacy5x.csproj" --context ReplayContext \
+  --namespace Legacy5x.Migrations.Replay --output-dir Migrations/ScaffoldedReplay
+dotnet build "$work/Generator/Legacy5x.csproj" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
+LEGACY5X_REPLAY_STEP=2 "$work/tools/dotnet-ef" migrations add Changed --no-build \
+  --project "$work/Generator/Legacy5x.csproj" --context ReplayContext \
+  --namespace Legacy5x.Migrations.Replay --output-dir Migrations/ScaffoldedReplay
+dotnet build "$work/Generator/Legacy5x.csproj" > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
+LEGACY5X_REPLAY_STEP=2 "$work/tools/dotnet-ef" migrations script --no-build \
+  --project "$work/Generator/Legacy5x.csproj" --context ReplayContext --output "$replay/Up.sql"
+LEGACY5X_REPLAY_STEP=2 "$work/tools/dotnet-ef" migrations script Changed 0 --no-build \
+  --project "$work/Generator/Legacy5x.csproj" --context ReplayContext --output "$replay/Down.sql"
+for name in Initial Changed; do
+  cp "$work/Generator/Migrations/ScaffoldedReplay"/*_"$name".cs "$replay/$name.cs"
+  cp "$work/Generator/Migrations/ScaffoldedReplay"/*_"$name".Designer.cs "$replay/$name.Designer.cs"
+done
+cp "$(find "$work/Generator" -name "ReplayContextModelSnapshot.cs" -not -path '*/obj/*')" "$replay/ReplayContextModelSnapshot.cs"
+# The migrations' ids carry the time, in the attribute and in the scripts.
+sed -i.bak -E 's/[0-9]{14}_Initial/20260101000000_Initial/g; s/[0-9]{14}_Changed/20260102000000_Changed/g' \
+  "$replay"/*.Designer.cs "$replay"/*.sql
+rm "$replay"/*.bak
+
+[ "$(grep -c "CustomIndex:IndexParts" "$replay/Initial.cs")" -ge 10 ] \
+  || { echo "The first migration holds fewer than ten operations with index parts: 5.x did not take part." >&2; exit 1; }
+grep -q "CustomIndex:IndexParts" "$replay/Changed.cs" \
+  || { echo "The second migration holds no operation with index parts." >&2; exit 1; }
 
 echo "Scaffolded into $here/Scaffolded"

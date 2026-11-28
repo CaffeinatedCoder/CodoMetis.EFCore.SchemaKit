@@ -43,6 +43,9 @@ internal sealed class NpgsqlSchemaKitOptionsExtension : IDbContextOptionsExtensi
         services.AddLegacyDeclarationReader<ComplexIndexes5xExclusionReader>();
         services.AddLegacyDeclarationReader<ComplexIndexes5xIndexReader>();
         services.AddLegacyDeclarationReader<ComplexIndexes5xPropertyIndexReader>();
+
+        // And in its migrations: the operations only 5.x's SQL generator rendered.
+        services.AddLegacyOperationRewriter<ComplexIndexes5xIndexPartsRewriter>();
     }
 
     private sealed class ExtensionInfo(IDbContextOptionsExtension extension) : DbContextOptionsExtensionInfo(extension)

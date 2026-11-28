@@ -404,14 +404,22 @@ They stay, and SchemaKit's SQL generator applies them to a new database:
 - **Exclusion constraints** are SQL operations in a migration 5.x scaffolded, and apply as they are.
   `LegacyHandoverLiveTests` applies the fixture's migration, as 5.6.0 scaffolded it, on both
   servers.
-- **An operation that only 5.x's own SQL generator rendered is refused, not replayed** as something
-  else ([#110](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/110)): a
-  temporal unique constraint as 5.0.1 and earlier scaffolded it, a temporal foreign key with its
-  period annotations, and an index with an expression or `NULLS FIRST`/`LAST`, whichever 5.x
-  version scaffolded it. Npgsql's generator would write a plain
-  unique constraint under the temporal one's name, and the migration would apply. The message
-  names the operation and the statement 5.x wrote; apply such a migration with 5.x, or replace the
-  operation in the migration with `migrationBuilder.Sql(…)` of that statement. Replaying them is
+- **An index with an expression, or with `NULLS FIRST`/`LAST`,** is a `CreateIndex` with the
+  annotation `CustomIndex:IndexParts` in a migration 5.x scaffolded, whichever 5.x version
+  scaffolded it, and only 5.x's own SQL generator wrote it. From `11.0.0-preview.3` it is applied
+  as the statement that generator wrote; `preview.2` refuses it. You change nothing in the
+  migration. `LegacyIndexReplayTests` holds the script of two such migrations against the script
+  the published 5.6.0 wrote for them, up and down, and `LegacyIndexReplayLiveTests` the catalog
+  on both servers. One thing differs: `migrations script --idempotent` is refused for a
+  migration with such an index built `CONCURRENTLY`. 5.6.0 wrote the statement into a `DO`
+  block of that script, where PostgreSQL refuses it (25001).
+- **A temporal constraint as 5.0.1 and earlier scaffolded it is refused, not replayed** as
+  something else ([#110](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/110)):
+  a temporal unique constraint and a temporal foreign key with its period annotations. Npgsql's
+  generator would write a plain unique constraint under the temporal one's name, and the
+  migration would apply. The message names the operation and what 5.x wrote for it; apply such a
+  migration with 5.x, or replace the operation in the migration with `migrationBuilder.Sql(…)`
+  of that statement. Replaying them is
   [#28](https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/28).
 
 ## What cannot move yet

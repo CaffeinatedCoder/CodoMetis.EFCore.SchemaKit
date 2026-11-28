@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace CodoMetis.EFCore.SchemaKit.Tests.Migrations;
 
-/// <summary>A rewriter that takes every annotation 5.x stamped on an operation, as #28 will bring them.</summary>
+/// <summary>A rewriter that takes every annotation 5.x stamped on an operation, through the host's own interface.</summary>
 internal sealed class Replays5x : IMigrationOperationRewriter
 {
     public IReadOnlyList<MigrationOperation> Rewrite(IReadOnlyList<MigrationOperation> operations, IModel? model)
@@ -38,7 +38,9 @@ internal sealed class ReplaysTheDependentPeriodOnly : IMigrationOperationRewrite
 /// An operation of a migration <c>EFCore.ComplexIndexes</c> 5.x scaffolded that carries an
 /// annotation only 5.x's SQL generators rendered (#110). The provider's generator writes the
 /// operation as if the annotation were not there: a plain unique constraint under the temporal
-/// one's name. Until a rewriter replays it (#28) the generator refuses it, on every provider.
+/// one's name. Until a rewriter replays it (#28) the generator refuses it, on every provider: the
+/// kernel alone has none, and the PostgreSQL package's is for <c>CustomIndex:IndexParts</c>
+/// (<c>LegacyIndexReplayTests</c>).
 /// </summary>
 [TestClass]
 [DoNotParallelize]
@@ -164,8 +166,25 @@ public sealed class LegacyOperationAnnotationTests
 
         StringAssert.Contains(refused.Message, $"The migration holds {operation} with the annotation '{annotation}' of EFCore.ComplexIndexes 5.x.");
         StringAssert.Contains(refused.Message, rendered);
-        StringAssert.Contains(refused.Message, "This version of SchemaKit cannot replay the operation");
+        StringAssert.Contains(refused.Message, annotation == "CustomIndex:IndexParts"
+            ? "the kernel alone cannot replay the operation, and passed on as it is"
+            : "This version of SchemaKit cannot replay the operation, and passed on as it is");
         StringAssert.Contains(refused.Message, "https://github.com/CaffeinatedCoder/CodoMetis.EFCore.SchemaKit/issues/28");
+    }
+
+    /// <summary>
+    /// One of the five has a rewriter, in the PostgreSQL package (#28). On a context without that
+    /// package the refusal names it: the fix is a registration, not a migration edited by hand.
+    /// </summary>
+    [TestMethod]
+    public void The_refusal_of_an_index_on_an_expression_names_the_package_that_replays_it()
+    {
+        using var context = Context(Provider.Npgsql);
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsSqlGenerator>().Generate([Stamped5x("expression index")]));
+
+        StringAssert.Contains(refused.Message,
+            "CodoMetis.EFCore.SchemaKit.PostgreSQL replays the operation on PostgreSQL, when UseSchemaKit() is called on the options builder of UseNpgsql");
     }
 
     /// <summary>

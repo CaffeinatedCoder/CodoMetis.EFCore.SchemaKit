@@ -116,6 +116,28 @@ public static class SchemaKitServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Adds a rewriter for operations of a migration an earlier package scaffolded, which only
+    /// that package's SQL generator rendered. A package that takes over from an earlier one calls
+    /// this where it adds its contributor.
+    /// </summary>
+    /// <remarks>
+    /// Adding the same rewriter twice adds it once. Two different rewriters for one annotation
+    /// are refused when the first migration is generated.
+    /// </remarks>
+    /// <param name="services">The collection the context's services are built from.</param>
+    /// <typeparam name="TRewriter">The rewriter.</typeparam>
+    /// <returns>The same collection.</returns>
+    [Experimental(SchemaKitDiagnosticIds.ContributorContract)]
+    public static IServiceCollection AddLegacyOperationRewriter<TRewriter>(this IServiceCollection services)
+        where TRewriter : LegacyOperationRewriter
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<LegacyOperationRewriter, TRewriter>());
+        return services;
+    }
+
     /// <summary>What both registration paths add besides the two decorators.</summary>
     internal static void AddShared(IServiceCollection services)
     {
@@ -123,6 +145,10 @@ public static class SchemaKitServiceCollectionExtensions
         services.TryAddScoped<SchemaContributorDependencies>();
         services.TryAddScoped<SchemaContributorRegistry>();
         services.TryAddScoped<SchemaResolverFactory>();
+
+        // The packages' rewriters, behind the one interface the generator runs. Resolved by the
+        // generator on first use, like every rewriter: one of them may need what a model needs.
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<IMigrationOperationRewriter, LegacyOperationRewriters>());
 
         // The dialect of a provider without a SchemaKit package; a provider package registers its
         // own before this. The identifier limit is the design-time model's, so this must not be

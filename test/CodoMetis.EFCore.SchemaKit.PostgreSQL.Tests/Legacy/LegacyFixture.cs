@@ -329,12 +329,58 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
 
         /// <summary>
         /// The script 5.x's own generator wrote for that migration, statement by statement: what a
-        /// database built by 5.x holds. SchemaKit does not replay a migration of 5.x that holds an
-        /// index on an expression (#28), so this is where such a database comes from.
+        /// database built by 5.x holds. It is the oracle for the readers (#218) and for the replay
+        /// of the migration itself (#28): neither is held against a statement written here.
         /// </summary>
         public static IReadOnlyList<string> IndexesScript { get; } =
         [
             .. System.Text.RegularExpressions.Regex.Split(File.ReadAllText(Path.Combine(IndexesFolder, "Initial.sql")), @"\r?\n\s*\r?\n")
+                .Select(statement => statement.Trim().TrimStart('\uFEFF'))
+                .Where(statement => statement.Length > 0),
+        ];
+
+        /// <summary>
+        /// Two migrations whose indexes only 5.x's SQL generator rendered (#28), each with an option
+        /// of Npgsql's beside the parts, and the scripts the published 5.6.0 wrote for them.
+        /// </summary>
+        public static string ReplayFolder { get; } = Path.Combine(Fixtures, "ScaffoldedReplay");
+
+        private static readonly Lazy<System.Reflection.Assembly> LoadedReplay = new(() => Load(ReplayFolder));
+
+        /// <summary>The compiled migrations as a migrations assembly, for a context that applies them itself.</summary>
+        public static System.Reflection.Assembly ReplayAssembly => LoadedReplay.Value;
+
+        private static readonly Lazy<IReadOnlyList<Migration>> CompiledReplay = new(() =>
+        [
+            .. LoadedReplay.Value.GetTypes()
+                .Where(t => typeof(Migration).IsAssignableFrom(t))
+                .OrderBy(t => t.GetCustomAttributes(typeof(MigrationAttribute), inherit: false).Cast<MigrationAttribute>().Single().Id, StringComparer.Ordinal)
+                .Select(t => (Migration)Activator.CreateInstance(t)!),
+        ]);
+
+        /// <summary>
+        /// A consumer's context after the move: SchemaKit's wiring, and the migrations 5.x scaffolded
+        /// as its migrations assembly. It applies and scripts them itself, through EF Core's migrator.
+        /// </summary>
+        public static Legacy5x.Replay.ReplayContext ReplayContext(string? connection = null)
+            => new(new DbContextOptionsBuilder<Legacy5x.Replay.ReplayContext>()
+                .ConfigureWarnings(w => w
+                    .Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)
+                    // The stand-in context has no model. What is measured is the migrations.
+                    .Ignore(RelationalEventId.PendingModelChangesWarning))
+                .UseNpgsql(connection ?? Contexts.Offline, o => o.UseSchemaKit().MigrationsAssembly(ReplayAssembly))
+                .Options);
+
+        /// <summary>The two migrations in their order, as 5.x scaffolded them: <c>Initial</c>, then <c>Changed</c>.</summary>
+        public static IReadOnlyList<Migration> Replay => CompiledReplay.Value;
+
+        /// <summary>What 5.x's generator wrote from nothing to the second migration, and back to nothing: statement by statement.</summary>
+        public static (IReadOnlyList<string> Up, IReadOnlyList<string> Down) ReplayScripts { get; } =
+            (Statements(Path.Combine(ReplayFolder, "Up.sql")), Statements(Path.Combine(ReplayFolder, "Down.sql")));
+
+        private static IReadOnlyList<string> Statements(string script) =>
+        [
+            .. System.Text.RegularExpressions.Regex.Split(File.ReadAllText(script), @"\r?\n\s*\r?\n")
                 .Select(statement => statement.Trim().TrimStart('\uFEFF'))
                 .Where(statement => statement.Length > 0),
         ];
@@ -389,13 +435,22 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
 
         private static (ModelSnapshot, Migration) Compile(string folder)
         {
+            var assembly = Load(folder);
+            var snapshot = (ModelSnapshot)Activator.CreateInstance(assembly.GetTypes().Single(t => typeof(ModelSnapshot).IsAssignableFrom(t)))!;
+            var migration = (Migration)Activator.CreateInstance(assembly.GetTypes().Single(t => typeof(Migration).IsAssignableFrom(t)))!;
+            migration.ActiveProvider = "Npgsql.EntityFrameworkCore.PostgreSQL";
+            return (snapshot, migration);
+        }
+
+        private static System.Reflection.Assembly Load(string folder)
+        {
             var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
                 .Concat(AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic && a.Location.Length > 0).Select(a => a.Location))
                 .Append(typeof(LegacyFixture).Assembly.Location)
                 .Distinct()
                 .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path));
 
-            // The three files and nothing else: the context they name is this assembly's.
+            // The scaffolded files and nothing else: the context they name is this assembly's.
             var compilation = CSharpCompilation.Create(
                 $"Legacy5x_{Guid.NewGuid():N}",
                 Directory.GetFiles(folder, "*.cs").Order(StringComparer.Ordinal).Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)),
@@ -407,11 +462,7 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Tests.Legacy
             Assert.IsTrue(result.Success, string.Join("\n", result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
 
             stream.Position = 0;
-            var assembly = new AssemblyLoadContext("legacy5x", isCollectible: false).LoadFromStream(stream);
-            var snapshot = (ModelSnapshot)Activator.CreateInstance(assembly.GetTypes().Single(t => typeof(ModelSnapshot).IsAssignableFrom(t)))!;
-            var migration = (Migration)Activator.CreateInstance(assembly.GetTypes().Single(t => typeof(Migration).IsAssignableFrom(t)))!;
-            migration.ActiveProvider = "Npgsql.EntityFrameworkCore.PostgreSQL";
-            return (snapshot, migration);
+            return new AssemblyLoadContext("legacy5x", isCollectible: false).LoadFromStream(stream);
         }
 
         private static string FindRoot()

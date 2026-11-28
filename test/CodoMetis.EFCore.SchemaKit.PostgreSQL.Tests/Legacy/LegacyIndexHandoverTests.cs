@@ -79,21 +79,6 @@ public sealed class LegacyIndexHandoverTests
     }
 
     /// <summary>
-    /// 5.x's migration itself is not replayed where it holds an index only 5.x's generator
-    /// rendered (#110, #28): the first of them is refused, by name.
-    /// </summary>
-    [TestMethod]
-    public void The_migration_5x_scaffolded_is_refused_at_its_first_index_on_an_expression()
-    {
-        using var context = LegacyFixture.Context<MovedIndexes.Declared>();
-
-        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => context.GetService<IMigrationsSqlGenerator>()
-            .Generate(LegacyFixture.IndexesUp, context.GetService<Microsoft.EntityFrameworkCore.Metadata.IDesignTimeModel>().Model));
-
-        StringAssert.Contains(refused.Message, "CustomIndex:IndexParts");
-    }
-
-    /// <summary>
     /// The control, and what a consumer gets who has not declared anything yet: every index of the
     /// snapshot is seen and dropped, under the name the script of 5.x created it by.
     /// </summary>

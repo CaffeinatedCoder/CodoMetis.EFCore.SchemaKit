@@ -145,17 +145,26 @@ internal static class LegacyFormats
     /// The guard is the same on every provider, and holds an annotation whatever its value and
     /// whatever operation carries it: one in a shape 5.x never wrote is not passed through either.
     /// An annotation leaves the guard when an <see cref="IMigrationOperationRewriter" /> takes it off
-    /// the operation, or replaces the operation (#28).
+    /// the operation, or replaces the operation (#28). The PostgreSQL package's
+    /// <see cref="LegacyOperationRewriter" /> does that for <c>CustomIndex:IndexParts</c>; on a
+    /// context without that package, and for the other four, the guard stands.
     /// </para>
     /// </remarks>
-    private static readonly (string Annotation, string Rendered)[] OnOperations =
+    private static readonly (string Annotation, string Rendered, string Advice)[] OnOperations =
     [
-        ("CustomTemporal:WithoutOverlaps", "a unique constraint WITHOUT OVERLAPS, where the provider writes a plain unique constraint"),
-        ("CustomTemporal:ForeignKeyDependentPeriod", "a temporal foreign key (PERIOD), where the provider writes a plain foreign key"),
-        ("CustomTemporal:ForeignKeyPrincipalPeriod", "a temporal foreign key (PERIOD), where the provider writes a plain foreign key"),
-        ("CustomIndex:IndexParts", "an index over the expressions and the null ordering the annotation holds, where the provider writes the operation's placeholder columns"),
-        ("CustomIndex:AfterTableRebuild", "the index after SQLite's table rebuild and without the marker in its filter, where the provider runs it in place with the marker"),
+        ("CustomTemporal:WithoutOverlaps", "a unique constraint WITHOUT OVERLAPS, where the provider writes a plain unique constraint", NoReplay),
+        ("CustomTemporal:ForeignKeyDependentPeriod", "a temporal foreign key (PERIOD), where the provider writes a plain foreign key", NoReplay),
+        ("CustomTemporal:ForeignKeyPrincipalPeriod", "a temporal foreign key (PERIOD), where the provider writes a plain foreign key", NoReplay),
+        ("CustomIndex:IndexParts", "an index over the expressions and the null ordering the annotation holds, where the provider writes the operation's placeholder columns", IndexReplay),
+        ("CustomIndex:AfterTableRebuild", "the index after SQLite's table rebuild and without the marker in its filter, where the provider runs it in place with the marker", NoReplay),
     ];
+
+    private const string NoReplay = "This version of SchemaKit cannot replay the operation";
+
+    // Met only on a context without the PostgreSQL package: with it, its rewriter has taken the operation.
+    private const string IndexReplay =
+        "CodoMetis.EFCore.SchemaKit.PostgreSQL replays the operation on PostgreSQL, when UseSchemaKit() is called on the " +
+        "options builder of UseNpgsql; the kernel alone cannot replay the operation";
 
     /// <summary>
     /// Throws when an operation still carries an annotation only 5.x's generators rendered. Called
@@ -165,16 +174,17 @@ internal static class LegacyFormats
     {
         foreach (var operation in operations)
         {
-            foreach (var (annotation, rendered) in OnOperations)
+            foreach (var (annotation, rendered, advice) in OnOperations)
             {
                 if (operation.FindAnnotation(annotation) is null) continue;
 
-                throw new InvalidOperationException(SchemaKitStrings.UnreplayedLegacyOperation(Describe(operation), annotation, rendered, Replay));
+                throw new InvalidOperationException(SchemaKitStrings.UnreplayedLegacyOperation(Describe(operation), annotation, rendered, advice, Replay));
             }
         }
     }
 
-    private static string Describe(MigrationOperation operation)
+    /// <summary>An operation as a message names it: its type, its name, its table.</summary>
+    public static string Describe(MigrationOperation operation)
     {
         var name = operation switch
         {
