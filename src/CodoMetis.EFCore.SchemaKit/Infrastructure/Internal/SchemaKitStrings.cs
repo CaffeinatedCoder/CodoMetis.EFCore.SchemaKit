@@ -479,6 +479,12 @@ internal static class SchemaKitStrings
         => $"'{rewriter.FullName}'.Rewrite returned an operation that still carries the annotation '{annotation}'. " +
            "The provider's generator does not read it and would write the operation as if it were not there.";
 
+    public static string LegacyRewriterChangedTheOperation(Type rewriter, string annotation)
+        => $"'{rewriter.FullName}'.Rewrite took the annotation '{annotation}' off the operation it was asked for. A " +
+           "migration's operations are generated from again, each time the migration is applied or written into a " +
+           "script, and the next time this one would be the provider's to write, as if nothing had been stamped on it. " +
+           "Return new operations and leave the one that came as it is.";
+
     public static string TwoRewritersForOneAnnotation(string annotation, Type first, Type second)
         => $"Two rewriters replay the annotation '{annotation}': '{first.FullName}' and '{second.FullName}'. Each has a " +
            "statement for the same operation of a migration, and which of them the database got would be the order of two " +

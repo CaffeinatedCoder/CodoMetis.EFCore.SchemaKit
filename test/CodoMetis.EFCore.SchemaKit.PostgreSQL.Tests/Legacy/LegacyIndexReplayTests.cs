@@ -231,6 +231,34 @@ public sealed class LegacyIndexReplayTests
         }
     }
 
+    /// <summary>
+    /// What no storage parameter of PostgreSQL 16 or 18 needs and 5.6.0's generator did all the
+    /// same (<c>FormatStorageParameter</c>, read from its source): a quote in a text is doubled,
+    /// and a number is written as the invariant culture writes it, whatever the machine's is.
+    /// The fixture's script holds neither, so these two are held against the source, not the script.
+    /// </summary>
+    [TestMethod]
+    public void A_storage_parameters_value_is_written_as_5x_wrote_it()
+    {
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+            Assert.AreEqual("0,25", 0.25.ToString(System.Globalization.CultureInfo.CurrentCulture), "The premise: this culture writes a comma.");
+
+            var index = With("Npgsql:StorageParameter:a", "o'k");
+            index.AddAnnotation("Npgsql:StorageParameter:b", 0.25);
+
+            CollectionAssert.AreEqual(
+                new[] { """CREATE INDEX "IX_Customer_lowerName" ON crm."Customer" ((lower("Name"))) WITH (a='o''k', b=0.25);""" },
+                Replayed([index]));
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+        }
+    }
+
     [TestMethod]
     public void The_annotation_with_a_value_that_is_no_text_is_refused()
     {

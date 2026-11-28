@@ -37,7 +37,8 @@ public abstract class LegacyOperationRewriter
 
     /// <summary>
     /// The operations to generate in place of <paramref name="operation" />, in their order. None
-    /// of them carries <see cref="Annotation" />.
+    /// of them carries <see cref="Annotation" />, and <paramref name="operation" /> is left as it
+    /// came: it is generated from again.
     /// </summary>
     /// <param name="operation">The operation that carries the annotation.</param>
     /// <exception cref="InvalidOperationException">The operation holds something the rewriter has no statement for.</exception>
@@ -49,6 +50,12 @@ public abstract class LegacyOperationRewriter
         var replaced = Rewrite(operation);
         if (replaced is null || replaced.Count == 0 || replaced.Any(r => r is null))
             throw new InvalidOperationException(SchemaKitStrings.LegacyRewriterReturnedNothing(GetType(), Annotation));
+
+        // The operation is the migration's own, compiled once and generated from each time the
+        // migration is applied or scripted. With the annotation taken off it, the next time it
+        // is the provider's to write, as if nothing had been stamped on it.
+        if (((IAnnotatable)operation).FindAnnotation(Annotation) is null)
+            throw new InvalidOperationException(SchemaKitStrings.LegacyRewriterChangedTheOperation(GetType(), Annotation));
 
         if (replaced.Any(r => ((IAnnotatable)r).FindAnnotation(Annotation) is not null))
             throw new InvalidOperationException(SchemaKitStrings.LegacyRewriterPassedOn(GetType(), Annotation));

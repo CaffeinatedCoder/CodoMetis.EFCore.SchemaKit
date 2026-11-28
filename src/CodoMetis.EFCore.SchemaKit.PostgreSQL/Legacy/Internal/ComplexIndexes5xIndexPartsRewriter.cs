@@ -22,8 +22,10 @@ namespace CodoMetis.EFCore.SchemaKit.PostgreSQL.Legacy.Internal;
 /// character for character. That is why a name is delimited by the provider's helper, an
 /// expression stands in parentheses of its own whatever it holds, and a storage parameter is
 /// written <c>false</c> where <c>PgIndex</c> writes <c>off</c>. 5.x rendered when the migration
-/// was applied, with the version installed then, so 5.6.0's statement is what every migration of
-/// 5.x became in the end, whichever version scaffolded it.
+/// was applied, with the version installed then, whichever version had scaffolded it. From 5.1.0
+/// to 5.6.0 the generator wrote one text. Before 5.0.0 it wrote neither <c>DESC</c> nor a null
+/// order (read from its tags), so a database applied back then holds such an index without the
+/// order, and one built from the same migration today has it, as it would with 5.6.0.
 /// </para>
 /// <para>
 /// The operation's columns are not read. 5.x filled them with the parts' text and a last column

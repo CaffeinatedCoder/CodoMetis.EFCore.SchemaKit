@@ -143,9 +143,10 @@ public sealed class LegacyIndexReplayLiveTests
     }
 
     /// <summary>
-    /// What the index is for. Unique over an expression, among the rows of its condition, with
-    /// nulls that are not distinct: the provider's generator would have failed on the operation's
-    /// last column, and an index over the operation's columns alone would take these rows.
+    /// What the index is for. Unique over an expression, among the rows of its condition: the
+    /// provider's generator would have failed on the operation's last column, and an index over
+    /// the operation's columns alone would take these rows. That its nulls are not distinct is
+    /// in the catalog the other tests compare, and is not asked here: both keys are NOT NULL.
     /// </summary>
     [TestMethod]
     public void A_replayed_unique_index_refuses_what_it_is_there_to_refuse()

@@ -410,7 +410,10 @@ They stay, and SchemaKit's SQL generator applies them to a new database:
   as the statement that generator wrote; `preview.2` refuses it. You change nothing in the
   migration. `LegacyIndexReplayTests` holds the script of two such migrations against the script
   the published 5.6.0 wrote for them, up and down, and `LegacyIndexReplayLiveTests` the catalog
-  on both servers. One thing differs: `migrations script --idempotent` is refused for a
+  on both servers. The statement is 5.6.0's. 5.x versions before 5.0.0 wrote such an index
+  without `DESC` and without a null order, so a database you applied back then has it without
+  them, and one built from the same migration now has them, as it would with 5.6.0.
+  One more thing differs: `migrations script --idempotent` is refused for a
   migration with such an index built `CONCURRENTLY`. 5.6.0 wrote the statement into a `DO`
   block of that script, where PostgreSQL refuses it (25001).
 - **A temporal constraint as 5.0.1 and earlier scaffolded it is refused, not replayed** as

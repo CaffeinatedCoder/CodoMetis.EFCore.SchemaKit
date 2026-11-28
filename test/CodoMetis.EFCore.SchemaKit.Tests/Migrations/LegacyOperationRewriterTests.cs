@@ -55,8 +55,15 @@ public sealed class AnswersWrongly : LegacyOperationRewriter
         "a null"     => [new SqlOperation { Sql = "SELECT 1" }, null!],
         "itself"     => [operation],
         "another"    => [Marked(new DropIndexOperation { Name = "IX" })],
+        "stripped"   => [new SqlOperation { Sql = "SELECT 'extra'" }, Stripped(operation)],
         _            => throw new ArgumentOutOfRangeException(nameof(operation)),
     };
+
+    private static MigrationOperation Stripped(MigrationOperation operation)
+    {
+        operation.RemoveAnnotation(Mark);
+        return operation;
+    }
 
     private static MigrationOperation Marked(MigrationOperation operation)
     {
@@ -219,6 +226,21 @@ public sealed class LegacyOperationRewriterTests
         var refused = Assert.ThrowsExactly<InvalidOperationException>(() => Sql(context, Index(AnswersWrongly.Mark, answer)));
 
         StringAssert.Contains(refused.Message, "returned an operation that still carries the annotation 'Earlier:Wrong'");
+    }
+
+    /// <summary>
+    /// The migration's operation is generated from again. A rewriter that took the annotation off
+    /// it and handed it back beside a statement of its own was right once: generated a second time,
+    /// the operation went to the provider alone and the statement was gone, without an error.
+    /// </summary>
+    [TestMethod]
+    public void A_rewriter_that_takes_the_annotation_off_the_operation_is_refused()
+    {
+        using var context = Context(Provider.Npgsql, Wrong);
+
+        var refused = Assert.ThrowsExactly<InvalidOperationException>(() => Sql(context, Index(AnswersWrongly.Mark, "stripped")));
+
+        StringAssert.Contains(refused.Message, $"'{typeof(AnswersWrongly).FullName}'.Rewrite took the annotation 'Earlier:Wrong' off the operation it was asked for");
     }
 
     /// <summary>Which rewriter answers an operation with two annotations is the operation's to say, not the order of two registrations.</summary>

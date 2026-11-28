@@ -355,7 +355,9 @@ contributor's code, and a hole takes only `Identifier`, `TableRef`, `QualifiedNa
   asked for an operation that carries its `Annotation`, and what it returns is generated in
   that operation's place. The operation itself is not changed: a migration's operations are
   compiled code, generated from again each time. The base class refuses an answer that is
-  empty or still carries the annotation, since either is an object the database does not get.
+  empty or still carries the annotation, since either is an object the database does not get,
+  and a rewriter that took the annotation off the operation it was asked for: generated a
+  second time, that operation went to the provider alone.
   Two rewriter classes for one annotation are refused when the first migration is generated,
   and of two annotations on one operation the first the operation holds decides, not the
   order of two registrations. A statement it writes with the transaction suppressed is
@@ -912,7 +914,9 @@ what is still missing).
   that generator wrote, built clause for clause as 5.6.0's `NpgsqlComplexIndexSqlGenerator`
   built it. It is 5.x's statement and not `PgIndex`'s: every expression in parentheses of its
   own, names through the provider's helper, `deduplicate_items=false`. 5.x rendered when a
-  migration was applied, so 5.6.0's statement is what a migration of any 5.x version became.
+  migration was applied, with the version installed then: one text from 5.1.0 to 5.6.0, and
+  before 5.0.0 neither `DESC` nor a null order (read from 5.x's tags), so a database applied
+  back then holds such an index without the order, and one built from the migration today has it.
   The operation's columns, with their last one `__requires_UseNpgsqlComplexIndexes__`, are not
   read, and nothing is written for an annotation 5.x's generator passed over.
 - **The oracle for the replay is 5.x's own script too.** `LegacyIndexReplayTests` holds the
